@@ -1085,3 +1085,62 @@ export const ScanDriveContentResponse = zod.object({
   contentLength: zod.number().optional(),
   message: zod.string().optional(),
 });
+
+/**
+ * @summary Get VPS database configuration
+ */
+export const GetVpsDatabaseConfigResponse = zod.object({
+  id: zod.number(),
+  host: zod.string(),
+  port: zod.string(),
+  database: zod.string(),
+  username: zod.string(),
+  password: zod.string().optional(),
+  sslEnabled: zod.boolean(),
+  isActive: zod.boolean(),
+  lastTestedAt: zod.date().nullish(),
+  lastTestResult: zod.string().nullish(),
+  createdAt: zod.date().optional(),
+  updatedAt: zod.date().optional(),
+});
+
+/**
+ * @summary Update VPS database configuration
+ */
+export const SaveVpsDatabaseConfigBody = zod.object({
+  host: zod.string().optional(),
+  port: zod.string().optional(),
+  database: zod.string().optional(),
+  username: zod.string().optional(),
+  password: zod.string().optional(),
+  sslEnabled: zod.boolean().optional(),
+  isActive: zod.boolean().optional(),
+});
+
+export const SaveVpsDatabaseConfigResponse = zod.object({
+  id: zod.number(),
+  host: zod.string(),
+  port: zod.string(),
+  database: zod.string(),
+  username: zod.string(),
+  password: zod.string().optional(),
+  sslEnabled: zod.boolean(),
+  isActive: zod.boolean(),
+  lastTestedAt: zod.date().nullish(),
+  lastTestResult: zod.string().nullish(),
+  createdAt: zod.date().optional(),
+  updatedAt: zod.date().optional(),
+});
+
+/**
+ * @summary Test VPS database connectivity
+ */
+export const TestVpsDatabaseResponse = zod.object({
+  success: zod.boolean(),
+  message: zod.string().optional(),
+  error: zod.string().optional(),
+  version: zod.string().optional(),
+  database: zod.string().optional(),
+  user: zod.string().optional(),
+  sizeBytes: zod.number().optional(),
+});

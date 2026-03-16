@@ -94,3 +94,6 @@ export * from "./updateAgentInput";
 export * from "./updateDiscoveredSourceBody";
 export * from "./updateDiscoveredSourceBodyStatus";
 export * from "./updateTaskInput";
+export * from "./vpsDatabaseConfig";
+export * from "./vpsDatabaseConfigInput";
+export * from "./vpsDatabaseTestResult";

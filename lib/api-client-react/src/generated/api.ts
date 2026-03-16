@@ -89,6 +89,9 @@ import type {
   UpdateAgentInput,
   UpdateDiscoveredSourceBody,
   UpdateTaskInput,
+  VpsDatabaseConfig,
+  VpsDatabaseConfigInput,
+  VpsDatabaseTestResult,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -5572,3 +5575,322 @@ export const useScanDriveContent = <
 > => {
   return useMutation(getScanDriveContentMutationOptions(options));
 };
+
+/**
+ * @summary Get VPS database configuration
+ */
+export const getGetVpsDatabaseConfigUrl = () => {
+  return `/api/vps-database/config`;
+};
+
+export const getVpsDatabaseConfig = async (
+  options?: RequestInit,
+): Promise<VpsDatabaseConfig> => {
+  return customFetch<VpsDatabaseConfig>(getGetVpsDatabaseConfigUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetVpsDatabaseConfigQueryKey = () => {
+  return [`/api/vps-database/config`] as const;
+};
+
+export const getGetVpsDatabaseConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getVpsDatabaseConfig>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getVpsDatabaseConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetVpsDatabaseConfigQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getVpsDatabaseConfig>>
+  > = ({ signal }) => getVpsDatabaseConfig({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getVpsDatabaseConfig>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetVpsDatabaseConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getVpsDatabaseConfig>>
+>;
+export type GetVpsDatabaseConfigQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get VPS database configuration
+ */
+
+export function useGetVpsDatabaseConfig<
+  TData = Awaited<ReturnType<typeof getVpsDatabaseConfig>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getVpsDatabaseConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetVpsDatabaseConfigQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update VPS database configuration
+ */
+export const getSaveVpsDatabaseConfigUrl = () => {
+  return `/api/vps-database/config`;
+};
+
+export const saveVpsDatabaseConfig = async (
+  vpsDatabaseConfigInput: VpsDatabaseConfigInput,
+  options?: RequestInit,
+): Promise<VpsDatabaseConfig> => {
+  return customFetch<VpsDatabaseConfig>(getSaveVpsDatabaseConfigUrl(), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(vpsDatabaseConfigInput),
+  });
+};
+
+export const getSaveVpsDatabaseConfigMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveVpsDatabaseConfig>>,
+    TError,
+    { data: BodyType<VpsDatabaseConfigInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveVpsDatabaseConfig>>,
+  TError,
+  { data: BodyType<VpsDatabaseConfigInput> },
+  TContext
+> => {
+  const mutationKey = ["saveVpsDatabaseConfig"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveVpsDatabaseConfig>>,
+    { data: BodyType<VpsDatabaseConfigInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveVpsDatabaseConfig(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveVpsDatabaseConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveVpsDatabaseConfig>>
+>;
+export type SaveVpsDatabaseConfigMutationBody =
+  BodyType<VpsDatabaseConfigInput>;
+export type SaveVpsDatabaseConfigMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update VPS database configuration
+ */
+export const useSaveVpsDatabaseConfig = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveVpsDatabaseConfig>>,
+    TError,
+    { data: BodyType<VpsDatabaseConfigInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof saveVpsDatabaseConfig>>,
+  TError,
+  { data: BodyType<VpsDatabaseConfigInput> },
+  TContext
+> => {
+  return useMutation(getSaveVpsDatabaseConfigMutationOptions(options));
+};
+
+/**
+ * @summary Test VPS database connectivity
+ */
+export const getTestVpsDatabaseUrl = () => {
+  return `/api/vps-database/test`;
+};
+
+export const testVpsDatabase = async (
+  options?: RequestInit,
+): Promise<VpsDatabaseTestResult> => {
+  return customFetch<VpsDatabaseTestResult>(getTestVpsDatabaseUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getTestVpsDatabaseMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testVpsDatabase>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof testVpsDatabase>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["testVpsDatabase"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof testVpsDatabase>>,
+    void
+  > = () => {
+    return testVpsDatabase(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TestVpsDatabaseMutationResult = NonNullable<
+  Awaited<ReturnType<typeof testVpsDatabase>>
+>;
+
+export type TestVpsDatabaseMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Test VPS database connectivity
+ */
+export const useTestVpsDatabase = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testVpsDatabase>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof testVpsDatabase>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getTestVpsDatabaseMutationOptions(options));
+};
+
+/**
+ * @summary Get VPS PostgreSQL setup script
+ */
+export const getGetVpsDatabaseSetupScriptUrl = () => {
+  return `/api/vps-database/setup-script`;
+};
+
+export const getVpsDatabaseSetupScript = async (
+  options?: RequestInit,
+): Promise<string> => {
+  return customFetch<string>(getGetVpsDatabaseSetupScriptUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetVpsDatabaseSetupScriptQueryKey = () => {
+  return [`/api/vps-database/setup-script`] as const;
+};
+
+export const getGetVpsDatabaseSetupScriptQueryOptions = <
+  TData = Awaited<ReturnType<typeof getVpsDatabaseSetupScript>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getVpsDatabaseSetupScript>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetVpsDatabaseSetupScriptQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getVpsDatabaseSetupScript>>
+  > = ({ signal }) => getVpsDatabaseSetupScript({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getVpsDatabaseSetupScript>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetVpsDatabaseSetupScriptQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getVpsDatabaseSetupScript>>
+>;
+export type GetVpsDatabaseSetupScriptQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get VPS PostgreSQL setup script
+ */
+
+export function useGetVpsDatabaseSetupScript<
+  TData = Awaited<ReturnType<typeof getVpsDatabaseSetupScript>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getVpsDatabaseSetupScript>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetVpsDatabaseSetupScriptQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}

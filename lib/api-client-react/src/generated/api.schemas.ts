@@ -517,6 +517,41 @@ export interface DriveFileContent {
   message?: string;
 }
 
+export interface VpsDatabaseConfig {
+  id: number;
+  host: string;
+  port: string;
+  database: string;
+  username: string;
+  password?: string;
+  sslEnabled: boolean;
+  isActive: boolean;
+  lastTestedAt?: string | null;
+  lastTestResult?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface VpsDatabaseConfigInput {
+  host?: string;
+  port?: string;
+  database?: string;
+  username?: string;
+  password?: string;
+  sslEnabled?: boolean;
+  isActive?: boolean;
+}
+
+export interface VpsDatabaseTestResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+  version?: string;
+  database?: string;
+  user?: string;
+  sizeBytes?: number;
+}
+
 export type FetchUrlBody = {
   url: string;
 };

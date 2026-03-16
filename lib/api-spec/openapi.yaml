@@ -25,6 +25,8 @@ tags:
     description: RAG knowledge base
   - name: scan
     description: Gmail and Google Drive scanning
+  - name: vps-database
+    description: VPS PostgreSQL database management
 paths:
   /healthz:
     get:
@@ -1341,6 +1343,62 @@ paths:
         "400":
           description: Missing fileId
 
+  /vps-database/config:
+    get:
+      operationId: getVpsDatabaseConfig
+      tags: [vps-database]
+      summary: Get VPS database configuration
+      responses:
+        "200":
+          description: VPS database config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpsDatabaseConfig"
+    put:
+      operationId: saveVpsDatabaseConfig
+      tags: [vps-database]
+      summary: Update VPS database configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VpsDatabaseConfigInput"
+      responses:
+        "200":
+          description: Updated config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpsDatabaseConfig"
+
+  /vps-database/test:
+    post:
+      operationId: testVpsDatabase
+      tags: [vps-database]
+      summary: Test VPS database connectivity
+      responses:
+        "200":
+          description: Test result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpsDatabaseTestResult"
+
+  /vps-database/setup-script:
+    get:
+      operationId: getVpsDatabaseSetupScript
+      tags: [vps-database]
+      summary: Get VPS PostgreSQL setup script
+      responses:
+        "200":
+          description: Bash setup script
+          content:
+            text/plain:
+              schema:
+                type: string
+
 components:
   schemas:
     HealthStatus:
@@ -2467,3 +2525,82 @@ components:
         - id
         - name
         - mimeType
+
+    VpsDatabaseConfig:
+      type: object
+      properties:
+        id:
+          type: integer
+        host:
+          type: string
+        port:
+          type: string
+        database:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        sslEnabled:
+          type: boolean
+        isActive:
+          type: boolean
+        lastTestedAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastTestResult:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - host
+        - port
+        - database
+        - username
+        - sslEnabled
+        - isActive
+
+    VpsDatabaseConfigInput:
+      type: object
+      properties:
+        host:
+          type: string
+        port:
+          type: string
+        database:
+          type: string
+        username:
+          type: string
+        password:
+          type: string
+        sslEnabled:
+          type: boolean
+        isActive:
+          type: boolean
+
+    VpsDatabaseTestResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        error:
+          type: string
+        version:
+          type: string
+        database:
+          type: string
+        user:
+          type: string
+        sizeBytes:
+          type: integer
+      required:
+        - success

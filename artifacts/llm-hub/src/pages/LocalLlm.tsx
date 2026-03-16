@@ -8,6 +8,7 @@ import {
   TerminalSquare, Send, ChevronDown, ChevronUp, CheckCircle2,
   Package, Trash2, Plus, Loader2, HardDrive
 } from "lucide-react";
+import VpsDatabasePanel from "@/components/VpsDatabasePanel";
 import { 
   useGetLlmStatus, 
   useGetLlmConfig, 
@@ -433,6 +434,10 @@ export default function LocalLlm() {
               )}
             </motion.div>
           </div>
+
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+            <VpsDatabasePanel />
+          </motion.div>
         </div>
       </div>
     </div>
