@@ -10,6 +10,12 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: llm-config
+    description: LLM server configuration
+  - name: llm-proxy
+    description: Proxy to local llama.cpp server
+  - name: chat
+    description: Chat history
 paths:
   /healthz:
     get:
@@ -24,6 +30,173 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /llm/config:
+    get:
+      operationId: getLlmConfig
+      tags: [llm-config]
+      summary: Get LLM server configuration
+      responses:
+        "200":
+          description: Current configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmConfig"
+    put:
+      operationId: saveLlmConfig
+      tags: [llm-config]
+      summary: Save LLM server configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LlmConfigInput"
+      responses:
+        "200":
+          description: Saved configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmConfig"
+
+  /llm/status:
+    get:
+      operationId: getLlmStatus
+      tags: [llm-proxy]
+      summary: Get llama.cpp server status (health, model, slots)
+      responses:
+        "200":
+          description: Server status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LlmStatus"
+
+  /llm/chat:
+    post:
+      operationId: sendChatMessage
+      tags: [llm-proxy]
+      summary: Send a chat completion request to the local llama.cpp server
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Chat completion response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+
+  /llm/setup-script:
+    get:
+      operationId: getSetupScript
+      tags: [llm-config]
+      summary: Generate a bash setup script based on current config
+      responses:
+        "200":
+          description: Bash script content
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /chat/conversations:
+    get:
+      operationId: listConversations
+      tags: [chat]
+      summary: List all chat conversations
+      responses:
+        "200":
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Conversation"
+    post:
+      operationId: createConversation
+      tags: [chat]
+      summary: Create a new conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateConversationInput"
+      responses:
+        "201":
+          description: Created conversation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Conversation"
+
+  /chat/conversations/{id}:
+    delete:
+      operationId: deleteConversation
+      tags: [chat]
+      summary: Delete a conversation and its messages
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /chat/conversations/{id}/messages:
+    get:
+      operationId: getMessages
+      tags: [chat]
+      summary: Get messages for a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChatMessage"
+    post:
+      operationId: addMessage
+      tags: [chat]
+      summary: Add a message to a conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMessageInput"
+      responses:
+        "201":
+          description: Added message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatMessage"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +207,180 @@ components:
       required:
         - status
 
+    LlmConfig:
+      type: object
+      properties:
+        id:
+          type: integer
+        serverUrl:
+          type: string
+        port:
+          type: integer
+        cpuThreads:
+          type: integer
+        contextSize:
+          type: integer
+        gpuLayers:
+          type: integer
+        containerName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - serverUrl
+        - port
+        - cpuThreads
+        - contextSize
+        - gpuLayers
+        - containerName
+        - createdAt
+        - updatedAt
+
+    LlmConfigInput:
+      type: object
+      properties:
+        serverUrl:
+          type: string
+        port:
+          type: integer
+        cpuThreads:
+          type: integer
+        contextSize:
+          type: integer
+        gpuLayers:
+          type: integer
+        containerName:
+          type: string
+      required:
+        - serverUrl
+        - port
+        - cpuThreads
+        - contextSize
+        - gpuLayers
+        - containerName
+
+    LlmStatus:
+      type: object
+      properties:
+        online:
+          type: boolean
+        serverHealth:
+          type: string
+        modelLoaded:
+          type: ["string", "null"]
+        slotsTotal:
+          type: integer
+        slotsUsed:
+          type: integer
+        error:
+          type: ["string", "null"]
+      required:
+        - online
+        - serverHealth
+
+    ChatRequest:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatRequestMessage"
+        temperature:
+          type: number
+        maxTokens:
+          type: integer
+      required:
+        - messages
+
+    ChatRequestMessage:
+      type: object
+      properties:
+        role:
+          type: string
+        content:
+          type: string
+      required:
+        - role
+        - content
+
+    ChatResponse:
+      type: object
+      properties:
+        content:
+          type: string
+        model:
+          type: ["string", "null"]
+        tokensUsed:
+          type: integer
+      required:
+        - content
+
+    Conversation:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        model:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - model
+        - createdAt
+        - updatedAt
+
+    CreateConversationInput:
+      type: object
+      properties:
+        title:
+          type: string
+        model:
+          type: string
+      required:
+        - title
+        - model
+
+    ChatMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+        conversationId:
+          type: integer
+        role:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - conversationId
+        - role
+        - content
+        - createdAt
+
+    AddMessageInput:
+      type: object
+      properties:
+        role:
+          type: string
+        content:
+          type: string
+      required:
+        - role
+        - content

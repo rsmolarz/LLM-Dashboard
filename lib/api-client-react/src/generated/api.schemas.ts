@@ -8,3 +8,79 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface LlmConfig {
+  id: number;
+  serverUrl: string;
+  port: number;
+  cpuThreads: number;
+  contextSize: number;
+  gpuLayers: number;
+  containerName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LlmConfigInput {
+  serverUrl: string;
+  port: number;
+  cpuThreads: number;
+  contextSize: number;
+  gpuLayers: number;
+  containerName: string;
+}
+
+export interface LlmStatus {
+  online: boolean;
+  serverHealth: string;
+  /** @nullable */
+  modelLoaded?: string | null;
+  slotsTotal?: number;
+  slotsUsed?: number;
+  /** @nullable */
+  error?: string | null;
+}
+
+export interface ChatRequestMessage {
+  role: string;
+  content: string;
+}
+
+export interface ChatRequest {
+  messages: ChatRequestMessage[];
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export interface ChatResponse {
+  content: string;
+  /** @nullable */
+  model?: string | null;
+  tokensUsed?: number;
+}
+
+export interface Conversation {
+  id: number;
+  title: string;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateConversationInput {
+  title: string;
+  model: string;
+}
+
+export interface ChatMessage {
+  id: number;
+  conversationId: number;
+  role: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface AddMessageInput {
+  role: string;
+  content: string;
+}

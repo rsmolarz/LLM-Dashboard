@@ -6,4 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./addMessageInput";
+export * from "./chatMessage";
+export * from "./chatRequest";
+export * from "./chatRequestMessage";
+export * from "./chatResponse";
+export * from "./conversation";
+export * from "./createConversationInput";
 export * from "./healthStatus";
+export * from "./llmConfig";
+export * from "./llmConfigInput";
+export * from "./llmStatus";

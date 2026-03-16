@@ -14,3 +14,131 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * @summary Get LLM server configuration
+ */
+export const GetLlmConfigResponse = zod.object({
+  id: zod.number(),
+  serverUrl: zod.string(),
+  port: zod.number(),
+  cpuThreads: zod.number(),
+  contextSize: zod.number(),
+  gpuLayers: zod.number(),
+  containerName: zod.string(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
+ * @summary Save LLM server configuration
+ */
+export const SaveLlmConfigBody = zod.object({
+  serverUrl: zod.string(),
+  port: zod.number(),
+  cpuThreads: zod.number(),
+  contextSize: zod.number(),
+  gpuLayers: zod.number(),
+  containerName: zod.string(),
+});
+
+export const SaveLlmConfigResponse = zod.object({
+  id: zod.number(),
+  serverUrl: zod.string(),
+  port: zod.number(),
+  cpuThreads: zod.number(),
+  contextSize: zod.number(),
+  gpuLayers: zod.number(),
+  containerName: zod.string(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
+ * @summary Get llama.cpp server status (health, model, slots)
+ */
+export const GetLlmStatusResponse = zod.object({
+  online: zod.boolean(),
+  serverHealth: zod.string(),
+  modelLoaded: zod.string().nullish(),
+  slotsTotal: zod.number().optional(),
+  slotsUsed: zod.number().optional(),
+  error: zod.string().nullish(),
+});
+
+/**
+ * @summary Send a chat completion request to the local llama.cpp server
+ */
+export const SendChatMessageBody = zod.object({
+  messages: zod.array(
+    zod.object({
+      role: zod.string(),
+      content: zod.string(),
+    }),
+  ),
+  temperature: zod.number().optional(),
+  maxTokens: zod.number().optional(),
+});
+
+export const SendChatMessageResponse = zod.object({
+  content: zod.string(),
+  model: zod.string().nullish(),
+  tokensUsed: zod.number().optional(),
+});
+
+/**
+ * @summary List all chat conversations
+ */
+export const ListConversationsResponseItem = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  model: zod.string(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+export const ListConversationsResponse = zod.array(
+  ListConversationsResponseItem,
+);
+
+/**
+ * @summary Create a new conversation
+ */
+export const CreateConversationBody = zod.object({
+  title: zod.string(),
+  model: zod.string(),
+});
+
+/**
+ * @summary Delete a conversation and its messages
+ */
+export const DeleteConversationParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Get messages for a conversation
+ */
+export const GetMessagesParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetMessagesResponseItem = zod.object({
+  id: zod.number(),
+  conversationId: zod.number(),
+  role: zod.string(),
+  content: zod.string(),
+  createdAt: zod.date(),
+});
+export const GetMessagesResponse = zod.array(GetMessagesResponseItem);
+
+/**
+ * @summary Add a message to a conversation
+ */
+export const AddMessageParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const AddMessageBody = zod.object({
+  role: zod.string(),
+  content: zod.string(),
+});

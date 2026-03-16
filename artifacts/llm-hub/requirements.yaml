@@ -1,0 +1,21 @@
+packages:
+  "framer-motion": "For premium page transitions and micro-interactions"
+  "clsx": "Utility for constructing className strings conditionally"
+  "tailwind-merge": "Utility for merging tailwind classes safely"
+  "lucide-react": "Beautiful, consistent iconography"
+  "date-fns": "For formatting chat timestamps nicely"
+  "react-hook-form": "For robust form state management"
+  "@hookform/resolvers": "Zod resolver for forms"
+  "zod": "Schema validation for forms"
+
+images:
+  - path: "artifacts/llm-hub/public/images/hero-bg.png"
+    description: "Abstract dark cyber tech background with glowing teal and violet neural network lines, very professional and subtle"
+    aspect_ratio: "16:9"
+  - path: "artifacts/llm-hub/public/images/empty-chat.png"
+    description: "Minimalist dark 3D illustration of an AI core or glowing cube, professional tech style"
+    aspect_ratio: "1:1"
+
+notes:
+  - Expects backend API to be running on the same domain or proxied correctly.
+  - React Query hooks are imported from @workspace/api-client-react.
