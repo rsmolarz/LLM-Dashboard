@@ -27,6 +27,8 @@ tags:
     description: Gmail and Google Drive scanning
   - name: vps-database
     description: VPS PostgreSQL database management
+  - name: vps-training
+    description: VPS training data collection and management
 paths:
   /healthz:
     get:
@@ -1399,6 +1401,174 @@ paths:
               schema:
                 type: string
 
+  /vps-training/init:
+    post:
+      operationId: initVpsTraining
+      tags: [vps-training]
+      summary: Initialize VPS training tables
+      responses:
+        "200":
+          description: Init result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpsTrainingInitResult"
+
+  /vps-training/sources:
+    get:
+      operationId: listVpsTrainingSources
+      tags: [vps-training]
+      summary: List training sources from VPS
+      parameters:
+        - name: source_type
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Training sources list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpsTrainingSourcesList"
+    post:
+      operationId: saveVpsTrainingSources
+      tags: [vps-training]
+      summary: Save training sources to VPS database
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/VpsTrainingSourceInput"
+                - type: array
+                  items:
+                    $ref: "#/components/schemas/VpsTrainingSourceInput"
+      responses:
+        "200":
+          description: Save result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpsTrainingSaveResult"
+
+  /vps-training/sources/{id}:
+    get:
+      operationId: getVpsTrainingSource
+      tags: [vps-training]
+      summary: Get a single training source with full content
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Training source detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpsTrainingSource"
+    put:
+      operationId: updateVpsTrainingSource
+      tags: [vps-training]
+      summary: Update training source status or quality
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                quality:
+                  type: integer
+      responses:
+        "200":
+          description: Updated source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpsTrainingSource"
+    delete:
+      operationId: deleteVpsTrainingSource
+      tags: [vps-training]
+      summary: Delete a training source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /vps-training/stats:
+    get:
+      operationId: getVpsTrainingStats
+      tags: [vps-training]
+      summary: Get VPS training data statistics
+      responses:
+        "200":
+          description: Training stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VpsTrainingStats"
+
+  /vps-training/export:
+    post:
+      operationId: exportVpsTrainingData
+      tags: [vps-training]
+      summary: Export VPS training data as JSONL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                format:
+                  type: string
+                  enum: [openai, alpaca, raw]
+                  default: openai
+                minQuality:
+                  type: integer
+                  default: 0
+                sourceType:
+                  type: string
+      responses:
+        "200":
+          description: JSONL export
+          content:
+            application/jsonl:
+              schema:
+                type: string
+
 components:
   schemas:
     HealthStatus:
@@ -2604,3 +2774,128 @@ components:
           type: integer
       required:
         - success
+
+    VpsTrainingInitResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        error:
+          type: string
+      required:
+        - success
+
+    VpsTrainingSource:
+      type: object
+      properties:
+        id:
+          type: integer
+        source_type:
+          type: string
+        source_id:
+          type: string
+        title:
+          type: string
+        sender:
+          type: string
+        content:
+          type: string
+        content_preview:
+          type: string
+        metadata:
+          type: object
+        status:
+          type: string
+        quality:
+          type: integer
+        collected_at:
+          type: string
+          format: date-time
+        processed_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - id
+        - source_type
+        - source_id
+        - title
+        - status
+
+    VpsTrainingSourceInput:
+      type: object
+      properties:
+        source_type:
+          type: string
+        source_id:
+          type: string
+        title:
+          type: string
+        sender:
+          type: string
+        content:
+          type: string
+        metadata:
+          type: object
+        status:
+          type: string
+      required:
+        - source_type
+        - source_id
+        - title
+
+    VpsTrainingSourcesList:
+      type: object
+      properties:
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/VpsTrainingSource"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+      required:
+        - sources
+        - total
+
+    VpsTrainingSaveResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        inserted:
+          type: integer
+        skipped:
+          type: integer
+        total:
+          type: integer
+      required:
+        - success
+        - inserted
+
+    VpsTrainingStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        byType:
+          type: object
+          additionalProperties:
+            type: integer
+        byStatus:
+          type: object
+          additionalProperties:
+            type: integer
+        avgQuality:
+          type: number
+        lastCollected:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+        - total

@@ -552,6 +552,67 @@ export interface VpsDatabaseTestResult {
   sizeBytes?: number;
 }
 
+export interface VpsTrainingInitResult {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+export type VpsTrainingSourceMetadata = { [key: string]: unknown };
+
+export interface VpsTrainingSource {
+  id: number;
+  source_type: string;
+  source_id: string;
+  title: string;
+  sender?: string;
+  content?: string;
+  content_preview?: string;
+  metadata?: VpsTrainingSourceMetadata;
+  status: string;
+  quality?: number;
+  collected_at?: string;
+  processed_at?: string | null;
+}
+
+export type VpsTrainingSourceInputMetadata = { [key: string]: unknown };
+
+export interface VpsTrainingSourceInput {
+  source_type: string;
+  source_id: string;
+  title: string;
+  sender?: string;
+  content?: string;
+  metadata?: VpsTrainingSourceInputMetadata;
+  status?: string;
+}
+
+export interface VpsTrainingSourcesList {
+  sources: VpsTrainingSource[];
+  total: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface VpsTrainingSaveResult {
+  success: boolean;
+  inserted: number;
+  skipped?: number;
+  total?: number;
+}
+
+export type VpsTrainingStatsByType = { [key: string]: number };
+
+export type VpsTrainingStatsByStatus = { [key: string]: number };
+
+export interface VpsTrainingStats {
+  total: number;
+  byType?: VpsTrainingStatsByType;
+  byStatus?: VpsTrainingStatsByStatus;
+  avgQuality?: number;
+  lastCollected?: string | null;
+}
+
 export type FetchUrlBody = {
   url: string;
 };
@@ -689,4 +750,31 @@ export type ScanDriveBody = {
 
 export type ScanDriveContentBody = {
   fileId: string;
+};
+
+export type ListVpsTrainingSourcesParams = {
+  source_type?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type UpdateVpsTrainingSourceBody = {
+  status?: string;
+  quality?: number;
+};
+
+export type ExportVpsTrainingDataBodyFormat =
+  (typeof ExportVpsTrainingDataBodyFormat)[keyof typeof ExportVpsTrainingDataBodyFormat];
+
+export const ExportVpsTrainingDataBodyFormat = {
+  openai: "openai",
+  alpaca: "alpaca",
+  raw: "raw",
+} as const;
+
+export type ExportVpsTrainingDataBody = {
+  format?: ExportVpsTrainingDataBodyFormat;
+  minQuality?: number;
+  sourceType?: string;
 };

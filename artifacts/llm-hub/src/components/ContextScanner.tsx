@@ -4,13 +4,16 @@ import {
   useScanGmailMessage,
   useScanDrive,
   useScanDriveContent,
+  useSaveVpsTrainingSources,
 } from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import {
   Mail, HardDrive, Loader2, Search, ChevronDown, ChevronUp,
-  FileText, ExternalLink, Clock, User, AlertCircle, X
+  FileText, ExternalLink, Clock, User, AlertCircle, X,
+  Database, CheckCircle2
 } from "lucide-react";
 
 type ScanTab = "gmail" | "drive";
@@ -22,10 +25,13 @@ export default function ContextScanner() {
 
   const scanGmail = useScanGmail();
   const scanDrive = useScanDrive();
+  const saveToVps = useSaveVpsTrainingSources();
+  const queryClient = useQueryClient();
 
   const [gmailResults, setGmailResults] = useState<any>(null);
   const [driveResults, setDriveResults] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
   const isScanning = scanGmail.isPending || scanDrive.isPending;
 
@@ -134,12 +140,82 @@ export default function ContextScanner() {
         </div>
       )}
 
+      {saveStatus && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <p className="text-xs text-emerald-400">{saveStatus}</p>
+          </div>
+          <button onClick={() => setSaveStatus(null)} className="text-emerald-400 hover:text-emerald-300">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {activeTab === "gmail" && gmailResults && (
-        <GmailResults data={gmailResults} />
+        <>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              onClick={() => {
+                const items = gmailResults.results?.map((msg: any) => ({
+                  source_type: "gmail",
+                  source_id: msg.id,
+                  title: msg.subject,
+                  sender: msg.from,
+                  content: msg.snippet,
+                  metadata: { date: msg.date, labels: msg.labels },
+                })) || [];
+                saveToVps.mutate({ data: items } as any, {
+                  onSuccess: (res: any) => {
+                    setSaveStatus(`Saved ${res.inserted} emails to VPS training database`);
+                    queryClient.invalidateQueries({ predicate: (q) => (q.queryKey[0] as string)?.startsWith("/api/vps-training") });
+                  },
+                  onError: (err: any) => setError(err?.message || "Failed to save to VPS"),
+                });
+              }}
+              disabled={saveToVps.isPending || !gmailResults.results?.length}
+              className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-xs"
+            >
+              {saveToVps.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5" />}
+              Save All to VPS ({gmailResults.results?.length || 0})
+            </Button>
+          </div>
+          <GmailResults data={gmailResults} />
+        </>
       )}
 
       {activeTab === "drive" && driveResults && (
-        <DriveResults data={driveResults} />
+        <>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              onClick={() => {
+                const items = driveResults.results?.map((file: any) => ({
+                  source_type: "drive",
+                  source_id: file.id,
+                  title: file.name,
+                  sender: file.owner,
+                  content: "",
+                  metadata: { mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size, webViewLink: file.webViewLink },
+                })) || [];
+                saveToVps.mutate({ data: items } as any, {
+                  onSuccess: (res: any) => {
+                    setSaveStatus(`Saved ${res.inserted} files to VPS training database`);
+                    queryClient.invalidateQueries({ predicate: (q) => (q.queryKey[0] as string)?.startsWith("/api/vps-training") });
+                  },
+                  onError: (err: any) => setError(err?.message || "Failed to save to VPS"),
+                });
+              }}
+              disabled={saveToVps.isPending || !driveResults.results?.length}
+              className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-xs"
+            >
+              {saveToVps.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5" />}
+              Save All to VPS ({driveResults.results?.length || 0})
+            </Button>
+          </div>
+          <DriveResults data={driveResults} />
+        </>
       )}
     </div>
   );

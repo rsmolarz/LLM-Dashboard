@@ -9,6 +9,7 @@ import ragRouter from "./rag";
 import openclawRouter from "./openclaw";
 import scanRouter from "./scan";
 import vpsDatabaseRouter from "./vps-database";
+import vpsTrainingRouter from "./vps-training";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(ragRouter);
 router.use(openclawRouter);
 router.use(scanRouter);
 router.use(vpsDatabaseRouter);
+router.use(vpsTrainingRouter);
 
 export default router;

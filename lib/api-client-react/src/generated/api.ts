@@ -45,6 +45,7 @@ import type {
   DriveFileContent,
   DriveScanResponse,
   ExportTrainingDataInput,
+  ExportVpsTrainingDataBody,
   ExtractMemoriesInput,
   ExtractMemoriesResponse,
   FetchUrl200,
@@ -59,6 +60,7 @@ import type {
   ListAgentMemoriesParams,
   ListAgentTasksParams,
   ListDiscoveredSourcesParams,
+  ListVpsTrainingSourcesParams,
   LlmConfig,
   LlmConfigInput,
   LlmStatus,
@@ -89,9 +91,16 @@ import type {
   UpdateAgentInput,
   UpdateDiscoveredSourceBody,
   UpdateTaskInput,
+  UpdateVpsTrainingSourceBody,
   VpsDatabaseConfig,
   VpsDatabaseConfigInput,
   VpsDatabaseTestResult,
+  VpsTrainingInitResult,
+  VpsTrainingSaveResult,
+  VpsTrainingSource,
+  VpsTrainingSourceInput,
+  VpsTrainingSourcesList,
+  VpsTrainingStats,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -5894,3 +5903,699 @@ export function useGetVpsDatabaseSetupScript<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Initialize VPS training tables
+ */
+export const getInitVpsTrainingUrl = () => {
+  return `/api/vps-training/init`;
+};
+
+export const initVpsTraining = async (
+  options?: RequestInit,
+): Promise<VpsTrainingInitResult> => {
+  return customFetch<VpsTrainingInitResult>(getInitVpsTrainingUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getInitVpsTrainingMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof initVpsTraining>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof initVpsTraining>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["initVpsTraining"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof initVpsTraining>>,
+    void
+  > = () => {
+    return initVpsTraining(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type InitVpsTrainingMutationResult = NonNullable<
+  Awaited<ReturnType<typeof initVpsTraining>>
+>;
+
+export type InitVpsTrainingMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Initialize VPS training tables
+ */
+export const useInitVpsTraining = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof initVpsTraining>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof initVpsTraining>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getInitVpsTrainingMutationOptions(options));
+};
+
+/**
+ * @summary List training sources from VPS
+ */
+export const getListVpsTrainingSourcesUrl = (
+  params?: ListVpsTrainingSourcesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/vps-training/sources?${stringifiedParams}`
+    : `/api/vps-training/sources`;
+};
+
+export const listVpsTrainingSources = async (
+  params?: ListVpsTrainingSourcesParams,
+  options?: RequestInit,
+): Promise<VpsTrainingSourcesList> => {
+  return customFetch<VpsTrainingSourcesList>(
+    getListVpsTrainingSourcesUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListVpsTrainingSourcesQueryKey = (
+  params?: ListVpsTrainingSourcesParams,
+) => {
+  return [`/api/vps-training/sources`, ...(params ? [params] : [])] as const;
+};
+
+export const getListVpsTrainingSourcesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listVpsTrainingSources>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListVpsTrainingSourcesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listVpsTrainingSources>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListVpsTrainingSourcesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listVpsTrainingSources>>
+  > = ({ signal }) =>
+    listVpsTrainingSources(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listVpsTrainingSources>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListVpsTrainingSourcesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listVpsTrainingSources>>
+>;
+export type ListVpsTrainingSourcesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List training sources from VPS
+ */
+
+export function useListVpsTrainingSources<
+  TData = Awaited<ReturnType<typeof listVpsTrainingSources>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListVpsTrainingSourcesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listVpsTrainingSources>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListVpsTrainingSourcesQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Save training sources to VPS database
+ */
+export const getSaveVpsTrainingSourcesUrl = () => {
+  return `/api/vps-training/sources`;
+};
+
+export const saveVpsTrainingSources = async (
+  vpsTrainingSourceInputVpsTrainingSourceInput:
+    | VpsTrainingSourceInput
+    | VpsTrainingSourceInput[],
+  options?: RequestInit,
+): Promise<VpsTrainingSaveResult> => {
+  return customFetch<VpsTrainingSaveResult>(getSaveVpsTrainingSourcesUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(vpsTrainingSourceInputVpsTrainingSourceInput),
+  });
+};
+
+export const getSaveVpsTrainingSourcesMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveVpsTrainingSources>>,
+    TError,
+    { data: BodyType<VpsTrainingSourceInput | VpsTrainingSourceInput[]> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof saveVpsTrainingSources>>,
+  TError,
+  { data: BodyType<VpsTrainingSourceInput | VpsTrainingSourceInput[]> },
+  TContext
+> => {
+  const mutationKey = ["saveVpsTrainingSources"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof saveVpsTrainingSources>>,
+    { data: BodyType<VpsTrainingSourceInput | VpsTrainingSourceInput[]> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return saveVpsTrainingSources(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SaveVpsTrainingSourcesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof saveVpsTrainingSources>>
+>;
+export type SaveVpsTrainingSourcesMutationBody = BodyType<
+  VpsTrainingSourceInput | VpsTrainingSourceInput[]
+>;
+export type SaveVpsTrainingSourcesMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Save training sources to VPS database
+ */
+export const useSaveVpsTrainingSources = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof saveVpsTrainingSources>>,
+    TError,
+    { data: BodyType<VpsTrainingSourceInput | VpsTrainingSourceInput[]> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof saveVpsTrainingSources>>,
+  TError,
+  { data: BodyType<VpsTrainingSourceInput | VpsTrainingSourceInput[]> },
+  TContext
+> => {
+  return useMutation(getSaveVpsTrainingSourcesMutationOptions(options));
+};
+
+/**
+ * @summary Get a single training source with full content
+ */
+export const getGetVpsTrainingSourceUrl = (id: number) => {
+  return `/api/vps-training/sources/${id}`;
+};
+
+export const getVpsTrainingSource = async (
+  id: number,
+  options?: RequestInit,
+): Promise<VpsTrainingSource> => {
+  return customFetch<VpsTrainingSource>(getGetVpsTrainingSourceUrl(id), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetVpsTrainingSourceQueryKey = (id: number) => {
+  return [`/api/vps-training/sources/${id}`] as const;
+};
+
+export const getGetVpsTrainingSourceQueryOptions = <
+  TData = Awaited<ReturnType<typeof getVpsTrainingSource>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getVpsTrainingSource>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetVpsTrainingSourceQueryKey(id);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getVpsTrainingSource>>
+  > = ({ signal }) => getVpsTrainingSource(id, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getVpsTrainingSource>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetVpsTrainingSourceQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getVpsTrainingSource>>
+>;
+export type GetVpsTrainingSourceQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get a single training source with full content
+ */
+
+export function useGetVpsTrainingSource<
+  TData = Awaited<ReturnType<typeof getVpsTrainingSource>>,
+  TError = ErrorType<unknown>,
+>(
+  id: number,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getVpsTrainingSource>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetVpsTrainingSourceQueryOptions(id, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update training source status or quality
+ */
+export const getUpdateVpsTrainingSourceUrl = (id: number) => {
+  return `/api/vps-training/sources/${id}`;
+};
+
+export const updateVpsTrainingSource = async (
+  id: number,
+  updateVpsTrainingSourceBody: UpdateVpsTrainingSourceBody,
+  options?: RequestInit,
+): Promise<VpsTrainingSource> => {
+  return customFetch<VpsTrainingSource>(getUpdateVpsTrainingSourceUrl(id), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateVpsTrainingSourceBody),
+  });
+};
+
+export const getUpdateVpsTrainingSourceMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateVpsTrainingSource>>,
+    TError,
+    { id: number; data: BodyType<UpdateVpsTrainingSourceBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateVpsTrainingSource>>,
+  TError,
+  { id: number; data: BodyType<UpdateVpsTrainingSourceBody> },
+  TContext
+> => {
+  const mutationKey = ["updateVpsTrainingSource"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateVpsTrainingSource>>,
+    { id: number; data: BodyType<UpdateVpsTrainingSourceBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateVpsTrainingSource(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateVpsTrainingSourceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateVpsTrainingSource>>
+>;
+export type UpdateVpsTrainingSourceMutationBody =
+  BodyType<UpdateVpsTrainingSourceBody>;
+export type UpdateVpsTrainingSourceMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update training source status or quality
+ */
+export const useUpdateVpsTrainingSource = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateVpsTrainingSource>>,
+    TError,
+    { id: number; data: BodyType<UpdateVpsTrainingSourceBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateVpsTrainingSource>>,
+  TError,
+  { id: number; data: BodyType<UpdateVpsTrainingSourceBody> },
+  TContext
+> => {
+  return useMutation(getUpdateVpsTrainingSourceMutationOptions(options));
+};
+
+/**
+ * @summary Delete a training source
+ */
+export const getDeleteVpsTrainingSourceUrl = (id: number) => {
+  return `/api/vps-training/sources/${id}`;
+};
+
+export const deleteVpsTrainingSource = async (
+  id: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteVpsTrainingSourceUrl(id), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteVpsTrainingSourceMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteVpsTrainingSource>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteVpsTrainingSource>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteVpsTrainingSource"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteVpsTrainingSource>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteVpsTrainingSource(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteVpsTrainingSourceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteVpsTrainingSource>>
+>;
+
+export type DeleteVpsTrainingSourceMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a training source
+ */
+export const useDeleteVpsTrainingSource = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteVpsTrainingSource>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteVpsTrainingSource>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteVpsTrainingSourceMutationOptions(options));
+};
+
+/**
+ * @summary Get VPS training data statistics
+ */
+export const getGetVpsTrainingStatsUrl = () => {
+  return `/api/vps-training/stats`;
+};
+
+export const getVpsTrainingStats = async (
+  options?: RequestInit,
+): Promise<VpsTrainingStats> => {
+  return customFetch<VpsTrainingStats>(getGetVpsTrainingStatsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetVpsTrainingStatsQueryKey = () => {
+  return [`/api/vps-training/stats`] as const;
+};
+
+export const getGetVpsTrainingStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getVpsTrainingStats>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getVpsTrainingStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetVpsTrainingStatsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getVpsTrainingStats>>
+  > = ({ signal }) => getVpsTrainingStats({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getVpsTrainingStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetVpsTrainingStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getVpsTrainingStats>>
+>;
+export type GetVpsTrainingStatsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get VPS training data statistics
+ */
+
+export function useGetVpsTrainingStats<
+  TData = Awaited<ReturnType<typeof getVpsTrainingStats>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getVpsTrainingStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetVpsTrainingStatsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Export VPS training data as JSONL
+ */
+export const getExportVpsTrainingDataUrl = () => {
+  return `/api/vps-training/export`;
+};
+
+export const exportVpsTrainingData = async (
+  exportVpsTrainingDataBody: ExportVpsTrainingDataBody,
+  options?: RequestInit,
+): Promise<Blob> => {
+  return customFetch<Blob>(getExportVpsTrainingDataUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(exportVpsTrainingDataBody),
+  });
+};
+
+export const getExportVpsTrainingDataMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof exportVpsTrainingData>>,
+    TError,
+    { data: BodyType<ExportVpsTrainingDataBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof exportVpsTrainingData>>,
+  TError,
+  { data: BodyType<ExportVpsTrainingDataBody> },
+  TContext
+> => {
+  const mutationKey = ["exportVpsTrainingData"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof exportVpsTrainingData>>,
+    { data: BodyType<ExportVpsTrainingDataBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return exportVpsTrainingData(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ExportVpsTrainingDataMutationResult = NonNullable<
+  Awaited<ReturnType<typeof exportVpsTrainingData>>
+>;
+export type ExportVpsTrainingDataMutationBody =
+  BodyType<ExportVpsTrainingDataBody>;
+export type ExportVpsTrainingDataMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Export VPS training data as JSONL
+ */
+export const useExportVpsTrainingData = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof exportVpsTrainingData>>,
+    TError,
+    { data: BodyType<ExportVpsTrainingDataBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof exportVpsTrainingData>>,
+  TError,
+  { data: BodyType<ExportVpsTrainingDataBody> },
+  TContext
+> => {
+  return useMutation(getExportVpsTrainingDataMutationOptions(options));
+};

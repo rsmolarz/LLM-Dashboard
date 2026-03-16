@@ -8,6 +8,7 @@ import {
   Zap, Eye, XCircle, RefreshCw, ThumbsUp, ThumbsDown
 } from "lucide-react";
 import ContextScanner from "@/components/ContextScanner";
+import VpsTrainingDashboard from "@/components/VpsTrainingDashboard";
 import {
   useListModelProfiles,
   useCreateModelProfile,
@@ -40,7 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-type Tab = "profiles" | "data" | "knowledge" | "finetune";
+type Tab = "profiles" | "data" | "knowledge" | "finetune" | "vps-training";
 
 export default function Training() {
   const [activeTab, setActiveTab] = useState<Tab>("profiles");
@@ -49,6 +50,7 @@ export default function Training() {
     { id: "profiles", label: "Model Profiles", icon: <Brain className="w-4 h-4" />, desc: "Custom model configurations" },
     { id: "data", label: "Training Data", icon: <Database className="w-4 h-4" />, desc: "Collect & manage datasets" },
     { id: "knowledge", label: "Knowledge Base", icon: <BookOpen className="w-4 h-4" />, desc: "RAG document store" },
+    { id: "vps-training", label: "VPS Training", icon: <Layers className="w-4 h-4" />, desc: "Remote training data" },
     { id: "finetune", label: "Fine-tuning", icon: <Wand2 className="w-4 h-4" />, desc: "Train your models" },
   ];
 
@@ -62,7 +64,7 @@ export default function Training() {
           </p>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -97,6 +99,7 @@ export default function Training() {
             {activeTab === "profiles" && <ModelProfilesTab />}
             {activeTab === "data" && <TrainingDataTab />}
             {activeTab === "knowledge" && <KnowledgeBaseTab />}
+            {activeTab === "vps-training" && <VpsTrainingDashboard />}
             {activeTab === "finetune" && <FineTuningTab />}
           </motion.div>
         </AnimatePresence>

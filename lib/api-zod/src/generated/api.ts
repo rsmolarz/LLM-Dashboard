@@ -1144,3 +1144,161 @@ export const TestVpsDatabaseResponse = zod.object({
   user: zod.string().optional(),
   sizeBytes: zod.number().optional(),
 });
+
+/**
+ * @summary Initialize VPS training tables
+ */
+export const InitVpsTrainingResponse = zod.object({
+  success: zod.boolean(),
+  message: zod.string().optional(),
+  error: zod.string().optional(),
+});
+
+/**
+ * @summary List training sources from VPS
+ */
+export const listVpsTrainingSourcesQueryLimitDefault = 50;
+export const listVpsTrainingSourcesQueryOffsetDefault = 0;
+
+export const ListVpsTrainingSourcesQueryParams = zod.object({
+  source_type: zod.coerce.string().optional(),
+  status: zod.coerce.string().optional(),
+  limit: zod.coerce.number().default(listVpsTrainingSourcesQueryLimitDefault),
+  offset: zod.coerce.number().default(listVpsTrainingSourcesQueryOffsetDefault),
+});
+
+export const ListVpsTrainingSourcesResponse = zod.object({
+  sources: zod.array(
+    zod.object({
+      id: zod.number(),
+      source_type: zod.string(),
+      source_id: zod.string(),
+      title: zod.string(),
+      sender: zod.string().optional(),
+      content: zod.string().optional(),
+      content_preview: zod.string().optional(),
+      metadata: zod.object({}).passthrough().optional(),
+      status: zod.string(),
+      quality: zod.number().optional(),
+      collected_at: zod.date().optional(),
+      processed_at: zod.date().nullish(),
+    }),
+  ),
+  total: zod.number(),
+  limit: zod.number().optional(),
+  offset: zod.number().optional(),
+});
+
+/**
+ * @summary Save training sources to VPS database
+ */
+export const SaveVpsTrainingSourcesBody = zod.union([
+  zod.object({
+    source_type: zod.string(),
+    source_id: zod.string(),
+    title: zod.string(),
+    sender: zod.string().optional(),
+    content: zod.string().optional(),
+    metadata: zod.object({}).passthrough().optional(),
+    status: zod.string().optional(),
+  }),
+  zod.array(
+    zod.object({
+      source_type: zod.string(),
+      source_id: zod.string(),
+      title: zod.string(),
+      sender: zod.string().optional(),
+      content: zod.string().optional(),
+      metadata: zod.object({}).passthrough().optional(),
+      status: zod.string().optional(),
+    }),
+  ),
+]);
+
+export const SaveVpsTrainingSourcesResponse = zod.object({
+  success: zod.boolean(),
+  inserted: zod.number(),
+  skipped: zod.number().optional(),
+  total: zod.number().optional(),
+});
+
+/**
+ * @summary Get a single training source with full content
+ */
+export const GetVpsTrainingSourceParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const GetVpsTrainingSourceResponse = zod.object({
+  id: zod.number(),
+  source_type: zod.string(),
+  source_id: zod.string(),
+  title: zod.string(),
+  sender: zod.string().optional(),
+  content: zod.string().optional(),
+  content_preview: zod.string().optional(),
+  metadata: zod.object({}).passthrough().optional(),
+  status: zod.string(),
+  quality: zod.number().optional(),
+  collected_at: zod.date().optional(),
+  processed_at: zod.date().nullish(),
+});
+
+/**
+ * @summary Update training source status or quality
+ */
+export const UpdateVpsTrainingSourceParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateVpsTrainingSourceBody = zod.object({
+  status: zod.string().optional(),
+  quality: zod.number().optional(),
+});
+
+export const UpdateVpsTrainingSourceResponse = zod.object({
+  id: zod.number(),
+  source_type: zod.string(),
+  source_id: zod.string(),
+  title: zod.string(),
+  sender: zod.string().optional(),
+  content: zod.string().optional(),
+  content_preview: zod.string().optional(),
+  metadata: zod.object({}).passthrough().optional(),
+  status: zod.string(),
+  quality: zod.number().optional(),
+  collected_at: zod.date().optional(),
+  processed_at: zod.date().nullish(),
+});
+
+/**
+ * @summary Delete a training source
+ */
+export const DeleteVpsTrainingSourceParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Get VPS training data statistics
+ */
+export const GetVpsTrainingStatsResponse = zod.object({
+  total: zod.number(),
+  byType: zod.record(zod.string(), zod.number()).optional(),
+  byStatus: zod.record(zod.string(), zod.number()).optional(),
+  avgQuality: zod.number().optional(),
+  lastCollected: zod.date().nullish(),
+});
+
+/**
+ * @summary Export VPS training data as JSONL
+ */
+export const exportVpsTrainingDataBodyFormatDefault = `openai`;
+export const exportVpsTrainingDataBodyMinQualityDefault = 0;
+
+export const ExportVpsTrainingDataBody = zod.object({
+  format: zod
+    .enum(["openai", "alpaca", "raw"])
+    .default(exportVpsTrainingDataBodyFormatDefault),
+  minQuality: zod.number().default(exportVpsTrainingDataBodyMinQualityDefault),
+  sourceType: zod.string().optional(),
+});

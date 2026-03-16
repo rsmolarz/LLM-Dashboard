@@ -70,6 +70,7 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
   - `scan.ts` — Gmail and Google Drive scanning (`/scan/gmail`, `/scan/gmail/message`, `/scan/drive`, `/scan/drive/content`)
   - `google-clients.ts` — Gmail (googleapis) and Google Drive (Replit connectors-sdk proxy) client helpers
   - `vps-database.ts` — VPS PostgreSQL config CRUD, connectivity test, setup script generator (`/vps-database/config`, `/vps-database/test`, `/vps-database/setup-script`)
+  - `vps-training.ts` — VPS training data management: init tables on VPS, CRUD training sources, stats, export (`/vps-training/init`, `/vps-training/sources`, `/vps-training/stats`, `/vps-training/export`)
 - Depends on: `@workspace/db`, `@workspace/api-zod`, `googleapis`, `@replit/connectors-sdk`, `pg`
 
 ### `artifacts/llm-hub` (`@workspace/llm-hub`)
@@ -79,10 +80,11 @@ LLM Hub dashboard — React + Vite web app for managing a self-hosted Ollama ser
 Features:
 - **Local LLM Tab**: Status dashboard (server health, available/running models, default model), configuration panel, model management (pull/delete), setup script generator (Ollama + OpenWebUI), quick setup guide, local chat sandbox, **VPS PostgreSQL** panel (config, connectivity test, setup script generator for installing PostgreSQL on VPS)
 - **Chat Tab**: Full chat interface with conversation sidebar, model selector (from Ollama), message history, thumbs up/down rating, RAG toggle for knowledge-base-augmented responses
-- **Training Tab** (4 sub-tabs):
+- **Training Tab** (5 sub-tabs):
   - **Model Profiles**: Create custom model configs (system prompt, temperature, topP, topK, context length, repeat penalty), deploy to Ollama as Modelfiles
   - **Training Data**: Collect training pairs from conversations, add manually, rate quality, export as JSONL (OpenAI, Alpaca, ShareGPT formats)
-  - **Knowledge Base (RAG)**: Upload documents, auto-chunk for retrieval, keyword-based search, context injection into chat, URL fetching (server-side HTML→text with SSRF protection), bulk import (markdown-header-separated), curated example knowledge bases (48 sources across 9 categories: Market Data, Medical/ENT, Hedge Funds, Alternative Data, Influencer, Research, Code & Dev, Security, Business) with category filter pills, **Discovery Agent** (AI-powered, uses Ollama LLM to continuously find new databases/APIs/data sources, approve/reject/import workflow, category-targeted or custom prompt discovery), **Context Scanner** (Gmail + Google Drive search integration — scan emails and Drive files to find relevant context for discovery priorities)
+  - **Knowledge Base (RAG)**: Upload documents, auto-chunk for retrieval, keyword-based search, context injection into chat, URL fetching (server-side HTML→text with SSRF protection), bulk import (markdown-header-separated), curated example knowledge bases (48 sources across 9 categories: Market Data, Medical/ENT, Hedge Funds, Alternative Data, Influencer, Research, Code & Dev, Security, Business) with category filter pills, **Discovery Agent** (AI-powered, uses Ollama LLM to continuously find new databases/APIs/data sources, approve/reject/import workflow, category-targeted or custom prompt discovery), **Context Scanner** (Gmail + Google Drive search integration — scan emails and Drive files to find relevant context for discovery priorities, **Save All to VPS** button to store scanned results directly to VPS PostgreSQL training database)
+  - **VPS Training**: Remote training data dashboard stored on VPS PostgreSQL (72.60.167.64). Init tables, view/filter/manage collected sources (Gmail, Drive, web), update status (collected→reviewed→processed→rejected), rate quality (1-5 stars), export as JSONL (OpenAI, Alpaca, raw formats). Stats cards show totals by type and status.
   - **Fine-tuning**: Guided pipeline with step tracker, instructions for Unsloth/Axolotl/cloud GPU providers
 - **Agents Tab**: OpenClaw-powered agent fleet management
   - **Fleet Dashboard**: Real-time agent grid with stats (total, active, idle, messages, tasks), category filters (General, Research, Customer Service, Code & Dev, Business Ops, Content, Security), search
@@ -112,6 +114,10 @@ Tables:
 - `agent_memories` — Persistent agent memory (agentId, memoryType [fact/summary/preference], content, source, importance 1-10, tags)
 - `agent_tasks` — Task orchestration (title, description, assignedAgentId, status [pending/in-progress/completed/failed], priority [low/medium/high/urgent], category, result, dueAt, completedAt)
 - `vps_database_config` — VPS PostgreSQL connection settings (host, port, database, username, password, sslEnabled, isActive, lastTestedAt, lastTestResult)
+
+**VPS-hosted tables** (on 72.60.167.64, db: llmhub):
+- `training_sources` — Collected training data from Gmail/Drive/web (source_type, source_id, title, sender, content, content_preview, metadata JSONB, status, quality)
+- `training_datasets` — Named dataset configurations for export (name, description, format, source_filter, min_quality, entry_count)
 
 ### `lib/api-spec` (`@workspace/api-spec`)
 
