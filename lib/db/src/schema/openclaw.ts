@@ -85,3 +85,22 @@ export const agentTasksTable = pgTable("agent_tasks", {
 export const insertAgentTaskSchema = createInsertSchema(agentTasksTable).omit({ id: true, completedAt: true, createdAt: true, updatedAt: true });
 export type InsertAgentTask = z.infer<typeof insertAgentTaskSchema>;
 export type AgentTask = typeof agentTasksTable.$inferSelect;
+
+export const discoveredSourcesTable = pgTable("discovered_sources", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  url: text("url").notNull(),
+  category: text("category").notNull().default("general"),
+  description: text("description").notNull().default(""),
+  relevanceScore: real("relevance_score").notNull().default(0.5),
+  status: text("status").notNull().default("pending"),
+  discoveredBy: text("discovered_by").notNull().default("discovery-agent"),
+  searchQuery: text("search_query").notNull().default(""),
+  reasoning: text("reasoning").notNull().default(""),
+  importedAt: timestamp("imported_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insertDiscoveredSourceSchema = createInsertSchema(discoveredSourcesTable).omit({ id: true, importedAt: true, createdAt: true });
+export type InsertDiscoveredSource = z.infer<typeof insertDiscoveredSourceSchema>;
+export type DiscoveredSource = typeof discoveredSourcesTable.$inferSelect;

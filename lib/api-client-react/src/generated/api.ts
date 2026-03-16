@@ -38,8 +38,10 @@ import type {
   CreateConversationInput,
   CreateDocumentInput,
   CreateTaskInput,
+  DeleteDiscoveredSource200,
   DeleteModelResponse,
   DeployProfileResponse,
+  DiscoveredSource,
   ExportTrainingDataInput,
   ExtractMemoriesInput,
   ExtractMemoriesResponse,
@@ -48,9 +50,11 @@ import type {
   FleetStats,
   GatewayStatus,
   GetAgentLogsParams,
+  GetDiscoveryStats200,
   HealthStatus,
   ListAgentMemoriesParams,
   ListAgentTasksParams,
+  ListDiscoveredSourcesParams,
   LlmConfig,
   LlmConfigInput,
   LlmStatus,
@@ -66,6 +70,8 @@ import type {
   RateMessageInput,
   RouteTaskInput,
   RouteTaskResponse,
+  RunDiscovery200,
+  RunDiscoveryBody,
   RunningModel,
   SearchDocumentsInput,
   SearchResult,
@@ -73,6 +79,7 @@ import type {
   TrainingDataInput,
   TrainingStats,
   UpdateAgentInput,
+  UpdateDiscoveredSourceBody,
   UpdateTaskInput,
 } from "./api.schemas";
 
@@ -2867,6 +2874,442 @@ export const useBulkImportDocuments = <
 > => {
   return useMutation(getBulkImportDocumentsMutationOptions(options));
 };
+
+/**
+ * @summary List discovered knowledge base sources
+ */
+export const getListDiscoveredSourcesUrl = (
+  params?: ListDiscoveredSourcesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/rag/discovery/sources?${stringifiedParams}`
+    : `/api/rag/discovery/sources`;
+};
+
+export const listDiscoveredSources = async (
+  params?: ListDiscoveredSourcesParams,
+  options?: RequestInit,
+): Promise<DiscoveredSource[]> => {
+  return customFetch<DiscoveredSource[]>(getListDiscoveredSourcesUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListDiscoveredSourcesQueryKey = (
+  params?: ListDiscoveredSourcesParams,
+) => {
+  return [`/api/rag/discovery/sources`, ...(params ? [params] : [])] as const;
+};
+
+export const getListDiscoveredSourcesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listDiscoveredSources>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListDiscoveredSourcesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listDiscoveredSources>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListDiscoveredSourcesQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listDiscoveredSources>>
+  > = ({ signal }) =>
+    listDiscoveredSources(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listDiscoveredSources>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListDiscoveredSourcesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listDiscoveredSources>>
+>;
+export type ListDiscoveredSourcesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List discovered knowledge base sources
+ */
+
+export function useListDiscoveredSources<
+  TData = Awaited<ReturnType<typeof listDiscoveredSources>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListDiscoveredSourcesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listDiscoveredSources>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListDiscoveredSourcesQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Run the discovery agent to find new knowledge base sources
+ */
+export const getRunDiscoveryUrl = () => {
+  return `/api/rag/discovery/run`;
+};
+
+export const runDiscovery = async (
+  runDiscoveryBody?: RunDiscoveryBody,
+  options?: RequestInit,
+): Promise<RunDiscovery200> => {
+  return customFetch<RunDiscovery200>(getRunDiscoveryUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(runDiscoveryBody),
+  });
+};
+
+export const getRunDiscoveryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runDiscovery>>,
+    TError,
+    { data: BodyType<RunDiscoveryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runDiscovery>>,
+  TError,
+  { data: BodyType<RunDiscoveryBody> },
+  TContext
+> => {
+  const mutationKey = ["runDiscovery"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runDiscovery>>,
+    { data: BodyType<RunDiscoveryBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return runDiscovery(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RunDiscoveryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runDiscovery>>
+>;
+export type RunDiscoveryMutationBody = BodyType<RunDiscoveryBody>;
+export type RunDiscoveryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Run the discovery agent to find new knowledge base sources
+ */
+export const useRunDiscovery = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runDiscovery>>,
+    TError,
+    { data: BodyType<RunDiscoveryBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof runDiscovery>>,
+  TError,
+  { data: BodyType<RunDiscoveryBody> },
+  TContext
+> => {
+  return useMutation(getRunDiscoveryMutationOptions(options));
+};
+
+/**
+ * @summary Update discovered source status (approve/reject/import)
+ */
+export const getUpdateDiscoveredSourceUrl = (id: number) => {
+  return `/api/rag/discovery/sources/${id}`;
+};
+
+export const updateDiscoveredSource = async (
+  id: number,
+  updateDiscoveredSourceBody: UpdateDiscoveredSourceBody,
+  options?: RequestInit,
+): Promise<DiscoveredSource> => {
+  return customFetch<DiscoveredSource>(getUpdateDiscoveredSourceUrl(id), {
+    ...options,
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateDiscoveredSourceBody),
+  });
+};
+
+export const getUpdateDiscoveredSourceMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateDiscoveredSource>>,
+    TError,
+    { id: number; data: BodyType<UpdateDiscoveredSourceBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateDiscoveredSource>>,
+  TError,
+  { id: number; data: BodyType<UpdateDiscoveredSourceBody> },
+  TContext
+> => {
+  const mutationKey = ["updateDiscoveredSource"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateDiscoveredSource>>,
+    { id: number; data: BodyType<UpdateDiscoveredSourceBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return updateDiscoveredSource(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateDiscoveredSourceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateDiscoveredSource>>
+>;
+export type UpdateDiscoveredSourceMutationBody =
+  BodyType<UpdateDiscoveredSourceBody>;
+export type UpdateDiscoveredSourceMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update discovered source status (approve/reject/import)
+ */
+export const useUpdateDiscoveredSource = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateDiscoveredSource>>,
+    TError,
+    { id: number; data: BodyType<UpdateDiscoveredSourceBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateDiscoveredSource>>,
+  TError,
+  { id: number; data: BodyType<UpdateDiscoveredSourceBody> },
+  TContext
+> => {
+  return useMutation(getUpdateDiscoveredSourceMutationOptions(options));
+};
+
+/**
+ * @summary Delete a discovered source
+ */
+export const getDeleteDiscoveredSourceUrl = (id: number) => {
+  return `/api/rag/discovery/sources/${id}`;
+};
+
+export const deleteDiscoveredSource = async (
+  id: number,
+  options?: RequestInit,
+): Promise<DeleteDiscoveredSource200> => {
+  return customFetch<DeleteDiscoveredSource200>(
+    getDeleteDiscoveredSourceUrl(id),
+    {
+      ...options,
+      method: "DELETE",
+    },
+  );
+};
+
+export const getDeleteDiscoveredSourceMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteDiscoveredSource>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteDiscoveredSource>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  const mutationKey = ["deleteDiscoveredSource"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteDiscoveredSource>>,
+    { id: number }
+  > = (props) => {
+    const { id } = props ?? {};
+
+    return deleteDiscoveredSource(id, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteDiscoveredSourceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteDiscoveredSource>>
+>;
+
+export type DeleteDiscoveredSourceMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a discovered source
+ */
+export const useDeleteDiscoveredSource = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteDiscoveredSource>>,
+    TError,
+    { id: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteDiscoveredSource>>,
+  TError,
+  { id: number },
+  TContext
+> => {
+  return useMutation(getDeleteDiscoveredSourceMutationOptions(options));
+};
+
+/**
+ * @summary Get discovery agent statistics
+ */
+export const getGetDiscoveryStatsUrl = () => {
+  return `/api/rag/discovery/stats`;
+};
+
+export const getDiscoveryStats = async (
+  options?: RequestInit,
+): Promise<GetDiscoveryStats200> => {
+  return customFetch<GetDiscoveryStats200>(getGetDiscoveryStatsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetDiscoveryStatsQueryKey = () => {
+  return [`/api/rag/discovery/stats`] as const;
+};
+
+export const getGetDiscoveryStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getDiscoveryStats>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDiscoveryStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetDiscoveryStatsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getDiscoveryStats>>
+  > = ({ signal }) => getDiscoveryStats({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getDiscoveryStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetDiscoveryStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getDiscoveryStats>>
+>;
+export type GetDiscoveryStatsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get discovery agent statistics
+ */
+
+export function useGetDiscoveryStats<
+  TData = Awaited<ReturnType<typeof getDiscoveryStats>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getDiscoveryStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetDiscoveryStatsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Get OpenClaw gateway configuration

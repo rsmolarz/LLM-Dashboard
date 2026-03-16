@@ -655,6 +655,155 @@ paths:
                         error:
                           type: string
 
+  /rag/discovery/sources:
+    get:
+      operationId: listDiscoveredSources
+      tags: [rag]
+      summary: List discovered knowledge base sources
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, approved, rejected, imported]
+      responses:
+        "200":
+          description: List of discovered sources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DiscoveredSource"
+
+  /rag/discovery/run:
+    post:
+      operationId: runDiscovery
+      tags: [rag]
+      summary: Run the discovery agent to find new knowledge base sources
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category:
+                  type: string
+                customPrompt:
+                  type: string
+      responses:
+        "200":
+          description: Discovery results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [category, discovered, skipped, sources, skippedReasons]
+                properties:
+                  category:
+                    type: string
+                  discovered:
+                    type: integer
+                  skipped:
+                    type: integer
+                  sources:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, title, url]
+                      properties:
+                        id:
+                          type: integer
+                        title:
+                          type: string
+                        url:
+                          type: string
+                  skippedReasons:
+                    type: array
+                    items:
+                      type: string
+
+  /rag/discovery/sources/{id}:
+    patch:
+      operationId: updateDiscoveredSource
+      tags: [rag]
+      summary: Update discovered source status (approve/reject/import)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [approved, rejected, imported]
+      responses:
+        "200":
+          description: Updated source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoveredSource"
+    delete:
+      operationId: deleteDiscoveredSource
+      tags: [rag]
+      summary: Delete a discovered source
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success]
+                properties:
+                  success:
+                    type: boolean
+
+  /rag/discovery/stats:
+    get:
+      operationId: getDiscoveryStats
+      tags: [rag]
+      summary: Get discovery agent statistics
+      responses:
+        "200":
+          description: Discovery stats
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, pending, approved, rejected, imported, byCategory]
+                properties:
+                  total:
+                    type: integer
+                  pending:
+                    type: integer
+                  approved:
+                    type: integer
+                  rejected:
+                    type: integer
+                  imported:
+                    type: integer
+                  byCategory:
+                    type: object
+                    additionalProperties:
+                      type: integer
+
   /openclaw/config:
     get:
       operationId: getOpenclawConfig
@@ -2052,3 +2201,47 @@ components:
       required:
         - task
         - reason
+
+    DiscoveredSource:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        url:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        relevanceScore:
+          type: number
+        status:
+          type: string
+          enum: [pending, approved, rejected, imported]
+        discoveredBy:
+          type: string
+        searchQuery:
+          type: string
+        reasoning:
+          type: string
+        importedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - url
+        - category
+        - description
+        - relevanceScore
+        - status
+        - discoveredBy
+        - searchQuery
+        - reasoning
+        - createdAt

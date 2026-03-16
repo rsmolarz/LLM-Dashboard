@@ -4,7 +4,8 @@ import {
   Brain, Database, BookOpen, Wand2, Plus, Trash2, Loader2, 
   Download, Upload, Star, Play, CheckCircle2, FileText,
   Search, BarChart3, Sparkles, Rocket, ChevronRight, Globe,
-  Link, Package, AlertCircle, ExternalLink, Layers
+  Link, Package, AlertCircle, ExternalLink, Layers, Bot,
+  Zap, Eye, XCircle, RefreshCw, ThumbsUp, ThumbsDown
 } from "lucide-react";
 import {
   useListModelProfiles,
@@ -25,6 +26,11 @@ import {
   useGetRagStats,
   useFetchUrl,
   useBulkImportDocuments,
+  useListDiscoveredSources,
+  useRunDiscovery,
+  useUpdateDiscoveredSource,
+  useDeleteDiscoveredSource,
+  useGetDiscoveryStats,
   useListModels,
   useListConversations,
 } from "@workspace/api-client-react";
@@ -1024,6 +1030,317 @@ function KnowledgeBaseTab() {
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <DiscoveryAgentPanel />
+    </div>
+  );
+}
+
+function DiscoveryAgentPanel() {
+  const queryClient = useQueryClient();
+  const { data: sources = [], isLoading } = useListDiscoveredSources();
+  const { data: stats } = useGetDiscoveryStats();
+  const runDiscovery = useRunDiscovery();
+  const updateSource = useUpdateDiscoveredSource();
+  const deleteSource = useDeleteDiscoveredSource();
+  const fetchUrl = useFetchUrl();
+  const createDoc = useCreateDocument();
+
+  const [discoveryCategory, setDiscoveryCategory] = useState("all");
+  const [customPrompt, setCustomPrompt] = useState("");
+  const [statusFilter, setStatusFilter] = useState("pending");
+  const [lastResult, setLastResult] = useState<any>(null);
+  const [importingId, setImportingId] = useState<number | null>(null);
+
+  const invalidateDiscovery = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/rag/discovery/sources"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/rag/discovery/stats"] });
+  };
+
+  const invalidateRag = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/rag/documents"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/rag/stats"] });
+  };
+
+  const handleRunDiscovery = () => {
+    setLastResult(null);
+    const body: any = {};
+    if (discoveryCategory !== "all") body.category = discoveryCategory;
+    if (customPrompt.trim()) body.customPrompt = customPrompt.trim();
+
+    runDiscovery.mutate({ data: body }, {
+      onSuccess: (data: any) => {
+        setLastResult(data);
+        invalidateDiscovery();
+      },
+      onError: () => {
+        setLastResult({ error: true });
+      }
+    });
+  };
+
+  const handleApprove = (id: number) => {
+    updateSource.mutate({ id, data: { status: "approved" as const } }, { onSuccess: () => invalidateDiscovery() });
+  };
+
+  const handleReject = (id: number) => {
+    updateSource.mutate({ id, data: { status: "rejected" as const } }, { onSuccess: () => invalidateDiscovery() });
+  };
+
+  const [importError, setImportError] = useState<string | null>(null);
+
+  const handleImport = async (source: any) => {
+    setImportingId(source.id);
+    setImportError(null);
+    try {
+      const fetched: any = await fetchUrl.mutateAsync({ data: { url: source.url } });
+
+      await createDoc.mutateAsync({
+        data: {
+          title: source.title,
+          content: fetched.content,
+          category: source.category,
+        }
+      });
+
+      await updateSource.mutateAsync({ id: source.id, data: { status: "imported" as const } });
+      invalidateDiscovery();
+      invalidateRag();
+    } catch (err: any) {
+      setImportError(`Failed to import "${source.title}": ${err?.message || "Could not fetch or save content"}`);
+    } finally {
+      setImportingId(null);
+    }
+  };
+
+  const handleDelete = (id: number) => {
+    deleteSource.mutate({ id }, { onSuccess: () => invalidateDiscovery() });
+  };
+
+  const filteredSources = sources.filter((s: any) =>
+    statusFilter === "all" ? true : s.status === statusFilter
+  );
+
+  const statusColors: Record<string, string> = {
+    pending: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+    approved: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+    rejected: "bg-red-500/20 text-red-400 border-red-500/30",
+    imported: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  };
+
+  return (
+    <div className="bg-gradient-to-br from-purple-500/5 to-blue-500/5 border border-purple-500/20 rounded-2xl p-5 space-y-5">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
+            <Bot className="w-5 h-5 text-purple-400" />
+          </div>
+          <div>
+            <h4 className="font-semibold text-white flex items-center gap-2">
+              Discovery Agent
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-500/20 text-purple-400 border border-purple-500/30">AI-Powered</span>
+            </h4>
+            <p className="text-xs text-muted-foreground">Continuously finds new databases and knowledge sources using your LLM</p>
+          </div>
+        </div>
+        {stats && (
+          <div className="flex gap-3 text-xs">
+            <span className="text-muted-foreground">Total: <span className="text-white font-medium">{stats.total}</span></span>
+            <span className="text-amber-400">Pending: {stats.pending}</span>
+            <span className="text-emerald-400">Approved: {stats.approved}</span>
+            <span className="text-blue-400">Imported: {stats.imported}</span>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-black/30 rounded-xl p-4 space-y-3 border border-white/5">
+        <div className="flex items-center gap-2">
+          <Zap className="w-4 h-4 text-amber-400" />
+          <span className="text-sm font-medium text-white">Run Discovery</span>
+        </div>
+        <div className="flex gap-2">
+          <select
+            value={discoveryCategory}
+            onChange={(e) => setDiscoveryCategory(e.target.value)}
+            className="bg-[#18181B] border border-white/10 rounded-lg px-3 py-2 text-sm text-white w-40"
+          >
+            <option value="all">Random Category</option>
+            {EXAMPLE_CATEGORIES.filter((c) => c.id !== "all").map((cat) => (
+              <option key={cat.id} value={cat.id}>{cat.label}</option>
+            ))}
+          </select>
+          <Input
+            value={customPrompt}
+            onChange={(e) => setCustomPrompt(e.target.value)}
+            placeholder="Custom search prompt (optional)..."
+            className="flex-1"
+          />
+          <Button
+            onClick={handleRunDiscovery}
+            disabled={runDiscovery.isPending}
+            className="gap-1.5 bg-purple-600 hover:bg-purple-700"
+          >
+            {runDiscovery.isPending ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Discovering...</>
+            ) : (
+              <><Sparkles className="w-4 h-4" /> Discover</>
+            )}
+          </Button>
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          The agent uses your Ollama LLM to research and find relevant databases, APIs, and data sources. Results are saved for your review.
+        </p>
+      </div>
+
+      {runDiscovery.isPending && (
+        <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 flex items-center gap-3">
+          <div className="relative">
+            <Bot className="w-6 h-6 text-purple-400" />
+            <div className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 bg-amber-400 rounded-full animate-pulse" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-purple-300">Discovery Agent is searching...</p>
+            <p className="text-[10px] text-muted-foreground">This may take up to 2 minutes depending on your Ollama server speed</p>
+          </div>
+        </div>
+      )}
+
+      {lastResult && !lastResult.error && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+          <p className="text-sm font-medium text-emerald-400 mb-1">
+            Found {lastResult.discovered} new sources in "{lastResult.category}"
+            {lastResult.skipped > 0 && <span className="text-muted-foreground"> · {lastResult.skipped} skipped</span>}
+          </p>
+          {lastResult.sources?.map((s: any) => (
+            <p key={s.id} className="text-xs text-muted-foreground">+ {s.title}</p>
+          ))}
+        </div>
+      )}
+
+      {lastResult?.error && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+          <p className="text-xs text-red-400">Discovery failed. Make sure your Ollama server is running and accessible.</p>
+        </div>
+      )}
+
+      {importError && (
+        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+            <p className="text-xs text-red-400">{importError}</p>
+          </div>
+          <button onClick={() => setImportError(null)} className="text-red-400 hover:text-red-300 shrink-0">
+            <XCircle className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1.5">
+          {["pending", "approved", "imported", "rejected", "all"].map((status) => (
+            <button
+              key={status}
+              onClick={() => setStatusFilter(status)}
+              className={cn(
+                "px-2.5 py-1 rounded-full text-[11px] font-medium transition-all border capitalize",
+                statusFilter === status
+                  ? "bg-primary/20 border-primary/40 text-primary"
+                  : "bg-black/20 border-white/10 text-muted-foreground hover:border-white/20"
+              )}
+            >
+              {status}
+              <span className="ml-1 opacity-60">
+                {status === "all"
+                  ? sources.length
+                  : sources.filter((s: any) => s.status === status).length}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-primary" /></div>
+      ) : filteredSources.length === 0 ? (
+        <div className="bg-black/20 rounded-xl p-8 text-center border border-white/5">
+          <Bot className="w-10 h-10 mx-auto mb-3 text-muted-foreground/30" />
+          <p className="text-sm text-muted-foreground">No {statusFilter !== "all" ? statusFilter : ""} discovered sources yet</p>
+          <p className="text-[10px] text-muted-foreground/60 mt-1">Click "Discover" above to find new databases</p>
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+          {filteredSources.map((source: any) => (
+            <div
+              key={source.id}
+              className="bg-black/30 rounded-xl p-4 border border-white/5 hover:border-white/15 transition-all group"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="text-sm font-medium text-white truncate">{source.title}</p>
+                    <span className={cn("px-1.5 py-0.5 rounded text-[9px] font-medium border shrink-0", statusColors[source.status] || statusColors.pending)}>
+                      {source.status}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded text-[9px] font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                      {source.category}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground line-clamp-2">{source.description}</p>
+                  {source.reasoning && (
+                    <p className="text-[10px] text-purple-400/70 mt-1 line-clamp-1 italic">{source.reasoning}</p>
+                  )}
+                  <div className="flex items-center gap-1 mt-1.5 text-[10px] text-muted-foreground/50">
+                    <ExternalLink className="w-2.5 h-2.5" />
+                    <a href={source.url} target="_blank" rel="noopener noreferrer" className="hover:text-primary truncate">{source.url}</a>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {source.status === "pending" && (
+                    <>
+                      <button
+                        onClick={() => handleApprove(source.id)}
+                        className="p-1.5 hover:bg-emerald-500/20 text-emerald-400 rounded-md transition-all"
+                        title="Approve"
+                      >
+                        <ThumbsUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleReject(source.id)}
+                        className="p-1.5 hover:bg-red-500/20 text-red-400 rounded-md transition-all"
+                        title="Reject"
+                      >
+                        <ThumbsDown className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+                  {(source.status === "pending" || source.status === "approved") && (
+                    <button
+                      onClick={() => handleImport(source)}
+                      disabled={importingId === source.id}
+                      className="p-1.5 hover:bg-blue-500/20 text-blue-400 rounded-md transition-all"
+                      title="Fetch & Import to KB"
+                    >
+                      {importingId === source.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Download className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDelete(source.id)}
+                    className="p-1.5 hover:bg-red-500/20 text-red-400 rounded-md transition-all"
+                    title="Delete"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
             </div>
           ))}
         </div>

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq, asc, sql, ilike } from "drizzle-orm";
-import { db, documentsTable, documentChunksTable } from "@workspace/db";
+import { eq, asc, desc, sql, ilike } from "drizzle-orm";
+import { db, documentsTable, documentChunksTable, discoveredSourcesTable, llmConfigTable } from "@workspace/db";
 import {
   ListDocumentsResponse,
   CreateDocumentBody,
@@ -350,6 +350,257 @@ router.post("/rag/bulk-import", async (req, res): Promise<void> => {
   const failed = results.filter((r) => r.status === "error").length;
 
   res.json({ total: documents.length, succeeded, failed, results });
+});
+
+async function getOllamaUrl(): Promise<string | null> {
+  const [config] = await db.select().from(llmConfigTable).limit(1);
+  return config?.serverUrl ?? null;
+}
+
+const DISCOVERY_CATEGORIES = [
+  "market-data", "medical", "hedge-fund", "alt-data", "influencer",
+  "research", "code", "security", "business",
+];
+
+router.get("/rag/discovery/sources", async (req, res): Promise<void> => {
+  const status = (req.query.status as string) || undefined;
+
+  let query = db
+    .select()
+    .from(discoveredSourcesTable)
+    .orderBy(desc(discoveredSourcesTable.createdAt));
+
+  if (status) {
+    const results = await db
+      .select()
+      .from(discoveredSourcesTable)
+      .where(eq(discoveredSourcesTable.status, status))
+      .orderBy(desc(discoveredSourcesTable.createdAt));
+    res.json(results);
+    return;
+  }
+
+  const results = await query;
+  res.json(results);
+});
+
+router.post("/rag/discovery/run", async (req, res): Promise<void> => {
+  const body = req.body || {};
+  const category = typeof body.category === "string" ? body.category : undefined;
+  const customPrompt = typeof body.customPrompt === "string" ? body.customPrompt.slice(0, 2000) : undefined;
+
+  const ollamaUrl = await getOllamaUrl();
+  if (!ollamaUrl) {
+    res.status(503).json({ error: "Ollama server not configured" });
+    return;
+  }
+
+  const existingSources = await db.select({ url: discoveredSourcesTable.url }).from(discoveredSourcesTable);
+  const existingUrls = existingSources.map((s) => s.url);
+
+  const existingDocs = await db.select({ title: documentsTable.title }).from(documentsTable);
+  const existingTitles = existingDocs.map((d) => d.title);
+
+  const targetCategory = category && DISCOVERY_CATEGORIES.includes(category)
+    ? category : DISCOVERY_CATEGORIES[Math.floor(Math.random() * DISCOVERY_CATEGORIES.length)];
+
+  const categoryDescriptions: Record<string, string> = {
+    "market-data": "financial market data, stock APIs, economic indicators, SEC filings, earnings data, forex, commodities",
+    "medical": "medical research databases, clinical guidelines, otolaryngology/ENT, PubMed, biomedical literature, surgical datasets, voice/speech databases",
+    "hedge-fund": "hedge fund databases, institutional investor tracking, fund performance data, allocator intelligence",
+    "alt-data": "alternative data for finance, satellite imagery, supply chain data, web scraping, credit card spending, job posting data",
+    "influencer": "influencer databases, social media analytics, creator marketplaces, audience demographics, engagement tracking",
+    "research": "academic research datasets, AI/ML datasets, NLP corpora, scientific papers, open data repositories",
+    "code": "programming documentation, API references, developer tools, framework docs, open-source projects",
+    "security": "cybersecurity databases, vulnerability databases, threat intelligence, security frameworks, compliance standards",
+    "business": "business intelligence, CRM data, marketing analytics, cloud services, productivity tools, SaaS platforms",
+  };
+
+  const categoryDesc = categoryDescriptions[targetCategory] || targetCategory;
+
+  const prompt = customPrompt
+    ? `${customPrompt}\n\nFor each database/source, provide a JSON array with objects containing: title, url, category, description, reasoning (why this is valuable). Return ONLY a valid JSON array, no other text.`
+    : `You are a data intelligence research agent. Find 5 high-quality, publicly accessible databases, APIs, or data sources related to: ${categoryDesc}.
+
+Requirements:
+- Each source must have a real, working URL
+- Focus on sources that provide data APIs, documentation, or downloadable datasets
+- Prefer sources with free tiers or public access
+- Avoid sources already known: ${existingTitles.slice(0, 20).join(", ")}
+- Do not include these URLs: ${existingUrls.slice(0, 20).join(", ")}
+- Category should be: ${targetCategory}
+
+Return ONLY a valid JSON array with objects containing these exact fields:
+- "title": short descriptive name
+- "url": the actual URL of the resource
+- "category": "${targetCategory}"
+- "description": 1-2 sentence description of what data it provides and why it's useful
+- "reasoning": why this source is valuable for AI agents and data intelligence
+
+Example format:
+[{"title":"Example DB","url":"https://example.com","category":"${targetCategory}","description":"A useful database.","reasoning":"It provides unique data."}]
+
+Return ONLY the JSON array, nothing else.`;
+
+  try {
+    const ollamaRes = await fetch(`${ollamaUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "llama3.2:latest",
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+        options: { temperature: 0.8 },
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!ollamaRes.ok) {
+      const text = await ollamaRes.text();
+      res.status(502).json({ error: `Ollama error: ${text}` });
+      return;
+    }
+
+    const data = await ollamaRes.json() as { message?: { content?: string } };
+    const responseText = data.message?.content ?? "";
+
+    const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) {
+      res.status(500).json({ error: "Failed to parse discovery results", raw: responseText });
+      return;
+    }
+
+    let discovered: Array<{
+      title: string;
+      url: string;
+      category: string;
+      description: string;
+      reasoning: string;
+    }>;
+
+    try {
+      discovered = JSON.parse(jsonMatch[0]);
+    } catch {
+      res.status(500).json({ error: "Invalid JSON from LLM", raw: responseText });
+      return;
+    }
+
+    const saved: Array<{ id: number; title: string; url: string }> = [];
+    const skipped: string[] = [];
+
+    for (const item of discovered) {
+      if (!item.title || !item.url) continue;
+
+      try {
+        new URL(item.url);
+      } catch {
+        skipped.push(`${item.title}: invalid URL`);
+        continue;
+      }
+
+      if (existingUrls.includes(item.url)) {
+        skipped.push(`${item.title}: already discovered`);
+        continue;
+      }
+
+      try {
+        const [inserted] = await db.insert(discoveredSourcesTable).values({
+          title: item.title,
+          url: item.url,
+          category: item.category || targetCategory,
+          description: item.description || "",
+          relevanceScore: 0.7,
+          status: "pending",
+          discoveredBy: "discovery-agent",
+          searchQuery: customPrompt || `auto-discovery: ${targetCategory}`,
+          reasoning: item.reasoning || "",
+        }).returning();
+
+        saved.push({ id: inserted.id, title: inserted.title, url: inserted.url });
+        existingUrls.push(item.url);
+      } catch (err: any) {
+        skipped.push(`${item.title}: ${err?.message ?? "insert error"}`);
+      }
+    }
+
+    res.json({
+      category: targetCategory,
+      discovered: saved.length,
+      skipped: skipped.length,
+      sources: saved,
+      skippedReasons: skipped,
+    });
+  } catch (err: any) {
+    if (err?.name === "AbortError" || err?.name === "TimeoutError") {
+      res.status(408).json({ error: "Discovery timed out — Ollama may be slow" });
+    } else {
+      res.status(502).json({ error: `Discovery failed: ${err?.message ?? "Unknown error"}` });
+    }
+  }
+});
+
+router.patch("/rag/discovery/sources/:id", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+
+  const { status } = req.body as { status?: string };
+  if (!status || !["approved", "rejected", "imported"].includes(status)) {
+    res.status(400).json({ error: "status must be approved, rejected, or imported" });
+    return;
+  }
+
+  const updates: Record<string, any> = { status };
+  if (status === "imported") {
+    updates.importedAt = new Date();
+  }
+
+  const [updated] = await db
+    .update(discoveredSourcesTable)
+    .set(updates)
+    .where(eq(discoveredSourcesTable.id, id))
+    .returning();
+
+  if (!updated) {
+    res.status(404).json({ error: "Source not found" });
+    return;
+  }
+
+  res.json(updated);
+});
+
+router.delete("/rag/discovery/sources/:id", async (req, res): Promise<void> => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid ID" }); return; }
+
+  const [deleted] = await db
+    .delete(discoveredSourcesTable)
+    .where(eq(discoveredSourcesTable.id, id))
+    .returning();
+
+  if (!deleted) {
+    res.status(404).json({ error: "Source not found" });
+    return;
+  }
+
+  res.json({ success: true });
+});
+
+router.get("/rag/discovery/stats", async (_req, res): Promise<void> => {
+  const all = await db.select().from(discoveredSourcesTable);
+  const stats = {
+    total: all.length,
+    pending: all.filter((s) => s.status === "pending").length,
+    approved: all.filter((s) => s.status === "approved").length,
+    rejected: all.filter((s) => s.status === "rejected").length,
+    imported: all.filter((s) => s.status === "imported").length,
+    byCategory: {} as Record<string, number>,
+  };
+
+  for (const source of all) {
+    stats.byCategory[source.category] = (stats.byCategory[source.category] || 0) + 1;
+  }
+
+  res.json(stats);
 });
 
 export default router;

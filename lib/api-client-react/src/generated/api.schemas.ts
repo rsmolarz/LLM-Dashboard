@@ -441,6 +441,31 @@ export interface RouteTaskResponse {
   reason: string;
 }
 
+export type DiscoveredSourceStatus =
+  (typeof DiscoveredSourceStatus)[keyof typeof DiscoveredSourceStatus];
+
+export const DiscoveredSourceStatus = {
+  pending: "pending",
+  approved: "approved",
+  rejected: "rejected",
+  imported: "imported",
+} as const;
+
+export interface DiscoveredSource {
+  id: number;
+  title: string;
+  url: string;
+  category: string;
+  description: string;
+  relevanceScore: number;
+  status: DiscoveredSourceStatus;
+  discoveredBy: string;
+  searchQuery: string;
+  reasoning: string;
+  importedAt?: string | null;
+  createdAt: string;
+}
+
 export type FetchUrlBody = {
   url: string;
 };
@@ -483,6 +508,67 @@ export type BulkImportDocuments200 = {
   succeeded: number;
   failed: number;
   results: BulkImportDocuments200ResultsItem[];
+};
+
+export type ListDiscoveredSourcesParams = {
+  status?: ListDiscoveredSourcesStatus;
+};
+
+export type ListDiscoveredSourcesStatus =
+  (typeof ListDiscoveredSourcesStatus)[keyof typeof ListDiscoveredSourcesStatus];
+
+export const ListDiscoveredSourcesStatus = {
+  pending: "pending",
+  approved: "approved",
+  rejected: "rejected",
+  imported: "imported",
+} as const;
+
+export type RunDiscoveryBody = {
+  category?: string;
+  customPrompt?: string;
+};
+
+export type RunDiscovery200SourcesItem = {
+  id: number;
+  title: string;
+  url: string;
+};
+
+export type RunDiscovery200 = {
+  category: string;
+  discovered: number;
+  skipped: number;
+  sources: RunDiscovery200SourcesItem[];
+  skippedReasons: string[];
+};
+
+export type UpdateDiscoveredSourceBodyStatus =
+  (typeof UpdateDiscoveredSourceBodyStatus)[keyof typeof UpdateDiscoveredSourceBodyStatus];
+
+export const UpdateDiscoveredSourceBodyStatus = {
+  approved: "approved",
+  rejected: "rejected",
+  imported: "imported",
+} as const;
+
+export type UpdateDiscoveredSourceBody = {
+  status: UpdateDiscoveredSourceBodyStatus;
+};
+
+export type DeleteDiscoveredSource200 = {
+  success: boolean;
+};
+
+export type GetDiscoveryStats200ByCategory = { [key: string]: number };
+
+export type GetDiscoveryStats200 = {
+  total: number;
+  pending: number;
+  approved: number;
+  rejected: number;
+  imported: number;
+  byCategory: GetDiscoveryStats200ByCategory;
 };
 
 export type GetAgentLogsParams = {

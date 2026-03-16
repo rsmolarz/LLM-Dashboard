@@ -462,6 +462,102 @@ export const BulkImportDocumentsResponse = zod.object({
 });
 
 /**
+ * @summary List discovered knowledge base sources
+ */
+export const ListDiscoveredSourcesQueryParams = zod.object({
+  status: zod.enum(["pending", "approved", "rejected", "imported"]).optional(),
+});
+
+export const ListDiscoveredSourcesResponseItem = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  url: zod.string(),
+  category: zod.string(),
+  description: zod.string(),
+  relevanceScore: zod.number(),
+  status: zod.enum(["pending", "approved", "rejected", "imported"]),
+  discoveredBy: zod.string(),
+  searchQuery: zod.string(),
+  reasoning: zod.string(),
+  importedAt: zod.date().nullish(),
+  createdAt: zod.date(),
+});
+export const ListDiscoveredSourcesResponse = zod.array(
+  ListDiscoveredSourcesResponseItem,
+);
+
+/**
+ * @summary Run the discovery agent to find new knowledge base sources
+ */
+export const RunDiscoveryBody = zod.object({
+  category: zod.string().optional(),
+  customPrompt: zod.string().optional(),
+});
+
+export const RunDiscoveryResponse = zod.object({
+  category: zod.string(),
+  discovered: zod.number(),
+  skipped: zod.number(),
+  sources: zod.array(
+    zod.object({
+      id: zod.number(),
+      title: zod.string(),
+      url: zod.string(),
+    }),
+  ),
+  skippedReasons: zod.array(zod.string()),
+});
+
+/**
+ * @summary Update discovered source status (approve/reject/import)
+ */
+export const UpdateDiscoveredSourceParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateDiscoveredSourceBody = zod.object({
+  status: zod.enum(["approved", "rejected", "imported"]),
+});
+
+export const UpdateDiscoveredSourceResponse = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  url: zod.string(),
+  category: zod.string(),
+  description: zod.string(),
+  relevanceScore: zod.number(),
+  status: zod.enum(["pending", "approved", "rejected", "imported"]),
+  discoveredBy: zod.string(),
+  searchQuery: zod.string(),
+  reasoning: zod.string(),
+  importedAt: zod.date().nullish(),
+  createdAt: zod.date(),
+});
+
+/**
+ * @summary Delete a discovered source
+ */
+export const DeleteDiscoveredSourceParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DeleteDiscoveredSourceResponse = zod.object({
+  success: zod.boolean(),
+});
+
+/**
+ * @summary Get discovery agent statistics
+ */
+export const GetDiscoveryStatsResponse = zod.object({
+  total: zod.number(),
+  pending: zod.number(),
+  approved: zod.number(),
+  rejected: zod.number(),
+  imported: zod.number(),
+  byCategory: zod.record(zod.string(), zod.number()),
+});
+
+/**
  * @summary Get OpenClaw gateway configuration
  */
 export const GetOpenclawConfigResponse = zod.object({
