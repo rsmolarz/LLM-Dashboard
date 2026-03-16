@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Brain, Terminal, Bot, Search } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
 
@@ -12,6 +12,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/chat", label: "Chat", icon: MessageSquare },
     { href: "/training", label: "Training", icon: Brain },
     { href: "/research", label: "Research", icon: Search },
+    { href: "/vision", label: "Vision", icon: Eye },
     { href: "/agents", label: "Agents", icon: Bot },
   ];
 

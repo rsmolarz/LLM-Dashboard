@@ -12,6 +12,7 @@ import vpsDatabaseRouter from "./vps-database";
 import vpsTrainingRouter from "./vps-training";
 import autoCollectorRouter from "./auto-collector";
 import deepResearchRouter from "./deep-research";
+import mediaRouter from "./media";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use(vpsDatabaseRouter);
 router.use(vpsTrainingRouter);
 router.use(autoCollectorRouter);
 router.use(deepResearchRouter);
+router.use(mediaRouter);
 
 export default router;

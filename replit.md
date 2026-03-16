@@ -150,3 +150,5 @@ Utility scripts package. Each script is a `.ts` file in `src/` with a correspond
 - **Vite config defaults**: PORT and BASE_PATH have fallback defaults so builds succeed without env vars set
 - **Deep Research**: Multi-model research engine at `/research`. "Deep" mode fans out to all local Ollama models in parallel; "Extensive" mode adds Claude (Sonnet 4-6) and GPT (5.2) via Replit AI Integrations. Results synthesized into a unified analysis.
 - **AI Integrations**: OpenAI (gpt-5.2) via `@workspace/integrations-openai-ai-server`, Anthropic (claude-sonnet-4-6) via `@workspace/integrations-anthropic-ai`. Both use Replit AI Integrations proxy (no user API keys needed, billed to Replit credits).
+- **Vision Studio**: `/vision` page with image generation (GPT-Image-1) and vision analysis (llava:13b on VPS). Domain presets for Medical/ENT (audiograms, scopes, CT), Finance/Hedge Fund (charts, documents), Social Media (posts, competitors), Real Estate (properties, staging). Express body limit set to 20MB for image uploads.
+- **VPS models**: qwen2.5:7b, deepseek-r1:8b, meditron:7b, mistral:latest, llama3.2:latest, llava:13b (vision)
