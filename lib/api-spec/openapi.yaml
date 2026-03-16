@@ -1,6 +1,5 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
   description: API specification
@@ -18,13 +17,18 @@ tags:
     description: Model management
   - name: chat
     description: Chat history
+  - name: model-profiles
+    description: Custom model profiles
+  - name: training-data
+    description: Training data collection
+  - name: rag
+    description: RAG knowledge base
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -67,7 +71,7 @@ paths:
     get:
       operationId: getLlmStatus
       tags: [llm-proxy]
-      summary: Get Ollama server status (health, running models, version)
+      summary: Get Ollama server status
       responses:
         "200":
           description: Server status
@@ -80,7 +84,7 @@ paths:
     get:
       operationId: listModels
       tags: [llm-models]
-      summary: List models available on the Ollama server
+      summary: List models available on Ollama
       responses:
         "200":
           description: List of models
@@ -95,7 +99,7 @@ paths:
     post:
       operationId: pullModel
       tags: [llm-models]
-      summary: Pull a model from the Ollama registry
+      summary: Pull a model from Ollama registry
       requestBody:
         required: true
         content:
@@ -114,7 +118,7 @@ paths:
     delete:
       operationId: deleteModel
       tags: [llm-models]
-      summary: Delete a model from the Ollama server
+      summary: Delete a model from Ollama
       parameters:
         - name: name
           in: path
@@ -133,7 +137,7 @@ paths:
     get:
       operationId: listRunningModels
       tags: [llm-models]
-      summary: List currently running/loaded models
+      summary: List currently running models
       responses:
         "200":
           description: List of running models
@@ -148,7 +152,7 @@ paths:
     post:
       operationId: sendChatMessage
       tags: [llm-proxy]
-      summary: Send a chat completion request to the Ollama server
+      summary: Send a chat completion request to Ollama
       requestBody:
         required: true
         content:
@@ -167,7 +171,7 @@ paths:
     get:
       operationId: getSetupScript
       tags: [llm-config]
-      summary: Generate a bash setup script for Ollama + OpenWebUI
+      summary: Generate setup script for Ollama
       responses:
         "200":
           description: Bash script content
@@ -212,7 +216,7 @@ paths:
     delete:
       operationId: deleteConversation
       tags: [chat]
-      summary: Delete a conversation and its messages
+      summary: Delete a conversation
       parameters:
         - name: id
           in: path
@@ -266,6 +270,299 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ChatMessage"
+
+  /chat/messages/{messageId}/rate:
+    patch:
+      operationId: rateMessage
+      tags: [chat]
+      summary: Rate a chat message
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RateMessageInput"
+      responses:
+        "200":
+          description: Rated message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatMessage"
+
+  /model-profiles:
+    get:
+      operationId: listModelProfiles
+      tags: [model-profiles]
+      summary: List all custom model profiles
+      responses:
+        "200":
+          description: List of profiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ModelProfile"
+    post:
+      operationId: createModelProfile
+      tags: [model-profiles]
+      summary: Create a new model profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelProfileInput"
+      responses:
+        "201":
+          description: Created profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelProfile"
+
+  /model-profiles/{id}:
+    put:
+      operationId: updateModelProfile
+      tags: [model-profiles]
+      summary: Update a model profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ModelProfileInput"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelProfile"
+    delete:
+      operationId: deleteModelProfile
+      tags: [model-profiles]
+      summary: Delete a model profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /model-profiles/{id}/deploy:
+    post:
+      operationId: deployModelProfile
+      tags: [model-profiles]
+      summary: Deploy a profile to Ollama as a custom Modelfile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Deploy result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeployProfileResponse"
+
+  /training/data:
+    get:
+      operationId: listTrainingData
+      tags: [training-data]
+      summary: List training data entries
+      responses:
+        "200":
+          description: Training data list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrainingDataEntry"
+    post:
+      operationId: addTrainingData
+      tags: [training-data]
+      summary: Add a training data entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrainingDataInput"
+      responses:
+        "201":
+          description: Created entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingDataEntry"
+
+  /training/data/{id}:
+    delete:
+      operationId: deleteTrainingData
+      tags: [training-data]
+      summary: Delete a training data entry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /training/data/export:
+    post:
+      operationId: exportTrainingData
+      tags: [training-data]
+      summary: Export training data as JSONL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportTrainingDataInput"
+      responses:
+        "200":
+          description: JSONL export
+          content:
+            application/jsonl:
+              schema:
+                type: string
+
+  /training/data/collect:
+    post:
+      operationId: collectFromConversation
+      tags: [training-data]
+      summary: Collect training pairs from a conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CollectTrainingInput"
+      responses:
+        "200":
+          description: Collected pairs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectTrainingResponse"
+
+  /training/stats:
+    get:
+      operationId: getTrainingStats
+      tags: [training-data]
+      summary: Get training data statistics
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrainingStats"
+
+  /rag/documents:
+    get:
+      operationId: listDocuments
+      tags: [rag]
+      summary: List all knowledge base documents
+      responses:
+        "200":
+          description: Documents list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RagDocument"
+    post:
+      operationId: createDocument
+      tags: [rag]
+      summary: Upload a document to the knowledge base
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDocumentInput"
+      responses:
+        "201":
+          description: Created document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagDocument"
+
+  /rag/documents/{id}:
+    delete:
+      operationId: deleteDocument
+      tags: [rag]
+      summary: Delete a document
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /rag/search:
+    post:
+      operationId: searchDocuments
+      tags: [rag]
+      summary: Search knowledge base for relevant chunks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchDocumentsInput"
+      responses:
+        "200":
+          description: Matching chunks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchResult"
+
+  /rag/stats:
+    get:
+      operationId: getRagStats
+      tags: [rag]
+      summary: Get knowledge base statistics
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RagStats"
 
 components:
   schemas:
@@ -424,6 +721,8 @@ components:
             $ref: "#/components/schemas/ChatRequestMessage"
         temperature:
           type: number
+        useRag:
+          type: boolean
       required:
         - model
         - messages
@@ -450,6 +749,8 @@ components:
           type: ["number", "null"]
         evalCount:
           type: ["integer", "null"]
+        ragContext:
+          type: ["string", "null"]
       required:
         - content
 
@@ -497,6 +798,8 @@ components:
           type: string
         content:
           type: string
+        rating:
+          type: ["integer", "null"]
         createdAt:
           type: string
           format: date-time
@@ -517,3 +820,275 @@ components:
       required:
         - role
         - content
+
+    RateMessageInput:
+      type: object
+      properties:
+        rating:
+          type: integer
+      required:
+        - rating
+
+    ModelProfile:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        baseModel:
+          type: string
+        systemPrompt:
+          type: string
+        temperature:
+          type: number
+        topP:
+          type: number
+        topK:
+          type: integer
+        contextLength:
+          type: integer
+        repeatPenalty:
+          type: number
+        deployed:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - baseModel
+        - systemPrompt
+        - temperature
+        - topP
+        - topK
+        - contextLength
+        - repeatPenalty
+        - deployed
+        - createdAt
+        - updatedAt
+
+    ModelProfileInput:
+      type: object
+      properties:
+        name:
+          type: string
+        baseModel:
+          type: string
+        systemPrompt:
+          type: string
+        temperature:
+          type: number
+        topP:
+          type: number
+        topK:
+          type: integer
+        contextLength:
+          type: integer
+        repeatPenalty:
+          type: number
+      required:
+        - name
+        - baseModel
+
+    DeployProfileResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+        - message
+
+    TrainingDataEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        inputText:
+          type: string
+        outputText:
+          type: string
+        systemPrompt:
+          type: string
+        category:
+          type: string
+        quality:
+          type: integer
+        source:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - inputText
+        - outputText
+        - systemPrompt
+        - category
+        - quality
+        - source
+        - createdAt
+
+    TrainingDataInput:
+      type: object
+      properties:
+        inputText:
+          type: string
+        outputText:
+          type: string
+        systemPrompt:
+          type: string
+        category:
+          type: string
+        quality:
+          type: integer
+      required:
+        - inputText
+        - outputText
+
+    ExportTrainingDataInput:
+      type: object
+      properties:
+        format:
+          type: string
+        minQuality:
+          type: integer
+        category:
+          type: ["string", "null"]
+      required:
+        - format
+
+    CollectTrainingInput:
+      type: object
+      properties:
+        conversationId:
+          type: integer
+        minRating:
+          type: integer
+      required:
+        - conversationId
+
+    CollectTrainingResponse:
+      type: object
+      properties:
+        collected:
+          type: integer
+        message:
+          type: string
+      required:
+        - collected
+        - message
+
+    TrainingStats:
+      type: object
+      properties:
+        totalEntries:
+          type: integer
+        byCategory:
+          type: object
+          additionalProperties:
+            type: integer
+        byQuality:
+          type: object
+          additionalProperties:
+            type: integer
+        avgQuality:
+          type: number
+      required:
+        - totalEntries
+        - byCategory
+        - byQuality
+        - avgQuality
+
+    RagDocument:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        category:
+          type: string
+        chunksCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - category
+        - chunksCount
+        - createdAt
+        - updatedAt
+
+    CreateDocumentInput:
+      type: object
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        category:
+          type: string
+      required:
+        - title
+        - content
+
+    SearchDocumentsInput:
+      type: object
+      properties:
+        query:
+          type: string
+        maxResults:
+          type: integer
+        category:
+          type: ["string", "null"]
+      required:
+        - query
+
+    SearchResult:
+      type: object
+      properties:
+        chunkId:
+          type: integer
+        documentId:
+          type: integer
+        documentTitle:
+          type: string
+        content:
+          type: string
+        relevance:
+          type: number
+      required:
+        - chunkId
+        - documentId
+        - documentTitle
+        - content
+        - relevance
+
+    RagStats:
+      type: object
+      properties:
+        totalDocuments:
+          type: integer
+        totalChunks:
+          type: integer
+        byCategory:
+          type: object
+          additionalProperties:
+            type: integer
+      required:
+        - totalDocuments
+        - totalChunks
+        - byCategory

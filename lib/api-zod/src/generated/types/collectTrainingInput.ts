@@ -6,12 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface ChatMessage {
-  id: number;
+export interface CollectTrainingInput {
   conversationId: number;
-  role: string;
-  content: string;
-  /** @nullable */
-  rating?: number | null;
-  createdAt: Date;
+  minRating?: number;
 }

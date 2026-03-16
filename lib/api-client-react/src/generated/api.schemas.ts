@@ -80,6 +80,7 @@ export interface ChatRequest {
   model: string;
   messages: ChatRequestMessage[];
   temperature?: number;
+  useRag?: boolean;
 }
 
 export interface ChatResponse {
@@ -90,6 +91,8 @@ export interface ChatResponse {
   totalDuration?: number | null;
   /** @nullable */
   evalCount?: number | null;
+  /** @nullable */
+  ragContext?: string | null;
 }
 
 export interface Conversation {
@@ -110,10 +113,132 @@ export interface ChatMessage {
   conversationId: number;
   role: string;
   content: string;
+  /** @nullable */
+  rating?: number | null;
   createdAt: string;
 }
 
 export interface AddMessageInput {
   role: string;
   content: string;
+}
+
+export interface RateMessageInput {
+  rating: number;
+}
+
+export interface ModelProfile {
+  id: number;
+  name: string;
+  baseModel: string;
+  systemPrompt: string;
+  temperature: number;
+  topP: number;
+  topK: number;
+  contextLength: number;
+  repeatPenalty: number;
+  deployed: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModelProfileInput {
+  name: string;
+  baseModel: string;
+  systemPrompt?: string;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+  contextLength?: number;
+  repeatPenalty?: number;
+}
+
+export interface DeployProfileResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface TrainingDataEntry {
+  id: number;
+  inputText: string;
+  outputText: string;
+  systemPrompt: string;
+  category: string;
+  quality: number;
+  source: string;
+  createdAt: string;
+}
+
+export interface TrainingDataInput {
+  inputText: string;
+  outputText: string;
+  systemPrompt?: string;
+  category?: string;
+  quality?: number;
+}
+
+export interface ExportTrainingDataInput {
+  format: string;
+  minQuality?: number;
+  /** @nullable */
+  category?: string | null;
+}
+
+export interface CollectTrainingInput {
+  conversationId: number;
+  minRating?: number;
+}
+
+export interface CollectTrainingResponse {
+  collected: number;
+  message: string;
+}
+
+export type TrainingStatsByCategory = { [key: string]: number };
+
+export type TrainingStatsByQuality = { [key: string]: number };
+
+export interface TrainingStats {
+  totalEntries: number;
+  byCategory: TrainingStatsByCategory;
+  byQuality: TrainingStatsByQuality;
+  avgQuality: number;
+}
+
+export interface RagDocument {
+  id: number;
+  title: string;
+  category: string;
+  chunksCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateDocumentInput {
+  title: string;
+  content: string;
+  category?: string;
+}
+
+export interface SearchDocumentsInput {
+  query: string;
+  maxResults?: number;
+  /** @nullable */
+  category?: string | null;
+}
+
+export interface SearchResult {
+  chunkId: number;
+  documentId: number;
+  documentTitle: string;
+  content: string;
+  relevance: number;
+}
+
+export type RagStatsByCategory = { [key: string]: number };
+
+export interface RagStats {
+  totalDocuments: number;
+  totalChunks: number;
+  byCategory: RagStatsByCategory;
 }

@@ -8,7 +8,6 @@
 import * as zod from "zod";
 
 /**
- * Returns server health status
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({
@@ -49,7 +48,7 @@ export const SaveLlmConfigResponse = zod.object({
 });
 
 /**
- * @summary Get Ollama server status (health, running models, version)
+ * @summary Get Ollama server status
  */
 export const GetLlmStatusResponse = zod.object({
   online: zod.boolean(),
@@ -61,7 +60,7 @@ export const GetLlmStatusResponse = zod.object({
 });
 
 /**
- * @summary List models available on the Ollama server
+ * @summary List models available on Ollama
  */
 export const ListModelsResponseItem = zod.object({
   name: zod.string(),
@@ -75,7 +74,7 @@ export const ListModelsResponseItem = zod.object({
 export const ListModelsResponse = zod.array(ListModelsResponseItem);
 
 /**
- * @summary Pull a model from the Ollama registry
+ * @summary Pull a model from Ollama registry
  */
 export const PullModelBody = zod.object({
   name: zod.string(),
@@ -87,7 +86,7 @@ export const PullModelResponse = zod.object({
 });
 
 /**
- * @summary Delete a model from the Ollama server
+ * @summary Delete a model from Ollama
  */
 export const DeleteModelParams = zod.object({
   name: zod.coerce.string(),
@@ -99,7 +98,7 @@ export const DeleteModelResponse = zod.object({
 });
 
 /**
- * @summary List currently running/loaded models
+ * @summary List currently running models
  */
 export const ListRunningModelsResponseItem = zod.object({
   name: zod.string(),
@@ -112,7 +111,7 @@ export const ListRunningModelsResponse = zod.array(
 );
 
 /**
- * @summary Send a chat completion request to the Ollama server
+ * @summary Send a chat completion request to Ollama
  */
 export const SendChatMessageBody = zod.object({
   model: zod.string(),
@@ -123,6 +122,7 @@ export const SendChatMessageBody = zod.object({
     }),
   ),
   temperature: zod.number().optional(),
+  useRag: zod.boolean().optional(),
 });
 
 export const SendChatMessageResponse = zod.object({
@@ -130,6 +130,7 @@ export const SendChatMessageResponse = zod.object({
   model: zod.string().nullish(),
   totalDuration: zod.number().nullish(),
   evalCount: zod.number().nullish(),
+  ragContext: zod.string().nullish(),
 });
 
 /**
@@ -155,7 +156,7 @@ export const CreateConversationBody = zod.object({
 });
 
 /**
- * @summary Delete a conversation and its messages
+ * @summary Delete a conversation
  */
 export const DeleteConversationParams = zod.object({
   id: zod.coerce.number(),
@@ -173,6 +174,7 @@ export const GetMessagesResponseItem = zod.object({
   conversationId: zod.number(),
   role: zod.string(),
   content: zod.string(),
+  rating: zod.number().nullish(),
   createdAt: zod.date(),
 });
 export const GetMessagesResponse = zod.array(GetMessagesResponseItem);
@@ -187,4 +189,232 @@ export const AddMessageParams = zod.object({
 export const AddMessageBody = zod.object({
   role: zod.string(),
   content: zod.string(),
+});
+
+/**
+ * @summary Rate a chat message
+ */
+export const RateMessageParams = zod.object({
+  messageId: zod.coerce.number(),
+});
+
+export const RateMessageBody = zod.object({
+  rating: zod.number(),
+});
+
+export const RateMessageResponse = zod.object({
+  id: zod.number(),
+  conversationId: zod.number(),
+  role: zod.string(),
+  content: zod.string(),
+  rating: zod.number().nullish(),
+  createdAt: zod.date(),
+});
+
+/**
+ * @summary List all custom model profiles
+ */
+export const ListModelProfilesResponseItem = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  baseModel: zod.string(),
+  systemPrompt: zod.string(),
+  temperature: zod.number(),
+  topP: zod.number(),
+  topK: zod.number(),
+  contextLength: zod.number(),
+  repeatPenalty: zod.number(),
+  deployed: zod.string(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+export const ListModelProfilesResponse = zod.array(
+  ListModelProfilesResponseItem,
+);
+
+/**
+ * @summary Create a new model profile
+ */
+export const CreateModelProfileBody = zod.object({
+  name: zod.string(),
+  baseModel: zod.string(),
+  systemPrompt: zod.string().optional(),
+  temperature: zod.number().optional(),
+  topP: zod.number().optional(),
+  topK: zod.number().optional(),
+  contextLength: zod.number().optional(),
+  repeatPenalty: zod.number().optional(),
+});
+
+/**
+ * @summary Update a model profile
+ */
+export const UpdateModelProfileParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const UpdateModelProfileBody = zod.object({
+  name: zod.string(),
+  baseModel: zod.string(),
+  systemPrompt: zod.string().optional(),
+  temperature: zod.number().optional(),
+  topP: zod.number().optional(),
+  topK: zod.number().optional(),
+  contextLength: zod.number().optional(),
+  repeatPenalty: zod.number().optional(),
+});
+
+export const UpdateModelProfileResponse = zod.object({
+  id: zod.number(),
+  name: zod.string(),
+  baseModel: zod.string(),
+  systemPrompt: zod.string(),
+  temperature: zod.number(),
+  topP: zod.number(),
+  topK: zod.number(),
+  contextLength: zod.number(),
+  repeatPenalty: zod.number(),
+  deployed: zod.string(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
+ * @summary Delete a model profile
+ */
+export const DeleteModelProfileParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Deploy a profile to Ollama as a custom Modelfile
+ */
+export const DeployModelProfileParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const DeployModelProfileResponse = zod.object({
+  success: zod.boolean(),
+  message: zod.string(),
+});
+
+/**
+ * @summary List training data entries
+ */
+export const ListTrainingDataResponseItem = zod.object({
+  id: zod.number(),
+  inputText: zod.string(),
+  outputText: zod.string(),
+  systemPrompt: zod.string(),
+  category: zod.string(),
+  quality: zod.number(),
+  source: zod.string(),
+  createdAt: zod.date(),
+});
+export const ListTrainingDataResponse = zod.array(ListTrainingDataResponseItem);
+
+/**
+ * @summary Add a training data entry
+ */
+export const AddTrainingDataBody = zod.object({
+  inputText: zod.string(),
+  outputText: zod.string(),
+  systemPrompt: zod.string().optional(),
+  category: zod.string().optional(),
+  quality: zod.number().optional(),
+});
+
+/**
+ * @summary Delete a training data entry
+ */
+export const DeleteTrainingDataParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Export training data as JSONL
+ */
+export const ExportTrainingDataBody = zod.object({
+  format: zod.string(),
+  minQuality: zod.number().optional(),
+  category: zod.string().nullish(),
+});
+
+/**
+ * @summary Collect training pairs from a conversation
+ */
+export const CollectFromConversationBody = zod.object({
+  conversationId: zod.number(),
+  minRating: zod.number().optional(),
+});
+
+export const CollectFromConversationResponse = zod.object({
+  collected: zod.number(),
+  message: zod.string(),
+});
+
+/**
+ * @summary Get training data statistics
+ */
+export const GetTrainingStatsResponse = zod.object({
+  totalEntries: zod.number(),
+  byCategory: zod.record(zod.string(), zod.number()),
+  byQuality: zod.record(zod.string(), zod.number()),
+  avgQuality: zod.number(),
+});
+
+/**
+ * @summary List all knowledge base documents
+ */
+export const ListDocumentsResponseItem = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  category: zod.string(),
+  chunksCount: zod.number(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+export const ListDocumentsResponse = zod.array(ListDocumentsResponseItem);
+
+/**
+ * @summary Upload a document to the knowledge base
+ */
+export const CreateDocumentBody = zod.object({
+  title: zod.string(),
+  content: zod.string(),
+  category: zod.string().optional(),
+});
+
+/**
+ * @summary Delete a document
+ */
+export const DeleteDocumentParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+/**
+ * @summary Search knowledge base for relevant chunks
+ */
+export const SearchDocumentsBody = zod.object({
+  query: zod.string(),
+  maxResults: zod.number().optional(),
+  category: zod.string().nullish(),
+});
+
+export const SearchDocumentsResponseItem = zod.object({
+  chunkId: zod.number(),
+  documentId: zod.number(),
+  documentTitle: zod.string(),
+  content: zod.string(),
+  relevance: zod.number(),
+});
+export const SearchDocumentsResponse = zod.array(SearchDocumentsResponseItem);
+
+/**
+ * @summary Get knowledge base statistics
+ */
+export const GetRagStatsResponse = zod.object({
+  totalDocuments: zod.number(),
+  totalChunks: zod.number(),
+  byCategory: zod.record(zod.string(), zod.number()),
 });

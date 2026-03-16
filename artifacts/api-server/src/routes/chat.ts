@@ -9,6 +9,8 @@ import {
   GetMessagesResponse,
   AddMessageParams,
   AddMessageBody,
+  RateMessageParams,
+  RateMessageBody,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
@@ -105,6 +107,33 @@ router.post("/chat/conversations/:id/messages", async (req, res): Promise<void> 
     .returning();
 
   res.status(201).json(message);
+});
+
+router.patch("/chat/messages/:messageId/rate", async (req, res): Promise<void> => {
+  const params = RateMessageParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const parsed = RateMessageBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const [updated] = await db
+    .update(chatMessagesTable)
+    .set({ rating: parsed.data.rating })
+    .where(eq(chatMessagesTable.id, params.data.messageId))
+    .returning();
+
+  if (!updated) {
+    res.status(404).json({ error: "Message not found" });
+    return;
+  }
+
+  res.json(updated);
 });
 
 export default router;

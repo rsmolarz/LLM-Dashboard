@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
-import { db, llmConfigTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { db, llmConfigTable, documentsTable, documentChunksTable } from "@workspace/db";
 import {
   GetLlmStatusResponse,
   ListModelsResponse,
@@ -301,6 +302,43 @@ router.delete("/llm/models/:name", async (req, res): Promise<void> => {
   }
 });
 
+async function searchRagContext(query: string, maxResults = 3): Promise<string | null> {
+  const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+  if (queryWords.length === 0) return null;
+
+  const allChunks = await db
+    .select({
+      content: documentChunksTable.content,
+      documentTitle: documentsTable.title,
+    })
+    .from(documentChunksTable)
+    .innerJoin(documentsTable, eq(documentChunksTable.documentId, documentsTable.id));
+
+  if (allChunks.length === 0) return null;
+
+  const scored = allChunks.map(chunk => {
+    const lowerContent = chunk.content.toLowerCase();
+    let matchCount = 0;
+    for (const word of queryWords) {
+      const regex = new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      const matches = lowerContent.match(regex);
+      if (matches) matchCount += matches.length;
+    }
+    return { ...chunk, matchCount };
+  });
+
+  const relevant = scored
+    .filter(s => s.matchCount > 0)
+    .sort((a, b) => b.matchCount - a.matchCount)
+    .slice(0, maxResults);
+
+  if (relevant.length === 0) return null;
+
+  return relevant
+    .map(r => `[From: ${r.documentTitle}]\n${r.content}`)
+    .join("\n\n---\n\n");
+}
+
 router.post("/llm/chat", async (req, res): Promise<void> => {
   const parsed = SendChatMessageBody.safeParse(req.body);
   if (!parsed.success) {
@@ -314,13 +352,34 @@ router.post("/llm/chat", async (req, res): Promise<void> => {
     return;
   }
 
+  let ragContext: string | null = null;
+  let messagesWithRag = parsed.data.messages;
+
+  if (parsed.data.useRag) {
+    const lastUserMsg = [...parsed.data.messages].reverse().find(m => m.role === "user");
+    if (lastUserMsg) {
+      ragContext = await searchRagContext(lastUserMsg.content);
+      if (ragContext) {
+        messagesWithRag = parsed.data.messages.map((m, i) => {
+          if (i === parsed.data.messages.length - 1 && m.role === "user") {
+            return {
+              ...m,
+              content: `Use the following knowledge base context to help answer the question. If the context is not relevant, answer based on your own knowledge.\n\n--- KNOWLEDGE BASE CONTEXT ---\n${ragContext}\n--- END CONTEXT ---\n\nQuestion: ${m.content}`,
+            };
+          }
+          return m;
+        });
+      }
+    }
+  }
+
   try {
     const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model: parsed.data.model,
-        messages: parsed.data.messages,
+        messages: messagesWithRag,
         stream: false,
         options: {
           temperature: parsed.data.temperature ?? 0.7,
@@ -350,6 +409,7 @@ router.post("/llm/chat", async (req, res): Promise<void> => {
         model: data.model ?? null,
         totalDuration: data.total_duration ?? null,
         evalCount: data.eval_count ?? null,
+        ragContext: ragContext ? "Knowledge base context was used" : null,
       })
     );
   } catch (err) {

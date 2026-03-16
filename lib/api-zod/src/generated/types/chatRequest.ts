@@ -11,4 +11,5 @@ export interface ChatRequest {
   model: string;
   messages: ChatRequestMessage[];
   temperature?: number;
+  useRag?: boolean;
 }

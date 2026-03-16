@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
 import LocalLlm from "@/pages/LocalLlm";
 import Chat from "@/pages/Chat";
+import Training from "@/pages/Training";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -22,6 +23,7 @@ function Router() {
       <Switch>
         <Route path="/" component={LocalLlm} />
         <Route path="/chat" component={Chat} />
+        <Route path="/training" component={Training} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

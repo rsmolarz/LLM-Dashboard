@@ -14,4 +14,6 @@ export interface ChatResponse {
   totalDuration?: number | null;
   /** @nullable */
   evalCount?: number | null;
+  /** @nullable */
+  ragContext?: string | null;
 }

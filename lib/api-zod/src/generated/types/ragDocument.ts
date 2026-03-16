@@ -6,12 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface ChatMessage {
+export interface RagDocument {
   id: number;
-  conversationId: number;
-  role: string;
-  content: string;
-  /** @nullable */
-  rating?: number | null;
+  title: string;
+  category: string;
+  chunksCount: number;
   createdAt: Date;
+  updatedAt: Date;
 }

@@ -6,12 +6,13 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface ChatMessage {
+export interface TrainingDataEntry {
   id: number;
-  conversationId: number;
-  role: string;
-  content: string;
-  /** @nullable */
-  rating?: number | null;
+  inputText: string;
+  outputText: string;
+  systemPrompt: string;
+  category: string;
+  quality: number;
+  source: string;
   createdAt: Date;
 }

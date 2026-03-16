@@ -61,26 +61,38 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
 - Routes: `src/routes/index.ts` mounts sub-routers
   - `health.ts` — `GET /api/healthz`
   - `llm-config.ts` — `GET/PUT /api/llm/config`, `GET /api/llm/setup-script`
-  - `llm-proxy.ts` — `GET /api/llm/status`, `POST /api/llm/chat`
-  - `chat.ts` — Conversation/message CRUD at `/api/chat/conversations`
+  - `llm-proxy.ts` — `GET /api/llm/status`, `GET/POST /api/llm/models`, `POST /api/llm/chat` (with RAG context injection)
+  - `chat.ts` — Conversation/message CRUD at `/api/chat/conversations`, message rating
+  - `model-profiles.ts` — CRUD + deploy to Ollama via Modelfile API
+  - `training-data.ts` — Training data CRUD, collect from conversations, export as JSONL
+  - `rag.ts` — Document CRUD, auto-chunking, keyword-based similarity search
 - Depends on: `@workspace/db`, `@workspace/api-zod`
 
 ### `artifacts/llm-hub` (`@workspace/llm-hub`)
 
-LLM Hub dashboard — React + Vite web app for managing a self-hosted llama.cpp server.
+LLM Hub dashboard — React + Vite web app for managing a self-hosted Ollama server on a VPS (72.60.167.64).
 
 Features:
-- **Local LLM Tab**: Status dashboard (server health, model, slots), configuration panel, setup script generator, quick setup guide, local chat sandbox
-- **Chat Tab**: Full chat interface with conversation sidebar, model selector (Local llama.cpp), message history
+- **Local LLM Tab**: Status dashboard (server health, available/running models, default model), configuration panel, model management (pull/delete), setup script generator (Ollama + OpenWebUI), quick setup guide, local chat sandbox
+- **Chat Tab**: Full chat interface with conversation sidebar, model selector (from Ollama), message history, thumbs up/down rating, RAG toggle for knowledge-base-augmented responses
+- **Training Tab** (4 sub-tabs):
+  - **Model Profiles**: Create custom model configs (system prompt, temperature, topP, topK, context length, repeat penalty), deploy to Ollama as Modelfiles
+  - **Training Data**: Collect training pairs from conversations, add manually, rate quality, export as JSONL (OpenAI, Alpaca, ShareGPT formats)
+  - **Knowledge Base (RAG)**: Upload documents, auto-chunk for retrieval, keyword-based search, context injection into chat
+  - **Fine-tuning**: Guided pipeline with step tracker, instructions for Unsloth/Axolotl/cloud GPU providers
 
 ### `lib/db` (`@workspace/db`)
 
 Database layer using Drizzle ORM with PostgreSQL. Exports a Drizzle client instance and schema models.
 
 Tables:
-- `llm_config` — Stores llama.cpp server configuration (URL, port, threads, context size, GPU layers, container name)
+- `llm_config` — Ollama server configuration (serverUrl, port, gpuEnabled, defaultModel)
 - `conversations` — Chat conversations with title and model
-- `chat_messages` — Messages within conversations (role, content)
+- `chat_messages` — Messages within conversations (role, content, rating)
+- `model_profiles` — Custom model configurations (name, baseModel, systemPrompt, temperature, topP, topK, contextLength, repeatPenalty, deployed)
+- `training_data` — Training pairs (inputText, outputText, systemPrompt, category, quality, source)
+- `documents` — RAG knowledge base documents (title, content, category, chunksCount)
+- `document_chunks` — Auto-generated text chunks from documents (documentId, content, chunkIndex)
 
 ### `lib/api-spec` (`@workspace/api-spec`)
 
@@ -102,3 +114,10 @@ Generated React Query hooks and fetch client from the OpenAPI spec.
 ### `scripts` (`@workspace/scripts`)
 
 Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
+
+## Key Design Decisions
+
+- **Ollama as LLM backend** (not llama.cpp): Default port 11434, uses `/api/tags`, `/api/ps`, `/api/version`, `/api/pull`, `/api/delete`, `/api/chat` (stream: false), `/api/create` (for Modelfile deployment)
+- **VPS IP**: 72.60.167.64 — serverUrl stored as full URL like `http://72.60.167.64:11434`
+- **RAG implementation**: PostgreSQL-based keyword matching (no vector DB). Documents auto-chunked at ~500 chars with 50-word overlap. Search uses word frequency scoring.
+- **Training data export formats**: OpenAI (ChatML), Alpaca (instruction/input/output), ShareGPT (for Unsloth/Axolotl)

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { format } from "date-fns";
 import { 
   MessageSquare, Plus, Trash2, Send, Bot, User, 
-  ChevronDown, HardDrive 
+  ChevronDown, HardDrive, ThumbsUp, ThumbsDown, BookOpen
 } from "lucide-react";
 import { 
   useListConversations, 
@@ -11,7 +11,8 @@ import {
   useGetMessages,
   useAddMessage,
   useSendChatMessage,
-  useListModels
+  useListModels,
+  useRateMessage,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -31,10 +32,13 @@ export default function Chat() {
   });
   const { data: ollamaModels = [] } = useListModels();
 
+  const [useRag, setUseRag] = useState(false);
+  
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
   const addMsg = useAddMessage();
   const sendLocalChat = useSendChatMessage();
+  const rateMsg = useRateMessage();
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -91,7 +95,7 @@ export default function Chat() {
 
     try {
       const res = await sendLocalChat.mutateAsync({
-        data: { model: modelToUse, messages: formattedHistory }
+        data: { model: modelToUse, messages: formattedHistory, useRag }
       });
 
       await addMsg.mutateAsync({
@@ -193,13 +197,31 @@ export default function Chat() {
                       )}>
                         {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
                       </div>
-                      <div className={cn(
-                        "px-5 py-3.5 rounded-2xl max-w-[85%] text-[15px] leading-relaxed whitespace-pre-wrap",
-                        msg.role === 'user'
-                          ? "bg-primary text-primary-foreground rounded-tr-none shadow-lg shadow-primary/10"
-                          : "bg-card/50 border border-white/10 rounded-tl-none text-foreground"
-                      )}>
-                        {msg.content}
+                      <div className="max-w-[85%]">
+                        <div className={cn(
+                          "px-5 py-3.5 rounded-2xl text-[15px] leading-relaxed whitespace-pre-wrap",
+                          msg.role === 'user'
+                            ? "bg-primary text-primary-foreground rounded-tr-none shadow-lg shadow-primary/10"
+                            : "bg-card/50 border border-white/10 rounded-tl-none text-foreground"
+                        )}>
+                          {msg.content}
+                        </div>
+                        {msg.role === 'assistant' && (
+                          <div className="flex items-center gap-1 mt-1 ml-1">
+                            <button
+                              onClick={() => rateMsg.mutate({ messageId: msg.id, data: { rating: 5 } }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] }) })}
+                              className={cn("p-1 rounded hover:bg-white/10 transition-colors", msg.rating === 5 ? "text-green-400" : "text-muted-foreground/40 hover:text-green-400")}
+                            >
+                              <ThumbsUp className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={() => rateMsg.mutate({ messageId: msg.id, data: { rating: 1 } }, { onSuccess: () => queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] }) })}
+                              className={cn("p-1 rounded hover:bg-white/10 transition-colors", msg.rating === 1 ? "text-red-400" : "text-muted-foreground/40 hover:text-red-400")}
+                            >
+                              <ThumbsDown className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))
@@ -238,17 +260,34 @@ export default function Chat() {
                       }
                     }}
                   />
-                  <Button 
-                    type="submit" 
-                    size="icon" 
-                    className="h-10 w-10 shrink-0 rounded-xl mb-1 mr-1"
-                    disabled={!input.trim() || sendLocalChat.isPending || addMsg.isPending}
-                  >
-                    <Send className="w-4 h-4" />
-                  </Button>
+                  <div className="flex items-center gap-2 mb-1 mr-1">
+                    <button
+                      type="button"
+                      onClick={() => setUseRag(!useRag)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all border",
+                        useRag
+                          ? "bg-blue-500/10 border-blue-500/30 text-blue-400"
+                          : "bg-transparent border-white/10 text-muted-foreground hover:text-white"
+                      )}
+                    >
+                      <BookOpen className="w-3 h-3" />
+                      RAG
+                    </button>
+                    <Button 
+                      type="submit" 
+                      size="icon" 
+                      className="h-10 w-10 shrink-0 rounded-xl"
+                      disabled={!input.trim() || sendLocalChat.isPending || addMsg.isPending}
+                    >
+                      <Send className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </form>
                 <div className="text-center mt-2">
-                  <p className="text-[10px] text-muted-foreground">All inference runs on your private server. Zero data leaves your network.</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    All inference runs on your private server. {useRag && <span className="text-blue-400">Knowledge Base context enabled.</span>}
+                  </p>
                 </div>
               </div>
             </div>

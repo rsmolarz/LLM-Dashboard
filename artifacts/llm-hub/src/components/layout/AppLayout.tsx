@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Activity, Terminal } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
 
@@ -10,6 +10,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const navItems = [
     { href: "/", label: "Local LLM", icon: Server },
     { href: "/chat", label: "Chat", icon: MessageSquare },
+    { href: "/training", label: "Training", icon: Brain },
   ];
 
   return (
