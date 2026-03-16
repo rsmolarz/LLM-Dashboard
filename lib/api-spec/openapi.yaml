@@ -564,6 +564,97 @@ paths:
               schema:
                 $ref: "#/components/schemas/RagStats"
 
+  /rag/fetch-url:
+    post:
+      operationId: fetchUrl
+      tags: [rag]
+      summary: Fetch content from a URL for knowledge base import
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+      responses:
+        "200":
+          description: Fetched content
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [title, content, contentLength, sourceUrl]
+                properties:
+                  title:
+                    type: string
+                  content:
+                    type: string
+                  contentLength:
+                    type: integer
+                  sourceUrl:
+                    type: string
+
+  /rag/bulk-import:
+    post:
+      operationId: bulkImportDocuments
+      tags: [rag]
+      summary: Bulk import multiple documents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [documents]
+              properties:
+                documents:
+                  type: array
+                  items:
+                    type: object
+                    required: [title, content]
+                    properties:
+                      title:
+                        type: string
+                      content:
+                        type: string
+                      category:
+                        type: string
+      responses:
+        "200":
+          description: Import results
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, succeeded, failed, results]
+                properties:
+                  total:
+                    type: integer
+                  succeeded:
+                    type: integer
+                  failed:
+                    type: integer
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      required: [title, id, chunksCount, status]
+                      properties:
+                        title:
+                          type: string
+                        id:
+                          type: integer
+                        chunksCount:
+                          type: integer
+                        status:
+                          type: string
+                          enum: [success, error]
+                        error:
+                          type: string
+
   /openclaw/config:
     get:
       operationId: getOpenclawConfig

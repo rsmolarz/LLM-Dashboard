@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   Brain, Database, BookOpen, Wand2, Plus, Trash2, Loader2, 
   Download, Upload, Star, Play, CheckCircle2, FileText,
-  Search, BarChart3, Sparkles, Rocket, ChevronRight
+  Search, BarChart3, Sparkles, Rocket, ChevronRight, Globe,
+  Link, Package, AlertCircle, ExternalLink, Layers
 } from "lucide-react";
 import {
   useListModelProfiles,
@@ -22,6 +23,8 @@ import {
   useDeleteDocument,
   useSearchDocuments,
   useGetRagStats,
+  useFetchUrl,
+  useBulkImportDocuments,
   useListModels,
   useListConversations,
 } from "@workspace/api-client-react";
@@ -499,6 +502,81 @@ function TrainingDataTab() {
   );
 }
 
+const EXAMPLE_KNOWLEDGE_BASES = [
+  {
+    title: "Python Official Docs",
+    url: "https://docs.python.org/3/tutorial/index.html",
+    category: "code",
+    description: "Python 3 tutorial - great for code agents",
+  },
+  {
+    title: "MDN JavaScript Guide",
+    url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide",
+    category: "code",
+    description: "JavaScript fundamentals from Mozilla",
+  },
+  {
+    title: "React Documentation",
+    url: "https://react.dev/learn",
+    category: "code",
+    description: "Official React learning docs",
+  },
+  {
+    title: "OpenAI API Reference",
+    url: "https://platform.openai.com/docs/api-reference",
+    category: "code",
+    description: "OpenAI API docs for AI integration agents",
+  },
+  {
+    title: "OWASP Top 10",
+    url: "https://owasp.org/www-project-top-ten/",
+    category: "security",
+    description: "Top 10 web application security risks",
+  },
+  {
+    title: "Kubernetes Docs",
+    url: "https://kubernetes.io/docs/concepts/overview/",
+    category: "code",
+    description: "Container orchestration concepts",
+  },
+  {
+    title: "AWS Well-Architected",
+    url: "https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html",
+    category: "business",
+    description: "Cloud architecture best practices",
+  },
+  {
+    title: "Google Developers - Web Fundamentals",
+    url: "https://developers.google.com/web/fundamentals",
+    category: "code",
+    description: "Web performance, accessibility, and best practices",
+  },
+  {
+    title: "HuggingFace Transformers Docs",
+    url: "https://huggingface.co/docs/transformers/index",
+    category: "research",
+    description: "NLP model library documentation",
+  },
+  {
+    title: "LangChain Documentation",
+    url: "https://python.langchain.com/docs/get_started/introduction",
+    category: "research",
+    description: "LLM application framework docs",
+  },
+  {
+    title: "Stripe API Reference",
+    url: "https://stripe.com/docs/api",
+    category: "business",
+    description: "Payment processing API docs",
+  },
+  {
+    title: "PostgreSQL Documentation",
+    url: "https://www.postgresql.org/docs/current/tutorial.html",
+    category: "code",
+    description: "PostgreSQL database tutorial",
+  },
+];
+
 function KnowledgeBaseTab() {
   const queryClient = useQueryClient();
   const { data: documents = [], isLoading } = useListDocuments();
@@ -506,21 +584,112 @@ function KnowledgeBaseTab() {
   const createDoc = useCreateDocument();
   const deleteDoc = useDeleteDocument();
   const searchDocs = useSearchDocuments();
+  const fetchUrl = useFetchUrl();
+  const bulkImport = useBulkImportDocuments();
 
-  const [showUpload, setShowUpload] = useState(false);
+  const [activePanel, setActivePanel] = useState<"none" | "upload" | "url" | "bulk" | "examples">("none");
   const [uploadForm, setUploadForm] = useState({ title: "", content: "", category: "general" });
+  const [urlForm, setUrlForm] = useState({ url: "", category: "general" });
+  const [fetchedContent, setFetchedContent] = useState<any>(null);
+  const [bulkText, setBulkText] = useState("");
+  const [bulkCategory, setBulkCategory] = useState("general");
+  const [importResult, setImportResult] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
+
+  const invalidateRag = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/rag/documents"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/rag/stats"] });
+  };
 
   const handleUpload = () => {
     createDoc.mutate({ data: uploadForm }, {
       onSuccess: () => {
-        setShowUpload(false);
+        setActivePanel("none");
         setUploadForm({ title: "", content: "", category: "general" });
-        queryClient.invalidateQueries({ queryKey: ["/api/rag/documents"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/rag/stats"] });
+        invalidateRag();
       }
     });
+  };
+
+  const handleFetchUrl = () => {
+    if (!urlForm.url.trim()) return;
+    setFetchedContent(null);
+    fetchUrl.mutate({ data: { url: urlForm.url } }, {
+      onSuccess: (data: any) => {
+        setFetchedContent(data);
+      }
+    });
+  };
+
+  const handleSaveFetched = () => {
+    if (!fetchedContent) return;
+    createDoc.mutate({
+      data: {
+        title: fetchedContent.title,
+        content: fetchedContent.content,
+        category: urlForm.category,
+      }
+    }, {
+      onSuccess: () => {
+        setFetchedContent(null);
+        setUrlForm({ url: "", category: "general" });
+        setActivePanel("none");
+        invalidateRag();
+      }
+    });
+  };
+
+  const handleBulkImport = () => {
+    const lines = bulkText.split("\n").filter((l: string) => l.trim());
+    const docs: Array<{ title: string; content: string; category: string }> = [];
+
+    let currentTitle = "";
+    let currentContent = "";
+
+    for (const line of lines) {
+      if (line.startsWith("## ") || line.startsWith("# ")) {
+        if (currentTitle && currentContent.trim()) {
+          docs.push({ title: currentTitle, content: currentContent.trim(), category: bulkCategory });
+        }
+        currentTitle = line.replace(/^#+\s*/, "").trim();
+        currentContent = "";
+      } else if (line.startsWith("---") && currentTitle) {
+        if (currentContent.trim()) {
+          docs.push({ title: currentTitle, content: currentContent.trim(), category: bulkCategory });
+        }
+        currentTitle = "";
+        currentContent = "";
+      } else {
+        currentContent += line + "\n";
+      }
+    }
+
+    if (currentTitle && currentContent.trim()) {
+      docs.push({ title: currentTitle, content: currentContent.trim(), category: bulkCategory });
+    }
+
+    if (docs.length === 0 && bulkText.trim()) {
+      docs.push({ title: "Bulk Import", content: bulkText.trim(), category: bulkCategory });
+    }
+
+    if (docs.length === 0) return;
+
+    bulkImport.mutate({ data: { documents: docs } }, {
+      onSuccess: (data: any) => {
+        setImportResult(data);
+        invalidateRag();
+      },
+      onError: () => {
+        setImportResult({ total: docs.length, succeeded: 0, failed: docs.length, results: [], error: "Failed to import documents. Check that you have 50 or fewer documents." });
+      }
+    });
+  };
+
+  const handleImportExample = (example: typeof EXAMPLE_KNOWLEDGE_BASES[0]) => {
+    setUrlForm({ url: example.url, category: example.category });
+    setActivePanel("url");
+    setFetchedContent(null);
   };
 
   const handleSearch = () => {
@@ -539,9 +708,35 @@ function KnowledgeBaseTab() {
           <h3 className="text-xl font-semibold text-white">Knowledge Base (RAG)</h3>
           <p className="text-sm text-muted-foreground">Upload documents to give your models contextual knowledge</p>
         </div>
-        <Button onClick={() => setShowUpload(!showUpload)} className="gap-2">
-          <Upload className="w-4 h-4" /> Add Document
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setActivePanel(activePanel === "examples" ? "none" : "examples")}
+            className={cn("gap-1.5 border-white/10", activePanel === "examples" && "bg-primary/20 border-primary/30 text-primary")}
+          >
+            <Sparkles className="w-3.5 h-3.5" /> Examples
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setActivePanel(activePanel === "url" ? "none" : "url")}
+            className={cn("gap-1.5 border-white/10", activePanel === "url" && "bg-primary/20 border-primary/30 text-primary")}
+          >
+            <Globe className="w-3.5 h-3.5" /> From URL
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setActivePanel(activePanel === "bulk" ? "none" : "bulk")}
+            className={cn("gap-1.5 border-white/10", activePanel === "bulk" && "bg-primary/20 border-primary/30 text-primary")}
+          >
+            <Layers className="w-3.5 h-3.5" /> Bulk Import
+          </Button>
+          <Button onClick={() => setActivePanel(activePanel === "upload" ? "none" : "upload")} className="gap-2" size="sm">
+            <Upload className="w-3.5 h-3.5" /> Add Document
+          </Button>
+        </div>
       </div>
 
       {ragStats && (
@@ -551,6 +746,206 @@ function KnowledgeBaseTab() {
           <StatCard label="Categories" value={Object.keys(ragStats.byCategory).length} icon={<BarChart3 className="w-4 h-4" />} />
         </div>
       )}
+
+      <AnimatePresence mode="wait">
+        {activePanel === "examples" && (
+          <motion.div
+            key="examples"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="bg-card/50 border border-white/10 rounded-2xl p-5 space-y-4"
+          >
+            <div>
+              <h4 className="font-semibold text-white flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-400" /> Example Knowledge Bases
+              </h4>
+              <p className="text-xs text-muted-foreground mt-1">Click any source to pre-fill the URL import form, then fetch and review before saving</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {EXAMPLE_KNOWLEDGE_BASES.map((example) => (
+                <button
+                  key={example.url}
+                  onClick={() => handleImportExample(example)}
+                  className="text-left bg-black/30 rounded-xl p-3.5 border border-white/5 hover:border-primary/30 hover:bg-primary/5 transition-all group"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-white group-hover:text-primary transition-colors truncate">{example.title}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{example.description}</p>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
+                      {example.category}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1 mt-2 text-[10px] text-muted-foreground/60">
+                    <ExternalLink className="w-2.5 h-2.5" />
+                    <span className="truncate">{example.url}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+        {activePanel === "url" && (
+          <motion.div
+            key="url"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="bg-card/50 border border-white/10 rounded-2xl p-5 space-y-4"
+          >
+            <h4 className="font-semibold text-white flex items-center gap-2">
+              <Globe className="w-4 h-4 text-blue-400" /> Import from URL
+            </h4>
+            <p className="text-xs text-muted-foreground">Fetch content from any web page. HTML will be cleaned and converted to plain text.</p>
+            <div className="flex gap-2">
+              <Input
+                value={urlForm.url}
+                onChange={(e) => setUrlForm({ ...urlForm, url: e.target.value })}
+                placeholder="https://docs.example.com/guide"
+                className="flex-1 font-mono text-sm"
+                onKeyDown={(e) => { if (e.key === "Enter") handleFetchUrl(); }}
+              />
+              <Input
+                value={urlForm.category}
+                onChange={(e) => setUrlForm({ ...urlForm, category: e.target.value })}
+                placeholder="Category"
+                className="w-32"
+              />
+              <Button onClick={handleFetchUrl} disabled={fetchUrl.isPending || !urlForm.url.trim()}>
+                {fetchUrl.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Link className="w-4 h-4 mr-1.5" /> Fetch</>}
+              </Button>
+            </div>
+
+            {fetchUrl.isError && (
+              <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <p className="text-xs text-red-400">Failed to fetch URL. Make sure the URL is accessible and try again.</p>
+              </div>
+            )}
+
+            {fetchedContent && (
+              <div className="space-y-3">
+                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-medium text-emerald-400">{fetchedContent.title}</p>
+                    <span className="text-[10px] text-muted-foreground">{(fetchedContent.contentLength / 1000).toFixed(1)}k chars</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground line-clamp-3">{fetchedContent.content.slice(0, 300)}...</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button onClick={handleSaveFetched} disabled={createDoc.isPending} className="gap-1.5">
+                    {createDoc.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Upload className="w-3.5 h-3.5" /> Save to Knowledge Base</>}
+                  </Button>
+                  <Button variant="outline" onClick={() => setFetchedContent(null)} className="border-white/10">Discard</Button>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {activePanel === "bulk" && (
+          <motion.div
+            key="bulk"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="bg-card/50 border border-white/10 rounded-2xl p-5 space-y-4"
+          >
+            <h4 className="font-semibold text-white flex items-center gap-2">
+              <Layers className="w-4 h-4 text-purple-400" /> Bulk Import
+            </h4>
+            <p className="text-xs text-muted-foreground">
+              Paste multiple documents separated by markdown headers (## Title) or horizontal rules (---). Each section becomes a separate document.
+            </p>
+            <div className="flex gap-2 items-center">
+              <label className="text-xs text-muted-foreground">Category:</label>
+              <Input
+                value={bulkCategory}
+                onChange={(e) => setBulkCategory(e.target.value)}
+                placeholder="general"
+                className="w-32"
+              />
+            </div>
+            <textarea
+              value={bulkText}
+              onChange={(e) => setBulkText(e.target.value)}
+              placeholder={"## First Document Title\nContent for the first document...\n\n## Second Document Title\nContent for the second document...\n\n---\n\n## Third Document\nMore content here..."}
+              className="w-full bg-[#18181B] border border-white/10 rounded-lg px-3 py-2 text-sm text-white min-h-[200px] resize-y font-mono"
+            />
+            <div className="flex items-center gap-3">
+              <Button onClick={handleBulkImport} disabled={bulkImport.isPending || !bulkText.trim()} className="gap-1.5">
+                {bulkImport.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Package className="w-3.5 h-3.5" /> Import All</>}
+              </Button>
+              <Button variant="outline" onClick={() => { setActivePanel("none"); setBulkText(""); setImportResult(null); }} className="border-white/10">Cancel</Button>
+            </div>
+
+            {importResult && (
+              <div className={cn(
+                "rounded-lg p-3 border",
+                (importResult.failed > 0 || importResult.error) ? "bg-red-500/10 border-red-500/20" : "bg-emerald-500/10 border-emerald-500/20"
+              )}>
+                <p className="text-sm font-medium text-white mb-1">
+                  {importResult.error ? importResult.error : `Import Complete: ${importResult.succeeded}/${importResult.total} documents imported`}
+                </p>
+                <div className="space-y-1">
+                  {importResult.results?.map((r: any, i: number) => (
+                    <div key={i} className="flex items-center gap-2 text-xs">
+                      {r.status === "success" ? (
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-3 h-3 text-red-400 shrink-0" />
+                      )}
+                      <span className={r.status === "success" ? "text-emerald-400" : "text-red-400"}>
+                        {r.title} {r.status === "success" ? `(${r.chunksCount} chunks)` : `- ${r.error}`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {activePanel === "upload" && (
+          <motion.div
+            key="upload"
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="bg-card/50 border border-white/10 rounded-2xl p-6 space-y-4"
+          >
+            <h4 className="font-semibold text-white">Add Document</h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm text-muted-foreground">Title</label>
+                <Input value={uploadForm.title} onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })} placeholder="Document title" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm text-muted-foreground">Category</label>
+                <Input value={uploadForm.category} onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })} placeholder="general" />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm text-muted-foreground">Content</label>
+              <textarea
+                value={uploadForm.content}
+                onChange={(e) => setUploadForm({ ...uploadForm, content: e.target.value })}
+                placeholder="Paste your document content here... It will be automatically chunked for retrieval."
+                className="w-full bg-[#18181B] border border-white/10 rounded-lg px-3 py-2 text-sm text-white min-h-[200px] resize-y"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={handleUpload} disabled={!uploadForm.title.trim() || !uploadForm.content.trim() || createDoc.isPending}>
+                {createDoc.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Upload & Chunk"}
+              </Button>
+              <Button variant="outline" onClick={() => setActivePanel("none")} className="border-white/10">Cancel</Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="bg-card/50 border border-white/10 rounded-2xl p-5 space-y-3">
         <h4 className="font-semibold text-white flex items-center gap-2">
@@ -583,47 +978,13 @@ function KnowledgeBaseTab() {
         )}
       </div>
 
-      {showUpload && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: "auto" }}
-          className="bg-card/50 border border-white/10 rounded-2xl p-6 space-y-4"
-        >
-          <h4 className="font-semibold text-white">Add Document</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm text-muted-foreground">Title</label>
-              <Input value={uploadForm.title} onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })} placeholder="Document title" />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm text-muted-foreground">Category</label>
-              <Input value={uploadForm.category} onChange={(e) => setUploadForm({ ...uploadForm, category: e.target.value })} placeholder="general" />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label className="text-sm text-muted-foreground">Content</label>
-            <textarea
-              value={uploadForm.content}
-              onChange={(e) => setUploadForm({ ...uploadForm, content: e.target.value })}
-              placeholder="Paste your document content here... It will be automatically chunked for retrieval."
-              className="w-full bg-[#18181B] border border-white/10 rounded-lg px-3 py-2 text-sm text-white min-h-[200px] resize-y"
-            />
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={handleUpload} disabled={!uploadForm.title.trim() || !uploadForm.content.trim() || createDoc.isPending}>
-              {createDoc.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Upload & Chunk"}
-            </Button>
-            <Button variant="outline" onClick={() => setShowUpload(false)} className="border-white/10">Cancel</Button>
-          </div>
-        </motion.div>
-      )}
-
       {isLoading ? (
         <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
       ) : documents.length === 0 ? (
         <div className="bg-card/30 border border-white/5 rounded-2xl p-12 text-center">
           <BookOpen className="w-12 h-12 mx-auto mb-4 text-muted-foreground/30" />
           <p className="text-muted-foreground">No documents yet. Add content to build your knowledge base.</p>
+          <p className="text-xs text-muted-foreground/60 mt-2">Try the Examples button above for curated knowledge sources</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -639,7 +1000,7 @@ function KnowledgeBaseTab() {
                 </div>
               </div>
               <button
-                onClick={() => deleteDoc.mutate({ id: doc.id }, { onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["/api/rag/documents"] }); queryClient.invalidateQueries({ queryKey: ["/api/rag/stats"] }); } })}
+                onClick={() => deleteDoc.mutate({ id: doc.id }, { onSuccess: () => invalidateRag() })}
                 className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-red-500/20 text-red-400 rounded-md transition-all shrink-0"
               >
                 <Trash2 className="w-3.5 h-3.5" />

@@ -79,7 +79,7 @@ Features:
 - **Training Tab** (4 sub-tabs):
   - **Model Profiles**: Create custom model configs (system prompt, temperature, topP, topK, context length, repeat penalty), deploy to Ollama as Modelfiles
   - **Training Data**: Collect training pairs from conversations, add manually, rate quality, export as JSONL (OpenAI, Alpaca, ShareGPT formats)
-  - **Knowledge Base (RAG)**: Upload documents, auto-chunk for retrieval, keyword-based search, context injection into chat
+  - **Knowledge Base (RAG)**: Upload documents, auto-chunk for retrieval, keyword-based search, context injection into chat, URL fetching (server-side HTML→text), bulk import (markdown-header-separated), curated example knowledge bases (12 sources across code/security/business/research)
   - **Fine-tuning**: Guided pipeline with step tracker, instructions for Unsloth/Axolotl/cloud GPU providers
 - **Agents Tab**: OpenClaw-powered agent fleet management
   - **Fleet Dashboard**: Real-time agent grid with stats (total, active, idle, messages, tasks), category filters (General, Research, Customer Service, Code & Dev, Business Ops, Content, Security), search

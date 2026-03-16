@@ -206,4 +206,150 @@ router.get("/rag/stats", async (_req, res): Promise<void> => {
   );
 });
 
+router.post("/rag/fetch-url", async (req, res): Promise<void> => {
+  const { url } = req.body as { url?: string };
+  if (!url || typeof url !== "string") {
+    res.status(400).json({ error: "url is required" });
+    return;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      res.status(400).json({ error: "Only http and https URLs are allowed" });
+      return;
+    }
+
+    const blockedHosts = ["localhost", "127.0.0.1", "0.0.0.0", "[::1]", "169.254.169.254", "metadata.google.internal"];
+    if (blockedHosts.includes(parsed.hostname) || parsed.hostname.startsWith("10.") || parsed.hostname.startsWith("192.168.") || /^172\.(1[6-9]|2\d|3[01])\./.test(parsed.hostname)) {
+      res.status(400).json({ error: "URLs pointing to internal/private networks are not allowed" });
+      return;
+    }
+
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(15000),
+      headers: {
+        "User-Agent": "LLM-Hub-KnowledgeBase/1.0",
+        Accept: "text/html,text/plain,application/json,*/*",
+      },
+    });
+
+    if (!response.ok) {
+      res.status(400).json({ error: `Failed to fetch URL: ${response.status} ${response.statusText}` });
+      return;
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    const rawText = await response.text();
+
+    let cleanedText = rawText;
+
+    if (contentType.includes("text/html")) {
+      cleanedText = rawText
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+        .replace(/<nav[^>]*>[\s\S]*?<\/nav>/gi, "")
+        .replace(/<header[^>]*>[\s\S]*?<\/header>/gi, "")
+        .replace(/<footer[^>]*>[\s\S]*?<\/footer>/gi, "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/&nbsp;/g, " ")
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    if (cleanedText.length < 50) {
+      res.status(400).json({ error: "Page content too short or could not extract meaningful text" });
+      return;
+    }
+
+    if (cleanedText.length > 500000) {
+      cleanedText = cleanedText.slice(0, 500000);
+    }
+
+    const titleMatch = rawText.match(/<title[^>]*>(.*?)<\/title>/i);
+    const suggestedTitle = titleMatch?.[1]?.trim() || new URL(url).hostname;
+
+    res.json({
+      title: suggestedTitle,
+      content: cleanedText,
+      contentLength: cleanedText.length,
+      sourceUrl: url,
+    });
+  } catch (err: any) {
+    if (err?.name === "AbortError" || err?.name === "TimeoutError") {
+      res.status(408).json({ error: "Request timed out" });
+    } else {
+      res.status(500).json({ error: `Failed to fetch: ${err?.message ?? "Unknown error"}` });
+    }
+  }
+});
+
+router.post("/rag/bulk-import", async (req, res): Promise<void> => {
+  const { documents } = req.body as {
+    documents?: Array<{ title: string; content: string; category?: string }>;
+  };
+
+  if (!documents || !Array.isArray(documents) || documents.length === 0) {
+    res.status(400).json({ error: "documents array is required and must not be empty" });
+    return;
+  }
+
+  if (documents.length > 50) {
+    res.status(400).json({ error: "Maximum 50 documents per bulk import" });
+    return;
+  }
+
+  const results: Array<{
+    title: string;
+    id: number;
+    chunksCount: number;
+    status: "success" | "error";
+    error?: string;
+  }> = [];
+
+  for (const docInput of documents) {
+    if (!docInput.title?.trim() || !docInput.content?.trim()) {
+      results.push({ title: docInput.title || "Untitled", id: 0, chunksCount: 0, status: "error", error: "Missing title or content" });
+      continue;
+    }
+
+    try {
+      const chunks = chunkText(docInput.content);
+      const [doc] = await db
+        .insert(documentsTable)
+        .values({
+          title: docInput.title.trim(),
+          content: docInput.content,
+          category: docInput.category?.trim() || "general",
+          chunksCount: chunks.length,
+        })
+        .returning();
+
+      if (chunks.length > 0) {
+        await db.insert(documentChunksTable).values(
+          chunks.map((content, index) => ({
+            documentId: doc.id,
+            content,
+            chunkIndex: index,
+          }))
+        );
+      }
+
+      results.push({ title: doc.title, id: doc.id, chunksCount: doc.chunksCount, status: "success" });
+    } catch (err: any) {
+      results.push({ title: docInput.title, id: 0, chunksCount: 0, status: "error", error: err?.message ?? "Unknown error" });
+    }
+  }
+
+  const succeeded = results.filter((r) => r.status === "success").length;
+  const failed = results.filter((r) => r.status === "error").length;
+
+  res.json({ total: documents.length, succeeded, failed, results });
+});
+
 export default router;

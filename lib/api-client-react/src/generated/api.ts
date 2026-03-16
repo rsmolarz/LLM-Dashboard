@@ -25,6 +25,8 @@ import type {
   AgentLogEntry,
   AgentMemoryEntry,
   AgentTaskEntry,
+  BulkImportDocuments200,
+  BulkImportDocumentsBody,
   ChatMessage,
   ChatRequest,
   ChatResponse,
@@ -41,6 +43,8 @@ import type {
   ExportTrainingDataInput,
   ExtractMemoriesInput,
   ExtractMemoriesResponse,
+  FetchUrl200,
+  FetchUrlBody,
   FleetStats,
   GatewayStatus,
   GetAgentLogsParams,
@@ -2691,6 +2695,178 @@ export function useGetRagStats<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Fetch content from a URL for knowledge base import
+ */
+export const getFetchUrlUrl = () => {
+  return `/api/rag/fetch-url`;
+};
+
+export const fetchUrl = async (
+  fetchUrlBody: FetchUrlBody,
+  options?: RequestInit,
+): Promise<FetchUrl200> => {
+  return customFetch<FetchUrl200>(getFetchUrlUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(fetchUrlBody),
+  });
+};
+
+export const getFetchUrlMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof fetchUrl>>,
+    TError,
+    { data: BodyType<FetchUrlBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof fetchUrl>>,
+  TError,
+  { data: BodyType<FetchUrlBody> },
+  TContext
+> => {
+  const mutationKey = ["fetchUrl"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof fetchUrl>>,
+    { data: BodyType<FetchUrlBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return fetchUrl(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type FetchUrlMutationResult = NonNullable<
+  Awaited<ReturnType<typeof fetchUrl>>
+>;
+export type FetchUrlMutationBody = BodyType<FetchUrlBody>;
+export type FetchUrlMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Fetch content from a URL for knowledge base import
+ */
+export const useFetchUrl = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof fetchUrl>>,
+    TError,
+    { data: BodyType<FetchUrlBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof fetchUrl>>,
+  TError,
+  { data: BodyType<FetchUrlBody> },
+  TContext
+> => {
+  return useMutation(getFetchUrlMutationOptions(options));
+};
+
+/**
+ * @summary Bulk import multiple documents
+ */
+export const getBulkImportDocumentsUrl = () => {
+  return `/api/rag/bulk-import`;
+};
+
+export const bulkImportDocuments = async (
+  bulkImportDocumentsBody: BulkImportDocumentsBody,
+  options?: RequestInit,
+): Promise<BulkImportDocuments200> => {
+  return customFetch<BulkImportDocuments200>(getBulkImportDocumentsUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(bulkImportDocumentsBody),
+  });
+};
+
+export const getBulkImportDocumentsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkImportDocuments>>,
+    TError,
+    { data: BodyType<BulkImportDocumentsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof bulkImportDocuments>>,
+  TError,
+  { data: BodyType<BulkImportDocumentsBody> },
+  TContext
+> => {
+  const mutationKey = ["bulkImportDocuments"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof bulkImportDocuments>>,
+    { data: BodyType<BulkImportDocumentsBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return bulkImportDocuments(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type BulkImportDocumentsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof bulkImportDocuments>>
+>;
+export type BulkImportDocumentsMutationBody = BodyType<BulkImportDocumentsBody>;
+export type BulkImportDocumentsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Bulk import multiple documents
+ */
+export const useBulkImportDocuments = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof bulkImportDocuments>>,
+    TError,
+    { data: BodyType<BulkImportDocumentsBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof bulkImportDocuments>>,
+  TError,
+  { data: BodyType<BulkImportDocumentsBody> },
+  TContext
+> => {
+  return useMutation(getBulkImportDocumentsMutationOptions(options));
+};
 
 /**
  * @summary Get OpenClaw gateway configuration

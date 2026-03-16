@@ -420,6 +420,48 @@ export const GetRagStatsResponse = zod.object({
 });
 
 /**
+ * @summary Fetch content from a URL for knowledge base import
+ */
+export const FetchUrlBody = zod.object({
+  url: zod.string(),
+});
+
+export const FetchUrlResponse = zod.object({
+  title: zod.string(),
+  content: zod.string(),
+  contentLength: zod.number(),
+  sourceUrl: zod.string(),
+});
+
+/**
+ * @summary Bulk import multiple documents
+ */
+export const BulkImportDocumentsBody = zod.object({
+  documents: zod.array(
+    zod.object({
+      title: zod.string(),
+      content: zod.string(),
+      category: zod.string().optional(),
+    }),
+  ),
+});
+
+export const BulkImportDocumentsResponse = zod.object({
+  total: zod.number(),
+  succeeded: zod.number(),
+  failed: zod.number(),
+  results: zod.array(
+    zod.object({
+      title: zod.string(),
+      id: zod.number(),
+      chunksCount: zod.number(),
+      status: zod.enum(["success", "error"]),
+      error: zod.string().optional(),
+    }),
+  ),
+});
+
+/**
  * @summary Get OpenClaw gateway configuration
  */
 export const GetOpenclawConfigResponse = zod.object({

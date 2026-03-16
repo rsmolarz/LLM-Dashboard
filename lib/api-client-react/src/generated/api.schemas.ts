@@ -441,6 +441,50 @@ export interface RouteTaskResponse {
   reason: string;
 }
 
+export type FetchUrlBody = {
+  url: string;
+};
+
+export type FetchUrl200 = {
+  title: string;
+  content: string;
+  contentLength: number;
+  sourceUrl: string;
+};
+
+export type BulkImportDocumentsBodyDocumentsItem = {
+  title: string;
+  content: string;
+  category?: string;
+};
+
+export type BulkImportDocumentsBody = {
+  documents: BulkImportDocumentsBodyDocumentsItem[];
+};
+
+export type BulkImportDocuments200ResultsItemStatus =
+  (typeof BulkImportDocuments200ResultsItemStatus)[keyof typeof BulkImportDocuments200ResultsItemStatus];
+
+export const BulkImportDocuments200ResultsItemStatus = {
+  success: "success",
+  error: "error",
+} as const;
+
+export type BulkImportDocuments200ResultsItem = {
+  title: string;
+  id: number;
+  chunksCount: number;
+  status: BulkImportDocuments200ResultsItemStatus;
+  error?: string;
+};
+
+export type BulkImportDocuments200 = {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: BulkImportDocuments200ResultsItem[];
+};
+
 export type GetAgentLogsParams = {
   limit?: number;
 };
