@@ -25,6 +25,8 @@ import type {
   AgentLogEntry,
   AgentMemoryEntry,
   AgentTaskEntry,
+  AutoCollectorRun,
+  AutoCollectorStatus,
   BulkImportDocuments200,
   BulkImportDocumentsBody,
   ChatMessage,
@@ -69,6 +71,8 @@ import type {
   OllamaModel,
   OpenclawConfig,
   OpenclawConfigInput,
+  ProcessAutoCollectorData200,
+  ProcessAutoCollectorDataBody,
   PullModelInput,
   PullModelResponse,
   RagDocument,
@@ -76,6 +80,7 @@ import type {
   RateMessageInput,
   RouteTaskInput,
   RouteTaskResponse,
+  RunAutoCollectorNowBody,
   RunDiscovery200,
   RunDiscoveryBody,
   RunningModel,
@@ -85,10 +90,14 @@ import type {
   ScanGmailMessageBody,
   SearchDocumentsInput,
   SearchResult,
+  StartAutoCollector200,
+  StopAutoCollector200,
   TrainingDataEntry,
   TrainingDataInput,
   TrainingStats,
   UpdateAgentInput,
+  UpdateAutoCollectorConfig200,
+  UpdateAutoCollectorConfigBody,
   UpdateDiscoveredSourceBody,
   UpdateTaskInput,
   UpdateVpsTrainingSourceBody,
@@ -6598,4 +6607,584 @@ export const useExportVpsTrainingData = <
   TContext
 > => {
   return useMutation(getExportVpsTrainingDataMutationOptions(options));
+};
+
+/**
+ * @summary Get auto-collector status and configuration
+ */
+export const getGetAutoCollectorStatusUrl = () => {
+  return `/api/auto-collector/status`;
+};
+
+export const getAutoCollectorStatus = async (
+  options?: RequestInit,
+): Promise<AutoCollectorStatus> => {
+  return customFetch<AutoCollectorStatus>(getGetAutoCollectorStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAutoCollectorStatusQueryKey = () => {
+  return [`/api/auto-collector/status`] as const;
+};
+
+export const getGetAutoCollectorStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAutoCollectorStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAutoCollectorStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAutoCollectorStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAutoCollectorStatus>>
+  > = ({ signal }) => getAutoCollectorStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAutoCollectorStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAutoCollectorStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAutoCollectorStatus>>
+>;
+export type GetAutoCollectorStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get auto-collector status and configuration
+ */
+
+export function useGetAutoCollectorStatus<
+  TData = Awaited<ReturnType<typeof getAutoCollectorStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAutoCollectorStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAutoCollectorStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get auto-collector run history
+ */
+export const getGetAutoCollectorHistoryUrl = () => {
+  return `/api/auto-collector/history`;
+};
+
+export const getAutoCollectorHistory = async (
+  options?: RequestInit,
+): Promise<AutoCollectorRun[]> => {
+  return customFetch<AutoCollectorRun[]>(getGetAutoCollectorHistoryUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAutoCollectorHistoryQueryKey = () => {
+  return [`/api/auto-collector/history`] as const;
+};
+
+export const getGetAutoCollectorHistoryQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAutoCollectorHistory>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAutoCollectorHistory>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAutoCollectorHistoryQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getAutoCollectorHistory>>
+  > = ({ signal }) => getAutoCollectorHistory({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAutoCollectorHistory>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAutoCollectorHistoryQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAutoCollectorHistory>>
+>;
+export type GetAutoCollectorHistoryQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get auto-collector run history
+ */
+
+export function useGetAutoCollectorHistory<
+  TData = Awaited<ReturnType<typeof getAutoCollectorHistory>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getAutoCollectorHistory>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAutoCollectorHistoryQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update auto-collector configuration
+ */
+export const getUpdateAutoCollectorConfigUrl = () => {
+  return `/api/auto-collector/config`;
+};
+
+export const updateAutoCollectorConfig = async (
+  updateAutoCollectorConfigBody: UpdateAutoCollectorConfigBody,
+  options?: RequestInit,
+): Promise<UpdateAutoCollectorConfig200> => {
+  return customFetch<UpdateAutoCollectorConfig200>(
+    getUpdateAutoCollectorConfigUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(updateAutoCollectorConfigBody),
+    },
+  );
+};
+
+export const getUpdateAutoCollectorConfigMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateAutoCollectorConfig>>,
+    TError,
+    { data: BodyType<UpdateAutoCollectorConfigBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateAutoCollectorConfig>>,
+  TError,
+  { data: BodyType<UpdateAutoCollectorConfigBody> },
+  TContext
+> => {
+  const mutationKey = ["updateAutoCollectorConfig"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateAutoCollectorConfig>>,
+    { data: BodyType<UpdateAutoCollectorConfigBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateAutoCollectorConfig(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateAutoCollectorConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateAutoCollectorConfig>>
+>;
+export type UpdateAutoCollectorConfigMutationBody =
+  BodyType<UpdateAutoCollectorConfigBody>;
+export type UpdateAutoCollectorConfigMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update auto-collector configuration
+ */
+export const useUpdateAutoCollectorConfig = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateAutoCollectorConfig>>,
+    TError,
+    { data: BodyType<UpdateAutoCollectorConfigBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateAutoCollectorConfig>>,
+  TError,
+  { data: BodyType<UpdateAutoCollectorConfigBody> },
+  TContext
+> => {
+  return useMutation(getUpdateAutoCollectorConfigMutationOptions(options));
+};
+
+/**
+ * @summary Start the auto-collector scheduler
+ */
+export const getStartAutoCollectorUrl = () => {
+  return `/api/auto-collector/start`;
+};
+
+export const startAutoCollector = async (
+  options?: RequestInit,
+): Promise<StartAutoCollector200> => {
+  return customFetch<StartAutoCollector200>(getStartAutoCollectorUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getStartAutoCollectorMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof startAutoCollector>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof startAutoCollector>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["startAutoCollector"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof startAutoCollector>>,
+    void
+  > = () => {
+    return startAutoCollector(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type StartAutoCollectorMutationResult = NonNullable<
+  Awaited<ReturnType<typeof startAutoCollector>>
+>;
+
+export type StartAutoCollectorMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Start the auto-collector scheduler
+ */
+export const useStartAutoCollector = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof startAutoCollector>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof startAutoCollector>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getStartAutoCollectorMutationOptions(options));
+};
+
+/**
+ * @summary Stop the auto-collector scheduler
+ */
+export const getStopAutoCollectorUrl = () => {
+  return `/api/auto-collector/stop`;
+};
+
+export const stopAutoCollector = async (
+  options?: RequestInit,
+): Promise<StopAutoCollector200> => {
+  return customFetch<StopAutoCollector200>(getStopAutoCollectorUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getStopAutoCollectorMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof stopAutoCollector>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof stopAutoCollector>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["stopAutoCollector"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof stopAutoCollector>>,
+    void
+  > = () => {
+    return stopAutoCollector(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type StopAutoCollectorMutationResult = NonNullable<
+  Awaited<ReturnType<typeof stopAutoCollector>>
+>;
+
+export type StopAutoCollectorMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Stop the auto-collector scheduler
+ */
+export const useStopAutoCollector = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof stopAutoCollector>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof stopAutoCollector>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getStopAutoCollectorMutationOptions(options));
+};
+
+/**
+ * @summary Run collection immediately
+ */
+export const getRunAutoCollectorNowUrl = () => {
+  return `/api/auto-collector/run-now`;
+};
+
+export const runAutoCollectorNow = async (
+  runAutoCollectorNowBody: RunAutoCollectorNowBody,
+  options?: RequestInit,
+): Promise<AutoCollectorRun> => {
+  return customFetch<AutoCollectorRun>(getRunAutoCollectorNowUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(runAutoCollectorNowBody),
+  });
+};
+
+export const getRunAutoCollectorNowMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runAutoCollectorNow>>,
+    TError,
+    { data: BodyType<RunAutoCollectorNowBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runAutoCollectorNow>>,
+  TError,
+  { data: BodyType<RunAutoCollectorNowBody> },
+  TContext
+> => {
+  const mutationKey = ["runAutoCollectorNow"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runAutoCollectorNow>>,
+    { data: BodyType<RunAutoCollectorNowBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return runAutoCollectorNow(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RunAutoCollectorNowMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runAutoCollectorNow>>
+>;
+export type RunAutoCollectorNowMutationBody = BodyType<RunAutoCollectorNowBody>;
+export type RunAutoCollectorNowMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Run collection immediately
+ */
+export const useRunAutoCollectorNow = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runAutoCollectorNow>>,
+    TError,
+    { data: BodyType<RunAutoCollectorNowBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof runAutoCollectorNow>>,
+  TError,
+  { data: BodyType<RunAutoCollectorNowBody> },
+  TContext
+> => {
+  return useMutation(getRunAutoCollectorNowMutationOptions(options));
+};
+
+/**
+ * @summary Process collected data with LLM
+ */
+export const getProcessAutoCollectorDataUrl = () => {
+  return `/api/auto-collector/process`;
+};
+
+export const processAutoCollectorData = async (
+  processAutoCollectorDataBody: ProcessAutoCollectorDataBody,
+  options?: RequestInit,
+): Promise<ProcessAutoCollectorData200> => {
+  return customFetch<ProcessAutoCollectorData200>(
+    getProcessAutoCollectorDataUrl(),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(processAutoCollectorDataBody),
+    },
+  );
+};
+
+export const getProcessAutoCollectorDataMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof processAutoCollectorData>>,
+    TError,
+    { data: BodyType<ProcessAutoCollectorDataBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof processAutoCollectorData>>,
+  TError,
+  { data: BodyType<ProcessAutoCollectorDataBody> },
+  TContext
+> => {
+  const mutationKey = ["processAutoCollectorData"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof processAutoCollectorData>>,
+    { data: BodyType<ProcessAutoCollectorDataBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return processAutoCollectorData(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ProcessAutoCollectorDataMutationResult = NonNullable<
+  Awaited<ReturnType<typeof processAutoCollectorData>>
+>;
+export type ProcessAutoCollectorDataMutationBody =
+  BodyType<ProcessAutoCollectorDataBody>;
+export type ProcessAutoCollectorDataMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Process collected data with LLM
+ */
+export const useProcessAutoCollectorData = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof processAutoCollectorData>>,
+    TError,
+    { data: BodyType<ProcessAutoCollectorDataBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof processAutoCollectorData>>,
+  TError,
+  { data: BodyType<ProcessAutoCollectorDataBody> },
+  TContext
+> => {
+  return useMutation(getProcessAutoCollectorDataMutationOptions(options));
 };

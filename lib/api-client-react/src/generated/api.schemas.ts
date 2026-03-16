@@ -613,6 +613,45 @@ export interface VpsTrainingStats {
   lastCollected?: string | null;
 }
 
+export type AutoCollectorStatusConfig = { [key: string]: unknown };
+
+export interface AutoCollectorStatus {
+  enabled: boolean;
+  isRunning: boolean;
+  intervalMinutes: number;
+  lastRunAt?: string | null;
+  totalRuns: number;
+  totalCollected: number;
+  config?: AutoCollectorStatusConfig;
+}
+
+export interface AutoCollectorRunResults {
+  gmail?: number;
+  drive?: number;
+  conversations?: number;
+  discovery?: number;
+  knowledgeBase?: number;
+  processed?: number;
+  errors?: string[];
+}
+
+export type AutoCollectorRunStatus =
+  (typeof AutoCollectorRunStatus)[keyof typeof AutoCollectorRunStatus];
+
+export const AutoCollectorRunStatus = {
+  running: "running",
+  completed: "completed",
+  failed: "failed",
+} as const;
+
+export interface AutoCollectorRun {
+  id: string;
+  startedAt: string;
+  completedAt?: string | null;
+  status: AutoCollectorRunStatus;
+  results: AutoCollectorRunResults;
+}
+
 export type FetchUrlBody = {
   url: string;
 };
@@ -777,4 +816,58 @@ export type ExportVpsTrainingDataBody = {
   format?: ExportVpsTrainingDataBodyFormat;
   minQuality?: number;
   sourceType?: string;
+};
+
+export type UpdateAutoCollectorConfigBodySources = { [key: string]: unknown };
+
+export type UpdateAutoCollectorConfigBodyProcessing = {
+  [key: string]: unknown;
+};
+
+export type UpdateAutoCollectorConfigBody = {
+  intervalMinutes?: number;
+  sources?: UpdateAutoCollectorConfigBodySources;
+  processing?: UpdateAutoCollectorConfigBodyProcessing;
+};
+
+export type UpdateAutoCollectorConfig200Config = { [key: string]: unknown };
+
+export type UpdateAutoCollectorConfig200 = {
+  success?: boolean;
+  config?: UpdateAutoCollectorConfig200Config;
+};
+
+export type StartAutoCollector200 = {
+  success?: boolean;
+  message?: string;
+};
+
+export type StopAutoCollector200 = {
+  success?: boolean;
+  message?: string;
+};
+
+export type RunAutoCollectorNowBodySource =
+  (typeof RunAutoCollectorNowBodySource)[keyof typeof RunAutoCollectorNowBodySource];
+
+export const RunAutoCollectorNowBodySource = {
+  gmail: "gmail",
+  drive: "drive",
+  conversations: "conversations",
+  discovery: "discovery",
+  knowledgeBase: "knowledgeBase",
+} as const;
+
+export type RunAutoCollectorNowBody = {
+  source?: RunAutoCollectorNowBodySource;
+};
+
+export type ProcessAutoCollectorDataBody = {
+  batchSize?: number;
+};
+
+export type ProcessAutoCollectorData200 = {
+  success?: boolean;
+  processed?: number;
+  errors?: string[];
 };

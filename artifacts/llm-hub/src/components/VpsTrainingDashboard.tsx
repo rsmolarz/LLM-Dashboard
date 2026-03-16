@@ -17,6 +17,7 @@ import {
   ChevronDown, ChevronUp, AlertCircle, Zap, Eye,
   Filter, ArrowUpDown, FileText, Settings
 } from "lucide-react";
+import AutoCollector from "./AutoCollector";
 
 type SourceFilter = "all" | "gmail" | "drive" | "web" | "manual";
 type StatusFilter = "all" | "collected" | "reviewed" | "processed" | "rejected";
@@ -145,6 +146,10 @@ export default function VpsTrainingDashboard() {
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </Button>
         </div>
+      </div>
+
+      <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10">
+        <AutoCollector />
       </div>
 
       {initDone && (

@@ -10,6 +10,7 @@ import openclawRouter from "./openclaw";
 import scanRouter from "./scan";
 import vpsDatabaseRouter from "./vps-database";
 import vpsTrainingRouter from "./vps-training";
+import autoCollectorRouter from "./auto-collector";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(openclawRouter);
 router.use(scanRouter);
 router.use(vpsDatabaseRouter);
 router.use(vpsTrainingRouter);
+router.use(autoCollectorRouter);
 
 export default router;

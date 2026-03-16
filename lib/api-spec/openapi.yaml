@@ -29,6 +29,8 @@ tags:
     description: VPS PostgreSQL database management
   - name: vps-training
     description: VPS training data collection and management
+  - name: auto-collector
+    description: Automated training data collection engine
 paths:
   /healthz:
     get:
@@ -1569,6 +1571,154 @@ paths:
               schema:
                 type: string
 
+  /auto-collector/status:
+    get:
+      operationId: getAutoCollectorStatus
+      tags: [auto-collector]
+      summary: Get auto-collector status and configuration
+      responses:
+        "200":
+          description: Auto-collector status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoCollectorStatus"
+
+  /auto-collector/history:
+    get:
+      operationId: getAutoCollectorHistory
+      tags: [auto-collector]
+      summary: Get auto-collector run history
+      responses:
+        "200":
+          description: Run history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AutoCollectorRun"
+
+  /auto-collector/config:
+    post:
+      operationId: updateAutoCollectorConfig
+      tags: [auto-collector]
+      summary: Update auto-collector configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                intervalMinutes:
+                  type: integer
+                sources:
+                  type: object
+                processing:
+                  type: object
+      responses:
+        "200":
+          description: Updated config
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  config:
+                    type: object
+
+  /auto-collector/start:
+    post:
+      operationId: startAutoCollector
+      tags: [auto-collector]
+      summary: Start the auto-collector scheduler
+      responses:
+        "200":
+          description: Started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /auto-collector/stop:
+    post:
+      operationId: stopAutoCollector
+      tags: [auto-collector]
+      summary: Stop the auto-collector scheduler
+      responses:
+        "200":
+          description: Stopped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /auto-collector/run-now:
+    post:
+      operationId: runAutoCollectorNow
+      tags: [auto-collector]
+      summary: Run collection immediately
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source:
+                  type: string
+                  enum: [gmail, drive, conversations, discovery, knowledgeBase]
+      responses:
+        "200":
+          description: Run result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AutoCollectorRun"
+
+  /auto-collector/process:
+    post:
+      operationId: processAutoCollectorData
+      tags: [auto-collector]
+      summary: Process collected data with LLM
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                batchSize:
+                  type: integer
+                  default: 10
+      responses:
+        "200":
+          description: Processing result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  processed:
+                    type: integer
+                  errors:
+                    type: array
+                    items:
+                      type: string
+
 components:
   schemas:
     HealthStatus:
@@ -2899,3 +3049,69 @@ components:
           nullable: true
       required:
         - total
+
+    AutoCollectorStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        isRunning:
+          type: boolean
+        intervalMinutes:
+          type: integer
+        lastRunAt:
+          type: string
+          nullable: true
+        totalRuns:
+          type: integer
+        totalCollected:
+          type: integer
+        config:
+          type: object
+      required:
+        - enabled
+        - isRunning
+        - intervalMinutes
+        - totalRuns
+        - totalCollected
+
+    AutoCollectorRunResults:
+      type: object
+      properties:
+        gmail:
+          type: integer
+        drive:
+          type: integer
+        conversations:
+          type: integer
+        discovery:
+          type: integer
+        knowledgeBase:
+          type: integer
+        processed:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: string
+
+    AutoCollectorRun:
+      type: object
+      properties:
+        id:
+          type: string
+        startedAt:
+          type: string
+        completedAt:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [running, completed, failed]
+        results:
+          $ref: "#/components/schemas/AutoCollectorRunResults"
+      required:
+        - id
+        - startedAt
+        - status
+        - results

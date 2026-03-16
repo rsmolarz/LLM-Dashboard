@@ -1302,3 +1302,108 @@ export const ExportVpsTrainingDataBody = zod.object({
   minQuality: zod.number().default(exportVpsTrainingDataBodyMinQualityDefault),
   sourceType: zod.string().optional(),
 });
+
+/**
+ * @summary Get auto-collector status and configuration
+ */
+export const GetAutoCollectorStatusResponse = zod.object({
+  enabled: zod.boolean(),
+  isRunning: zod.boolean(),
+  intervalMinutes: zod.number(),
+  lastRunAt: zod.string().nullish(),
+  totalRuns: zod.number(),
+  totalCollected: zod.number(),
+  config: zod.object({}).passthrough().optional(),
+});
+
+/**
+ * @summary Get auto-collector run history
+ */
+export const GetAutoCollectorHistoryResponseItem = zod.object({
+  id: zod.string(),
+  startedAt: zod.string(),
+  completedAt: zod.string().nullish(),
+  status: zod.enum(["running", "completed", "failed"]),
+  results: zod.object({
+    gmail: zod.number().optional(),
+    drive: zod.number().optional(),
+    conversations: zod.number().optional(),
+    discovery: zod.number().optional(),
+    knowledgeBase: zod.number().optional(),
+    processed: zod.number().optional(),
+    errors: zod.array(zod.string()).optional(),
+  }),
+});
+export const GetAutoCollectorHistoryResponse = zod.array(
+  GetAutoCollectorHistoryResponseItem,
+);
+
+/**
+ * @summary Update auto-collector configuration
+ */
+export const UpdateAutoCollectorConfigBody = zod.object({
+  intervalMinutes: zod.number().optional(),
+  sources: zod.object({}).passthrough().optional(),
+  processing: zod.object({}).passthrough().optional(),
+});
+
+export const UpdateAutoCollectorConfigResponse = zod.object({
+  success: zod.boolean().optional(),
+  config: zod.object({}).passthrough().optional(),
+});
+
+/**
+ * @summary Start the auto-collector scheduler
+ */
+export const StartAutoCollectorResponse = zod.object({
+  success: zod.boolean().optional(),
+  message: zod.string().optional(),
+});
+
+/**
+ * @summary Stop the auto-collector scheduler
+ */
+export const StopAutoCollectorResponse = zod.object({
+  success: zod.boolean().optional(),
+  message: zod.string().optional(),
+});
+
+/**
+ * @summary Run collection immediately
+ */
+export const RunAutoCollectorNowBody = zod.object({
+  source: zod
+    .enum(["gmail", "drive", "conversations", "discovery", "knowledgeBase"])
+    .optional(),
+});
+
+export const RunAutoCollectorNowResponse = zod.object({
+  id: zod.string(),
+  startedAt: zod.string(),
+  completedAt: zod.string().nullish(),
+  status: zod.enum(["running", "completed", "failed"]),
+  results: zod.object({
+    gmail: zod.number().optional(),
+    drive: zod.number().optional(),
+    conversations: zod.number().optional(),
+    discovery: zod.number().optional(),
+    knowledgeBase: zod.number().optional(),
+    processed: zod.number().optional(),
+    errors: zod.array(zod.string()).optional(),
+  }),
+});
+
+/**
+ * @summary Process collected data with LLM
+ */
+export const processAutoCollectorDataBodyBatchSizeDefault = 10;
+
+export const ProcessAutoCollectorDataBody = zod.object({
+  batchSize: zod.number().default(processAutoCollectorDataBodyBatchSizeDefault),
+});
+
+export const ProcessAutoCollectorDataResponse = zod.object({
+  success: zod.boolean().optional(),
+  processed: zod.number().optional(),
+  errors: zod.array(zod.string()).optional(),
+});
