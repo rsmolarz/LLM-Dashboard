@@ -169,7 +169,7 @@ paths:
 
   /llm/setup-script:
     get:
-      operationId: getSetupScript
+      operationId: getLlmSetupScript
       tags: [llm-config]
       summary: Generate setup script for Ollama
       responses:
@@ -563,6 +563,213 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RagStats"
+
+  /openclaw/config:
+    get:
+      operationId: getOpenclawConfig
+      tags: [openclaw]
+      summary: Get OpenClaw gateway configuration
+      responses:
+        "200":
+          description: Current config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenclawConfig"
+    put:
+      operationId: updateOpenclawConfig
+      tags: [openclaw]
+      summary: Update OpenClaw gateway configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenclawConfigInput"
+      responses:
+        "200":
+          description: Updated config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenclawConfig"
+
+  /openclaw/gateway/status:
+    get:
+      operationId: getGatewayStatus
+      tags: [openclaw]
+      summary: Get OpenClaw gateway health and status
+      responses:
+        "200":
+          description: Gateway status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayStatus"
+
+  /openclaw/agents:
+    get:
+      operationId: listAgents
+      tags: [openclaw]
+      summary: List all agents
+      responses:
+        "200":
+          description: Agents list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentEntry"
+    post:
+      operationId: createAgent
+      tags: [openclaw]
+      summary: Create a new agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAgentInput"
+      responses:
+        "201":
+          description: Created agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentEntry"
+
+  /openclaw/agents/{agentId}:
+    get:
+      operationId: getAgent
+      tags: [openclaw]
+      summary: Get agent details
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Agent details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentEntry"
+    put:
+      operationId: updateAgent
+      tags: [openclaw]
+      summary: Update an agent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAgentInput"
+      responses:
+        "200":
+          description: Updated agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentEntry"
+    delete:
+      operationId: deleteAgent
+      tags: [openclaw]
+      summary: Delete an agent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /openclaw/agents/{agentId}/chat:
+    post:
+      operationId: chatWithAgent
+      tags: [openclaw]
+      summary: Send a message to an agent via OpenClaw gateway
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentChatInput"
+      responses:
+        "200":
+          description: Agent response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentChatResponse"
+
+  /openclaw/agents/{agentId}/logs:
+    get:
+      operationId: getAgentLogs
+      tags: [openclaw]
+      summary: Get agent activity logs
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Agent logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AgentLogEntry"
+
+  /openclaw/stats:
+    get:
+      operationId: getOpenclawStats
+      tags: [openclaw]
+      summary: Get fleet statistics
+      responses:
+        "200":
+          description: Fleet stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetStats"
+
+  /openclaw/setup-script:
+    get:
+      operationId: getOpenclawSetupScript
+      tags: [openclaw]
+      summary: Generate OpenClaw VPS setup script
+      responses:
+        "200":
+          description: Bash setup script
+          content:
+            text/plain:
+              schema:
+                type: string
 
 components:
   schemas:
@@ -1092,3 +1299,245 @@ components:
         - totalDocuments
         - totalChunks
         - byCategory
+
+    OpenclawConfig:
+      type: object
+      properties:
+        id:
+          type: integer
+        gatewayUrl:
+          type: string
+        httpUrl:
+          type: string
+        authToken:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - gatewayUrl
+        - httpUrl
+        - authToken
+        - createdAt
+        - updatedAt
+
+    OpenclawConfigInput:
+      type: object
+      properties:
+        gatewayUrl:
+          type: string
+        httpUrl:
+          type: string
+        authToken:
+          type: string
+      required:
+        - gatewayUrl
+        - httpUrl
+        - authToken
+
+    GatewayStatus:
+      type: object
+      properties:
+        online:
+          type: boolean
+        health:
+          type: string
+        version:
+          type: ["string", "null"]
+        agentsCount:
+          type: integer
+        error:
+          type: ["string", "null"]
+      required:
+        - online
+        - health
+        - agentsCount
+
+    AgentEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        agentId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        emoji:
+          type: string
+        model:
+          type: string
+        systemPrompt:
+          type: string
+        category:
+          type: string
+        status:
+          type: string
+        channels:
+          type: string
+        temperature:
+          type: number
+        maxTokens:
+          type: integer
+        tasksCompleted:
+          type: integer
+        totalMessages:
+          type: integer
+        lastActive:
+          type: ["string", "null"]
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - agentId
+        - name
+        - description
+        - emoji
+        - model
+        - systemPrompt
+        - category
+        - status
+        - channels
+        - temperature
+        - maxTokens
+        - tasksCompleted
+        - totalMessages
+        - createdAt
+        - updatedAt
+
+    CreateAgentInput:
+      type: object
+      properties:
+        agentId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        emoji:
+          type: string
+        model:
+          type: string
+        systemPrompt:
+          type: string
+        category:
+          type: string
+        channels:
+          type: string
+        temperature:
+          type: number
+        maxTokens:
+          type: integer
+      required:
+        - agentId
+        - name
+
+    UpdateAgentInput:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        emoji:
+          type: string
+        model:
+          type: string
+        systemPrompt:
+          type: string
+        category:
+          type: string
+        status:
+          type: string
+        channels:
+          type: string
+        temperature:
+          type: number
+        maxTokens:
+          type: integer
+
+    AgentChatInput:
+      type: object
+      properties:
+        message:
+          type: string
+        sessionKey:
+          type: string
+      required:
+        - message
+
+    AgentChatResponse:
+      type: object
+      properties:
+        agentId:
+          type: string
+        response:
+          type: string
+        sessionKey:
+          type: string
+      required:
+        - agentId
+        - response
+        - sessionKey
+
+    AgentLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        agentId:
+          type: string
+        level:
+          type: string
+        message:
+          type: string
+        metadata:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - agentId
+        - level
+        - message
+        - metadata
+        - createdAt
+
+    FleetStats:
+      type: object
+      properties:
+        totalAgents:
+          type: integer
+        activeAgents:
+          type: integer
+        idleAgents:
+          type: integer
+        totalMessages:
+          type: integer
+        totalTasksCompleted:
+          type: integer
+        byCategory:
+          type: object
+          additionalProperties:
+            type: integer
+        gatewayConnected:
+          type: boolean
+      required:
+        - totalAgents
+        - activeAgents
+        - idleAgents
+        - totalMessages
+        - totalTasksCompleted
+        - byCategory
+        - gatewayConnected

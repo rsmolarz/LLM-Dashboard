@@ -6,6 +6,7 @@ import chatRouter from "./chat";
 import modelProfilesRouter from "./model-profiles";
 import trainingDataRouter from "./training-data";
 import ragRouter from "./rag";
+import openclawRouter from "./openclaw";
 
 const router: IRouter = Router();
 
@@ -16,5 +17,6 @@ router.use(chatRouter);
 router.use(modelProfilesRouter);
 router.use(trainingDataRouter);
 router.use(ragRouter);
+router.use(openclawRouter);
 
 export default router;

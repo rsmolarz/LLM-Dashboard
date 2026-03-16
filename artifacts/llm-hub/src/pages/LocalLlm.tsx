@@ -12,7 +12,7 @@ import {
   useGetLlmStatus, 
   useGetLlmConfig, 
   useSaveLlmConfig, 
-  useGetSetupScript,
+  useGetLlmSetupScript,
   useSendChatMessage,
   useListModels,
   usePullModel,
@@ -40,7 +40,7 @@ export default function LocalLlm() {
   });
   const { data: config, isLoading: configLoading } = useGetLlmConfig();
   const saveConfig = useSaveLlmConfig();
-  const { refetch: fetchScript } = useGetSetupScript({ query: { enabled: false } });
+  const { refetch: fetchScript } = useGetLlmSetupScript({ query: { enabled: false } });
   const { data: models = [], isLoading: modelsLoading } = useListModels({
     query: { refetchInterval: 30000 }
   });

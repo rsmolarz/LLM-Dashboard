@@ -66,6 +66,7 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
   - `model-profiles.ts` — CRUD + deploy to Ollama via Modelfile API
   - `training-data.ts` — Training data CRUD, collect from conversations, export as JSONL
   - `rag.ts` — Document CRUD, auto-chunking, keyword-based similarity search
+  - `openclaw.ts` — OpenClaw Gateway config, agent CRUD, agent chat via gateway, activity logs, fleet stats, VPS setup script
 - Depends on: `@workspace/db`, `@workspace/api-zod`
 
 ### `artifacts/llm-hub` (`@workspace/llm-hub`)
@@ -80,6 +81,12 @@ Features:
   - **Training Data**: Collect training pairs from conversations, add manually, rate quality, export as JSONL (OpenAI, Alpaca, ShareGPT formats)
   - **Knowledge Base (RAG)**: Upload documents, auto-chunk for retrieval, keyword-based search, context injection into chat
   - **Fine-tuning**: Guided pipeline with step tracker, instructions for Unsloth/Axolotl/cloud GPU providers
+- **Agents Tab**: OpenClaw-powered agent fleet management
+  - **Fleet Dashboard**: Real-time agent grid with stats (total, active, idle, messages, tasks), category filters (General, Research, Customer Service, Code & Dev, Business Ops, Content, Security), search
+  - **Agent Creation**: Name, emoji, category, system prompt, model, channels, temperature/maxTokens config
+  - **Agent Detail**: Chat with individual agents via OpenClaw Gateway, activity logs, configuration JSON view, edit/delete
+  - **Gateway Settings**: Configure OpenClaw Gateway URL, HTTP URL, and auth token
+  - **VPS Setup Script**: Auto-generated bash script to install OpenClaw Gateway on VPS with systemd service
 
 ### `lib/db` (`@workspace/db`)
 
@@ -93,6 +100,9 @@ Tables:
 - `training_data` — Training pairs (inputText, outputText, systemPrompt, category, quality, source)
 - `documents` — RAG knowledge base documents (title, content, category, chunksCount)
 - `document_chunks` — Auto-generated text chunks from documents (documentId, content, chunkIndex)
+- `openclaw_config` — OpenClaw Gateway connection settings (gatewayUrl, httpUrl, authToken)
+- `agents` — AI agent definitions (agentId, name, emoji, model, systemPrompt, category, status, channels, temperature, maxTokens, tasksCompleted, totalMessages)
+- `agent_logs` — Agent activity audit trail (agentId, level, message, metadata)
 
 ### `lib/api-spec` (`@workspace/api-spec`)
 

@@ -18,17 +18,25 @@ import type {
 
 import type {
   AddMessageInput,
+  AgentChatInput,
+  AgentChatResponse,
+  AgentEntry,
+  AgentLogEntry,
   ChatMessage,
   ChatRequest,
   ChatResponse,
   CollectTrainingInput,
   CollectTrainingResponse,
   Conversation,
+  CreateAgentInput,
   CreateConversationInput,
   CreateDocumentInput,
   DeleteModelResponse,
   DeployProfileResponse,
   ExportTrainingDataInput,
+  FleetStats,
+  GatewayStatus,
+  GetAgentLogsParams,
   HealthStatus,
   LlmConfig,
   LlmConfigInput,
@@ -36,6 +44,8 @@ import type {
   ModelProfile,
   ModelProfileInput,
   OllamaModel,
+  OpenclawConfig,
+  OpenclawConfigInput,
   PullModelInput,
   PullModelResponse,
   RagDocument,
@@ -47,6 +57,7 @@ import type {
   TrainingDataEntry,
   TrainingDataInput,
   TrainingStats,
+  UpdateAgentInput,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -778,29 +789,29 @@ export const useSendChatMessage = <
 /**
  * @summary Generate setup script for Ollama
  */
-export const getGetSetupScriptUrl = () => {
+export const getGetLlmSetupScriptUrl = () => {
   return `/api/llm/setup-script`;
 };
 
-export const getSetupScript = async (
+export const getLlmSetupScript = async (
   options?: RequestInit,
 ): Promise<string> => {
-  return customFetch<string>(getGetSetupScriptUrl(), {
+  return customFetch<string>(getGetLlmSetupScriptUrl(), {
     ...options,
     method: "GET",
   });
 };
 
-export const getGetSetupScriptQueryKey = () => {
+export const getGetLlmSetupScriptQueryKey = () => {
   return [`/api/llm/setup-script`] as const;
 };
 
-export const getGetSetupScriptQueryOptions = <
-  TData = Awaited<ReturnType<typeof getSetupScript>>,
+export const getGetLlmSetupScriptQueryOptions = <
+  TData = Awaited<ReturnType<typeof getLlmSetupScript>>,
   TError = ErrorType<unknown>,
 >(options?: {
   query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getSetupScript>>,
+    Awaited<ReturnType<typeof getLlmSetupScript>>,
     TError,
     TData
   >;
@@ -808,40 +819,40 @@ export const getGetSetupScriptQueryOptions = <
 }) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getGetSetupScriptQueryKey();
+  const queryKey = queryOptions?.queryKey ?? getGetLlmSetupScriptQueryKey();
 
-  const queryFn: QueryFunction<Awaited<ReturnType<typeof getSetupScript>>> = ({
-    signal,
-  }) => getSetupScript({ signal, ...requestOptions });
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getLlmSetupScript>>
+  > = ({ signal }) => getLlmSetupScript({ signal, ...requestOptions });
 
   return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
-    Awaited<ReturnType<typeof getSetupScript>>,
+    Awaited<ReturnType<typeof getLlmSetupScript>>,
     TError,
     TData
   > & { queryKey: QueryKey };
 };
 
-export type GetSetupScriptQueryResult = NonNullable<
-  Awaited<ReturnType<typeof getSetupScript>>
+export type GetLlmSetupScriptQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getLlmSetupScript>>
 >;
-export type GetSetupScriptQueryError = ErrorType<unknown>;
+export type GetLlmSetupScriptQueryError = ErrorType<unknown>;
 
 /**
  * @summary Generate setup script for Ollama
  */
 
-export function useGetSetupScript<
-  TData = Awaited<ReturnType<typeof getSetupScript>>,
+export function useGetLlmSetupScript<
+  TData = Awaited<ReturnType<typeof getLlmSetupScript>>,
   TError = ErrorType<unknown>,
 >(options?: {
   query?: UseQueryOptions<
-    Awaited<ReturnType<typeof getSetupScript>>,
+    Awaited<ReturnType<typeof getLlmSetupScript>>,
     TError,
     TData
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetSetupScriptQueryOptions(options);
+  const queryOptions = getGetLlmSetupScriptQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
@@ -2661,6 +2672,1009 @@ export function useGetRagStats<
   request?: SecondParameter<typeof customFetch>;
 }): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
   const queryOptions = getGetRagStatsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get OpenClaw gateway configuration
+ */
+export const getGetOpenclawConfigUrl = () => {
+  return `/api/openclaw/config`;
+};
+
+export const getOpenclawConfig = async (
+  options?: RequestInit,
+): Promise<OpenclawConfig> => {
+  return customFetch<OpenclawConfig>(getGetOpenclawConfigUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOpenclawConfigQueryKey = () => {
+  return [`/api/openclaw/config`] as const;
+};
+
+export const getGetOpenclawConfigQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOpenclawConfig>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpenclawConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOpenclawConfigQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOpenclawConfig>>
+  > = ({ signal }) => getOpenclawConfig({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOpenclawConfig>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOpenclawConfigQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOpenclawConfig>>
+>;
+export type GetOpenclawConfigQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get OpenClaw gateway configuration
+ */
+
+export function useGetOpenclawConfig<
+  TData = Awaited<ReturnType<typeof getOpenclawConfig>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpenclawConfig>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOpenclawConfigQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update OpenClaw gateway configuration
+ */
+export const getUpdateOpenclawConfigUrl = () => {
+  return `/api/openclaw/config`;
+};
+
+export const updateOpenclawConfig = async (
+  openclawConfigInput: OpenclawConfigInput,
+  options?: RequestInit,
+): Promise<OpenclawConfig> => {
+  return customFetch<OpenclawConfig>(getUpdateOpenclawConfigUrl(), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(openclawConfigInput),
+  });
+};
+
+export const getUpdateOpenclawConfigMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateOpenclawConfig>>,
+    TError,
+    { data: BodyType<OpenclawConfigInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateOpenclawConfig>>,
+  TError,
+  { data: BodyType<OpenclawConfigInput> },
+  TContext
+> => {
+  const mutationKey = ["updateOpenclawConfig"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateOpenclawConfig>>,
+    { data: BodyType<OpenclawConfigInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return updateOpenclawConfig(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateOpenclawConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateOpenclawConfig>>
+>;
+export type UpdateOpenclawConfigMutationBody = BodyType<OpenclawConfigInput>;
+export type UpdateOpenclawConfigMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update OpenClaw gateway configuration
+ */
+export const useUpdateOpenclawConfig = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateOpenclawConfig>>,
+    TError,
+    { data: BodyType<OpenclawConfigInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateOpenclawConfig>>,
+  TError,
+  { data: BodyType<OpenclawConfigInput> },
+  TContext
+> => {
+  return useMutation(getUpdateOpenclawConfigMutationOptions(options));
+};
+
+/**
+ * @summary Get OpenClaw gateway health and status
+ */
+export const getGetGatewayStatusUrl = () => {
+  return `/api/openclaw/gateway/status`;
+};
+
+export const getGatewayStatus = async (
+  options?: RequestInit,
+): Promise<GatewayStatus> => {
+  return customFetch<GatewayStatus>(getGetGatewayStatusUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetGatewayStatusQueryKey = () => {
+  return [`/api/openclaw/gateway/status`] as const;
+};
+
+export const getGetGatewayStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getGatewayStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getGatewayStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetGatewayStatusQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getGatewayStatus>>
+  > = ({ signal }) => getGatewayStatus({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getGatewayStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetGatewayStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getGatewayStatus>>
+>;
+export type GetGatewayStatusQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get OpenClaw gateway health and status
+ */
+
+export function useGetGatewayStatus<
+  TData = Awaited<ReturnType<typeof getGatewayStatus>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getGatewayStatus>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetGatewayStatusQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary List all agents
+ */
+export const getListAgentsUrl = () => {
+  return `/api/openclaw/agents`;
+};
+
+export const listAgents = async (
+  options?: RequestInit,
+): Promise<AgentEntry[]> => {
+  return customFetch<AgentEntry[]>(getListAgentsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAgentsQueryKey = () => {
+  return [`/api/openclaw/agents`] as const;
+};
+
+export const getListAgentsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAgents>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAgents>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAgentsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAgents>>> = ({
+    signal,
+  }) => listAgents({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAgents>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAgentsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAgents>>
+>;
+export type ListAgentsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all agents
+ */
+
+export function useListAgents<
+  TData = Awaited<ReturnType<typeof listAgents>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listAgents>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAgentsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a new agent
+ */
+export const getCreateAgentUrl = () => {
+  return `/api/openclaw/agents`;
+};
+
+export const createAgent = async (
+  createAgentInput: CreateAgentInput,
+  options?: RequestInit,
+): Promise<AgentEntry> => {
+  return customFetch<AgentEntry>(getCreateAgentUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createAgentInput),
+  });
+};
+
+export const getCreateAgentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAgent>>,
+    TError,
+    { data: BodyType<CreateAgentInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createAgent>>,
+  TError,
+  { data: BodyType<CreateAgentInput> },
+  TContext
+> => {
+  const mutationKey = ["createAgent"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createAgent>>,
+    { data: BodyType<CreateAgentInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createAgent(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateAgentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createAgent>>
+>;
+export type CreateAgentMutationBody = BodyType<CreateAgentInput>;
+export type CreateAgentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a new agent
+ */
+export const useCreateAgent = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAgent>>,
+    TError,
+    { data: BodyType<CreateAgentInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createAgent>>,
+  TError,
+  { data: BodyType<CreateAgentInput> },
+  TContext
+> => {
+  return useMutation(getCreateAgentMutationOptions(options));
+};
+
+/**
+ * @summary Get agent details
+ */
+export const getGetAgentUrl = (agentId: string) => {
+  return `/api/openclaw/agents/${agentId}`;
+};
+
+export const getAgent = async (
+  agentId: string,
+  options?: RequestInit,
+): Promise<AgentEntry> => {
+  return customFetch<AgentEntry>(getGetAgentUrl(agentId), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAgentQueryKey = (agentId: string) => {
+  return [`/api/openclaw/agents/${agentId}`] as const;
+};
+
+export const getGetAgentQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAgent>>,
+  TError = ErrorType<unknown>,
+>(
+  agentId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAgent>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetAgentQueryKey(agentId);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgent>>> = ({
+    signal,
+  }) => getAgent(agentId, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!agentId,
+    ...queryOptions,
+  } as UseQueryOptions<Awaited<ReturnType<typeof getAgent>>, TError, TData> & {
+    queryKey: QueryKey;
+  };
+};
+
+export type GetAgentQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAgent>>
+>;
+export type GetAgentQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get agent details
+ */
+
+export function useGetAgent<
+  TData = Awaited<ReturnType<typeof getAgent>>,
+  TError = ErrorType<unknown>,
+>(
+  agentId: string,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAgent>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAgentQueryOptions(agentId, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Update an agent
+ */
+export const getUpdateAgentUrl = (agentId: string) => {
+  return `/api/openclaw/agents/${agentId}`;
+};
+
+export const updateAgent = async (
+  agentId: string,
+  updateAgentInput: UpdateAgentInput,
+  options?: RequestInit,
+): Promise<AgentEntry> => {
+  return customFetch<AgentEntry>(getUpdateAgentUrl(agentId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateAgentInput),
+  });
+};
+
+export const getUpdateAgentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateAgent>>,
+    TError,
+    { agentId: string; data: BodyType<UpdateAgentInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateAgent>>,
+  TError,
+  { agentId: string; data: BodyType<UpdateAgentInput> },
+  TContext
+> => {
+  const mutationKey = ["updateAgent"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateAgent>>,
+    { agentId: string; data: BodyType<UpdateAgentInput> }
+  > = (props) => {
+    const { agentId, data } = props ?? {};
+
+    return updateAgent(agentId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateAgentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateAgent>>
+>;
+export type UpdateAgentMutationBody = BodyType<UpdateAgentInput>;
+export type UpdateAgentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update an agent
+ */
+export const useUpdateAgent = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateAgent>>,
+    TError,
+    { agentId: string; data: BodyType<UpdateAgentInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateAgent>>,
+  TError,
+  { agentId: string; data: BodyType<UpdateAgentInput> },
+  TContext
+> => {
+  return useMutation(getUpdateAgentMutationOptions(options));
+};
+
+/**
+ * @summary Delete an agent
+ */
+export const getDeleteAgentUrl = (agentId: string) => {
+  return `/api/openclaw/agents/${agentId}`;
+};
+
+export const deleteAgent = async (
+  agentId: string,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteAgentUrl(agentId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteAgentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAgent>>,
+    TError,
+    { agentId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteAgent>>,
+  TError,
+  { agentId: string },
+  TContext
+> => {
+  const mutationKey = ["deleteAgent"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteAgent>>,
+    { agentId: string }
+  > = (props) => {
+    const { agentId } = props ?? {};
+
+    return deleteAgent(agentId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteAgentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteAgent>>
+>;
+
+export type DeleteAgentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete an agent
+ */
+export const useDeleteAgent = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAgent>>,
+    TError,
+    { agentId: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteAgent>>,
+  TError,
+  { agentId: string },
+  TContext
+> => {
+  return useMutation(getDeleteAgentMutationOptions(options));
+};
+
+/**
+ * @summary Send a message to an agent via OpenClaw gateway
+ */
+export const getChatWithAgentUrl = (agentId: string) => {
+  return `/api/openclaw/agents/${agentId}/chat`;
+};
+
+export const chatWithAgent = async (
+  agentId: string,
+  agentChatInput: AgentChatInput,
+  options?: RequestInit,
+): Promise<AgentChatResponse> => {
+  return customFetch<AgentChatResponse>(getChatWithAgentUrl(agentId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(agentChatInput),
+  });
+};
+
+export const getChatWithAgentMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof chatWithAgent>>,
+    TError,
+    { agentId: string; data: BodyType<AgentChatInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof chatWithAgent>>,
+  TError,
+  { agentId: string; data: BodyType<AgentChatInput> },
+  TContext
+> => {
+  const mutationKey = ["chatWithAgent"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof chatWithAgent>>,
+    { agentId: string; data: BodyType<AgentChatInput> }
+  > = (props) => {
+    const { agentId, data } = props ?? {};
+
+    return chatWithAgent(agentId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ChatWithAgentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof chatWithAgent>>
+>;
+export type ChatWithAgentMutationBody = BodyType<AgentChatInput>;
+export type ChatWithAgentMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Send a message to an agent via OpenClaw gateway
+ */
+export const useChatWithAgent = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof chatWithAgent>>,
+    TError,
+    { agentId: string; data: BodyType<AgentChatInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof chatWithAgent>>,
+  TError,
+  { agentId: string; data: BodyType<AgentChatInput> },
+  TContext
+> => {
+  return useMutation(getChatWithAgentMutationOptions(options));
+};
+
+/**
+ * @summary Get agent activity logs
+ */
+export const getGetAgentLogsUrl = (
+  agentId: string,
+  params?: GetAgentLogsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/openclaw/agents/${agentId}/logs?${stringifiedParams}`
+    : `/api/openclaw/agents/${agentId}/logs`;
+};
+
+export const getAgentLogs = async (
+  agentId: string,
+  params?: GetAgentLogsParams,
+  options?: RequestInit,
+): Promise<AgentLogEntry[]> => {
+  return customFetch<AgentLogEntry[]>(getGetAgentLogsUrl(agentId, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetAgentLogsQueryKey = (
+  agentId: string,
+  params?: GetAgentLogsParams,
+) => {
+  return [
+    `/api/openclaw/agents/${agentId}/logs`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetAgentLogsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getAgentLogs>>,
+  TError = ErrorType<unknown>,
+>(
+  agentId: string,
+  params?: GetAgentLogsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAgentLogs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetAgentLogsQueryKey(agentId, params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getAgentLogs>>> = ({
+    signal,
+  }) => getAgentLogs(agentId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!agentId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getAgentLogs>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetAgentLogsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getAgentLogs>>
+>;
+export type GetAgentLogsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get agent activity logs
+ */
+
+export function useGetAgentLogs<
+  TData = Awaited<ReturnType<typeof getAgentLogs>>,
+  TError = ErrorType<unknown>,
+>(
+  agentId: string,
+  params?: GetAgentLogsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getAgentLogs>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetAgentLogsQueryOptions(agentId, params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Get fleet statistics
+ */
+export const getGetOpenclawStatsUrl = () => {
+  return `/api/openclaw/stats`;
+};
+
+export const getOpenclawStats = async (
+  options?: RequestInit,
+): Promise<FleetStats> => {
+  return customFetch<FleetStats>(getGetOpenclawStatsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOpenclawStatsQueryKey = () => {
+  return [`/api/openclaw/stats`] as const;
+};
+
+export const getGetOpenclawStatsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOpenclawStats>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpenclawStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetOpenclawStatsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOpenclawStats>>
+  > = ({ signal }) => getOpenclawStats({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOpenclawStats>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOpenclawStatsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOpenclawStats>>
+>;
+export type GetOpenclawStatsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Get fleet statistics
+ */
+
+export function useGetOpenclawStats<
+  TData = Awaited<ReturnType<typeof getOpenclawStats>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpenclawStats>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOpenclawStatsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Generate OpenClaw VPS setup script
+ */
+export const getGetOpenclawSetupScriptUrl = () => {
+  return `/api/openclaw/setup-script`;
+};
+
+export const getOpenclawSetupScript = async (
+  options?: RequestInit,
+): Promise<string> => {
+  return customFetch<string>(getGetOpenclawSetupScriptUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOpenclawSetupScriptQueryKey = () => {
+  return [`/api/openclaw/setup-script`] as const;
+};
+
+export const getGetOpenclawSetupScriptQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOpenclawSetupScript>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpenclawSetupScript>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetOpenclawSetupScriptQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOpenclawSetupScript>>
+  > = ({ signal }) => getOpenclawSetupScript({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOpenclawSetupScript>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOpenclawSetupScriptQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOpenclawSetupScript>>
+>;
+export type GetOpenclawSetupScriptQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Generate OpenClaw VPS setup script
+ */
+
+export function useGetOpenclawSetupScript<
+  TData = Awaited<ReturnType<typeof getOpenclawSetupScript>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOpenclawSetupScript>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOpenclawSetupScriptQueryOptions(options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

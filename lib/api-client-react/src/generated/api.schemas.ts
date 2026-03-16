@@ -242,3 +242,111 @@ export interface RagStats {
   totalChunks: number;
   byCategory: RagStatsByCategory;
 }
+
+export interface OpenclawConfig {
+  id: number;
+  gatewayUrl: string;
+  httpUrl: string;
+  authToken: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OpenclawConfigInput {
+  gatewayUrl: string;
+  httpUrl: string;
+  authToken: string;
+}
+
+export interface GatewayStatus {
+  online: boolean;
+  health: string;
+  /** @nullable */
+  version?: string | null;
+  agentsCount: number;
+  /** @nullable */
+  error?: string | null;
+}
+
+export interface AgentEntry {
+  id: number;
+  agentId: string;
+  name: string;
+  description: string;
+  emoji: string;
+  model: string;
+  systemPrompt: string;
+  category: string;
+  status: string;
+  channels: string;
+  temperature: number;
+  maxTokens: number;
+  tasksCompleted: number;
+  totalMessages: number;
+  /** @nullable */
+  lastActive?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateAgentInput {
+  agentId: string;
+  name: string;
+  description?: string;
+  emoji?: string;
+  model?: string;
+  systemPrompt?: string;
+  category?: string;
+  channels?: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export interface UpdateAgentInput {
+  name?: string;
+  description?: string;
+  emoji?: string;
+  model?: string;
+  systemPrompt?: string;
+  category?: string;
+  status?: string;
+  channels?: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export interface AgentChatInput {
+  message: string;
+  sessionKey?: string;
+}
+
+export interface AgentChatResponse {
+  agentId: string;
+  response: string;
+  sessionKey: string;
+}
+
+export interface AgentLogEntry {
+  id: number;
+  agentId: string;
+  level: string;
+  message: string;
+  metadata: string;
+  createdAt: string;
+}
+
+export type FleetStatsByCategory = { [key: string]: number };
+
+export interface FleetStats {
+  totalAgents: number;
+  activeAgents: number;
+  idleAgents: number;
+  totalMessages: number;
+  totalTasksCompleted: number;
+  byCategory: FleetStatsByCategory;
+  gatewayConnected: boolean;
+}
+
+export type GetAgentLogsParams = {
+  limit?: number;
+};

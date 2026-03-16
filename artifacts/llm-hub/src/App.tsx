@@ -6,6 +6,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import LocalLlm from "@/pages/LocalLlm";
 import Chat from "@/pages/Chat";
 import Training from "@/pages/Training";
+import Agents from "@/pages/Agents";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -24,6 +25,7 @@ function Router() {
         <Route path="/" component={LocalLlm} />
         <Route path="/chat" component={Chat} />
         <Route path="/training" component={Training} />
+        <Route path="/agents" component={Agents} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

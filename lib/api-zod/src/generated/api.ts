@@ -418,3 +418,212 @@ export const GetRagStatsResponse = zod.object({
   totalChunks: zod.number(),
   byCategory: zod.record(zod.string(), zod.number()),
 });
+
+/**
+ * @summary Get OpenClaw gateway configuration
+ */
+export const GetOpenclawConfigResponse = zod.object({
+  id: zod.number(),
+  gatewayUrl: zod.string(),
+  httpUrl: zod.string(),
+  authToken: zod.string(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
+ * @summary Update OpenClaw gateway configuration
+ */
+export const UpdateOpenclawConfigBody = zod.object({
+  gatewayUrl: zod.string(),
+  httpUrl: zod.string(),
+  authToken: zod.string(),
+});
+
+export const UpdateOpenclawConfigResponse = zod.object({
+  id: zod.number(),
+  gatewayUrl: zod.string(),
+  httpUrl: zod.string(),
+  authToken: zod.string(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
+ * @summary Get OpenClaw gateway health and status
+ */
+export const GetGatewayStatusResponse = zod.object({
+  online: zod.boolean(),
+  health: zod.string(),
+  version: zod.string().nullish(),
+  agentsCount: zod.number(),
+  error: zod.string().nullish(),
+});
+
+/**
+ * @summary List all agents
+ */
+export const ListAgentsResponseItem = zod.object({
+  id: zod.number(),
+  agentId: zod.string(),
+  name: zod.string(),
+  description: zod.string(),
+  emoji: zod.string(),
+  model: zod.string(),
+  systemPrompt: zod.string(),
+  category: zod.string(),
+  status: zod.string(),
+  channels: zod.string(),
+  temperature: zod.number(),
+  maxTokens: zod.number(),
+  tasksCompleted: zod.number(),
+  totalMessages: zod.number(),
+  lastActive: zod.date().nullish(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+export const ListAgentsResponse = zod.array(ListAgentsResponseItem);
+
+/**
+ * @summary Create a new agent
+ */
+export const CreateAgentBody = zod.object({
+  agentId: zod.string(),
+  name: zod.string(),
+  description: zod.string().optional(),
+  emoji: zod.string().optional(),
+  model: zod.string().optional(),
+  systemPrompt: zod.string().optional(),
+  category: zod.string().optional(),
+  channels: zod.string().optional(),
+  temperature: zod.number().optional(),
+  maxTokens: zod.number().optional(),
+});
+
+/**
+ * @summary Get agent details
+ */
+export const GetAgentParams = zod.object({
+  agentId: zod.coerce.string(),
+});
+
+export const GetAgentResponse = zod.object({
+  id: zod.number(),
+  agentId: zod.string(),
+  name: zod.string(),
+  description: zod.string(),
+  emoji: zod.string(),
+  model: zod.string(),
+  systemPrompt: zod.string(),
+  category: zod.string(),
+  status: zod.string(),
+  channels: zod.string(),
+  temperature: zod.number(),
+  maxTokens: zod.number(),
+  tasksCompleted: zod.number(),
+  totalMessages: zod.number(),
+  lastActive: zod.date().nullish(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
+ * @summary Update an agent
+ */
+export const UpdateAgentParams = zod.object({
+  agentId: zod.coerce.string(),
+});
+
+export const UpdateAgentBody = zod.object({
+  name: zod.string().optional(),
+  description: zod.string().optional(),
+  emoji: zod.string().optional(),
+  model: zod.string().optional(),
+  systemPrompt: zod.string().optional(),
+  category: zod.string().optional(),
+  status: zod.string().optional(),
+  channels: zod.string().optional(),
+  temperature: zod.number().optional(),
+  maxTokens: zod.number().optional(),
+});
+
+export const UpdateAgentResponse = zod.object({
+  id: zod.number(),
+  agentId: zod.string(),
+  name: zod.string(),
+  description: zod.string(),
+  emoji: zod.string(),
+  model: zod.string(),
+  systemPrompt: zod.string(),
+  category: zod.string(),
+  status: zod.string(),
+  channels: zod.string(),
+  temperature: zod.number(),
+  maxTokens: zod.number(),
+  tasksCompleted: zod.number(),
+  totalMessages: zod.number(),
+  lastActive: zod.date().nullish(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
+ * @summary Delete an agent
+ */
+export const DeleteAgentParams = zod.object({
+  agentId: zod.coerce.string(),
+});
+
+/**
+ * @summary Send a message to an agent via OpenClaw gateway
+ */
+export const ChatWithAgentParams = zod.object({
+  agentId: zod.coerce.string(),
+});
+
+export const ChatWithAgentBody = zod.object({
+  message: zod.string(),
+  sessionKey: zod.string().optional(),
+});
+
+export const ChatWithAgentResponse = zod.object({
+  agentId: zod.string(),
+  response: zod.string(),
+  sessionKey: zod.string(),
+});
+
+/**
+ * @summary Get agent activity logs
+ */
+export const GetAgentLogsParams = zod.object({
+  agentId: zod.coerce.string(),
+});
+
+export const getAgentLogsQueryLimitDefault = 50;
+
+export const GetAgentLogsQueryParams = zod.object({
+  limit: zod.coerce.number().default(getAgentLogsQueryLimitDefault),
+});
+
+export const GetAgentLogsResponseItem = zod.object({
+  id: zod.number(),
+  agentId: zod.string(),
+  level: zod.string(),
+  message: zod.string(),
+  metadata: zod.string(),
+  createdAt: zod.date(),
+});
+export const GetAgentLogsResponse = zod.array(GetAgentLogsResponseItem);
+
+/**
+ * @summary Get fleet statistics
+ */
+export const GetOpenclawStatsResponse = zod.object({
+  totalAgents: zod.number(),
+  activeAgents: zod.number(),
+  idleAgents: zod.number(),
+  totalMessages: zod.number(),
+  totalTasksCompleted: zod.number(),
+  byCategory: zod.record(zod.string(), zod.number()),
+  gatewayConnected: zod.boolean(),
+});
