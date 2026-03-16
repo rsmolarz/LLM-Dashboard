@@ -1,0 +1,47 @@
+ - Consider restricting pg_hba.conf to specific IP ranges
+  - Enable SSL for encrypted connections
+
+root@deathbook-management-production:~# sudo -u postgres psql -c "SHOW listen_addresses;"
+ listen_addresses
+------------------
+ *
+(1 row)
+
+root@deathbook-management-production:~# ss -tlnp | grep 5432
+LISTEN 0      200                       0.0.0.0:5432       0.0.0.0:*    users:(("postgres",pid=2503649,fd=6))
+LISTEN 0      200                          [::]:5432          [::]:*    users:(("postgres",pid=2503649,fd=7))
+root@deathbook-management-production:~# sudo ufw status
+Status: active
+
+To                         Action      From
+--                         ------      ----
+22                         ALLOW       Anywhere
+18789                      ALLOW       Anywhere
+22/tcp                     ALLOW       Anywhere
+18789/tcp                  ALLOW       Anywhere
+80/tcp                     ALLOW       Anywhere
+443/tcp                    ALLOW       Anywhere
+9999/tcp                   ALLOW       Anywhere
+8888/tcp                   ALLOW       Anywhere
+11434/tcp                  ALLOW       Anywhere
+3000/tcp                   ALLOW       Anywhere
+OpenSSH                    ALLOW       Anywhere
+5432                       ALLOW       Anywhere
+80                         ALLOW       Anywhere
+443                        ALLOW       Anywhere
+5432/tcp                   ALLOW       Anywhere
+22 (v6)                    ALLOW       Anywhere (v6)
+18789 (v6)                 ALLOW       Anywhere (v6)
+22/tcp (v6)                ALLOW       Anywhere (v6)
+18789/tcp (v6)             ALLOW       Anywhere (v6)
+80/tcp (v6)                ALLOW       Anywhere (v6)
+443/tcp (v6)               ALLOW       Anywhere (v6)
+9999/tcp (v6)              ALLOW       Anywhere (v6)
+8888/tcp (v6)              ALLOW       Anywhere (v6)
+11434/tcp (v6)             ALLOW       Anywhere (v6)
+3000/tcp (v6)              ALLOW       Anywhere (v6)
+OpenSSH (v6)               ALLOW       Anywhere (v6)
+5432 (v6)                  ALLOW       Anywhere (v6)
+80 (v6)                    ALLOW       Anywhere (v6)
+443 (v6)                   ALLOW       Anywhere (v6)
+5432/tcp (v6)              ALLOW       Anywhere (v6)
