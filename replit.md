@@ -148,3 +148,5 @@ Utility scripts package. Each script is a `.ts` file in `src/` with a correspond
 - **Training data export formats**: OpenAI (ChatML), Alpaca (instruction/input/output), ShareGPT (for Unsloth/Axolotl)
 - **Auto-Collector Engine**: Scheduled pipeline collecting from Gmail, Drive, chat, Discovery Agent, Knowledge Base → VPS PostgreSQL. LLM processing via Ollama generates summaries, Q&A pairs, quality scores. In-memory scheduler (resets on restart).
 - **Vite config defaults**: PORT and BASE_PATH have fallback defaults so builds succeed without env vars set
+- **Deep Research**: Multi-model research engine at `/research`. "Deep" mode fans out to all local Ollama models in parallel; "Extensive" mode adds Claude (Sonnet 4-6) and GPT (5.2) via Replit AI Integrations. Results synthesized into a unified analysis.
+- **AI Integrations**: OpenAI (gpt-5.2) via `@workspace/integrations-openai-ai-server`, Anthropic (claude-sonnet-4-6) via `@workspace/integrations-anthropic-ai`. Both use Replit AI Integrations proxy (no user API keys needed, billed to Replit credits).

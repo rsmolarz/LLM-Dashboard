@@ -11,6 +11,7 @@ import scanRouter from "./scan";
 import vpsDatabaseRouter from "./vps-database";
 import vpsTrainingRouter from "./vps-training";
 import autoCollectorRouter from "./auto-collector";
+import deepResearchRouter from "./deep-research";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(scanRouter);
 router.use(vpsDatabaseRouter);
 router.use(vpsTrainingRouter);
 router.use(autoCollectorRouter);
+router.use(deepResearchRouter);
 
 export default router;
