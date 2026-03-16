@@ -6,9 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface LlmConfigInput {
-  serverUrl: string;
-  port: number;
-  gpuEnabled: boolean;
-  defaultModel: string;
+export interface DeleteModelResponse {
+  success: boolean;
+  message: string;
 }

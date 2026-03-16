@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { format } from "date-fns";
 import { 
   MessageSquare, Plus, Trash2, Send, Bot, User, 
-  ChevronDown, Globe, HardDrive 
+  ChevronDown, HardDrive 
 } from "lucide-react";
 import { 
   useListConversations, 
@@ -10,33 +10,27 @@ import {
   useDeleteConversation,
   useGetMessages,
   useAddMessage,
-  useSendChatMessage
+  useSendChatMessage,
+  useListModels
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-const MODELS = [
-  { id: "gpt-4o", name: "GPT-4o", type: "cloud", icon: Globe },
-  { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet", type: "cloud", icon: Globe },
-  { id: "local", name: "Local (llama.cpp)", type: "local", icon: HardDrive },
-];
-
 export default function Chat() {
   const queryClient = useQueryClient();
   const [selectedConvId, setSelectedConvId] = useState<number | null>(null);
-  const [selectedModel, setSelectedModel] = useState(MODELS[2].id);
+  const [selectedModel, setSelectedModel] = useState("llama3");
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [input, setInput] = useState("");
 
-  // Queries
   const { data: conversations = [], isLoading: convsLoading } = useListConversations();
   const { data: messages = [], isLoading: msgsLoading } = useGetMessages(selectedConvId || 0, {
     query: { enabled: !!selectedConvId }
   });
+  const { data: ollamaModels = [] } = useListModels();
 
-  // Mutations
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
   const addMsg = useAddMessage();
@@ -50,7 +44,10 @@ export default function Chat() {
     }
   }, [messages, sendLocalChat.isPending]);
 
-  // Actions
+  const modelOptions = ollamaModels.length > 0 
+    ? ollamaModels.map(m => ({ id: m.name, name: m.name }))
+    : [{ id: "llama3", name: "llama3" }];
+
   const handleNewChat = () => {
     createConv.mutate({
       data: { title: "New Conversation", model: selectedModel }
@@ -77,7 +74,6 @@ export default function Chat() {
     const userMsgContent = input;
     setInput("");
 
-    // 1. Save User Message
     await addMsg.mutateAsync({
       id: selectedConvId,
       data: { role: 'user', content: userMsgContent }
@@ -86,59 +82,42 @@ export default function Chat() {
     queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
 
     const conv = conversations.find(c => c.id === selectedConvId);
+    const modelToUse = conv?.model || selectedModel;
     
-    // 2. Get Response
-    if (conv?.model === 'local') {
-      // Send to local LLM
-      const formattedHistory = [...messages, { role: 'user', content: userMsgContent }].map(m => ({
-        role: m.role,
-        content: m.content
-      }));
+    const formattedHistory = [...messages, { role: 'user', content: userMsgContent }].map(m => ({
+      role: m.role,
+      content: m.content
+    }));
 
-      try {
-        const res = await sendLocalChat.mutateAsync({
-          data: { messages: formattedHistory }
-        });
+    try {
+      const res = await sendLocalChat.mutateAsync({
+        data: { model: modelToUse, messages: formattedHistory }
+      });
 
-        // 3. Save Assistant Message
-        await addMsg.mutateAsync({
-          id: selectedConvId,
-          data: { role: 'assistant', content: res.content }
-        });
-        queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
-      } catch (err) {
-        // Fallback save error
-        await addMsg.mutateAsync({
-          id: selectedConvId,
-          data: { role: 'assistant', content: "**System Error:** Could not connect to local server." }
-        });
-        queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
-      }
-    } else {
-      // Stub for cloud models since we only implemented local proxy fully
-      setTimeout(async () => {
-        await addMsg.mutateAsync({
-          id: selectedConvId,
-          data: { role: 'assistant', content: `[Simulated response from ${conv?.model}] I am a stub.` }
-        });
-        queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
-      }, 1000);
+      await addMsg.mutateAsync({
+        id: selectedConvId,
+        data: { role: 'assistant', content: res.content }
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
+    } catch {
+      await addMsg.mutateAsync({
+        id: selectedConvId,
+        data: { role: 'assistant', content: "Error: Could not connect to Ollama server. Make sure it's running." }
+      });
+      queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
     }
   };
 
-  const activeModelObj = MODELS.find(m => m.id === selectedModel) || MODELS[2];
-
   return (
     <div className="flex-1 flex overflow-hidden h-full">
-      {/* Sidebar */}
       <div className="w-80 border-r border-white/5 bg-background flex flex-col">
         <div className="p-4 border-b border-white/5">
-          <Button onClick={handleNewChat} className="w-full gap-2 justify-start glass-panel glass-panel-hover text-foreground border-white/10 hover:text-white" variant="outline">
+          <Button onClick={handleNewChat} className="w-full gap-2 justify-start bg-card/50 border border-white/10 text-foreground hover:bg-white/10 hover:text-white" variant="outline">
             <Plus className="w-4 h-4 text-primary" />
             New Chat
           </Button>
         </div>
-        <div className="flex-1 overflow-y-auto p-3 space-y-1 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-3 space-y-1">
           {convsLoading ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">Loading...</div>
           ) : conversations.length === 0 ? (
@@ -176,36 +155,32 @@ export default function Chat() {
         </div>
       </div>
 
-      {/* Main Chat Area */}
       <div className="flex-1 flex flex-col bg-[#0A0A0F] relative">
         {selectedConvId ? (
           <>
-            {/* Chat Header */}
             <div className="h-16 border-b border-white/5 px-6 flex items-center justify-between bg-background/50 backdrop-blur-md absolute top-0 w-full z-10">
               <h3 className="font-medium text-white">
                 {conversations.find(c => c.id === selectedConvId)?.title}
               </h3>
               <div className="px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-xs text-muted-foreground flex items-center gap-2">
-                <activeModelObj.icon className="w-3.5 h-3.5" />
+                <HardDrive className="w-3.5 h-3.5" />
                 {conversations.find(c => c.id === selectedConvId)?.model}
               </div>
             </div>
 
-            {/* Messages */}
             <div className="flex-1 overflow-y-auto pt-24 pb-8 px-6 md:px-12 lg:px-24 scroll-smooth" ref={scrollRef}>
               <div className="max-w-3xl mx-auto space-y-8">
                 {msgsLoading ? (
                   <div className="flex justify-center"><div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" /></div>
                 ) : messages.length === 0 ? (
                   <div className="text-center py-20 text-muted-foreground flex flex-col items-center">
-                    {/* stock image abstract 3d cube representing AI */}
                     <img 
                       src={`${import.meta.env.BASE_URL}images/empty-chat.png`}
                       alt="Start chatting"
                       className="w-48 h-48 mb-6 opacity-80"
                       onError={(e) => e.currentTarget.style.display = 'none'}
                     />
-                    <p className="text-lg">This is the beginning of your conversation.</p>
+                    <p className="text-lg">Send a message to start the conversation.</p>
                   </div>
                 ) : (
                   messages.map((msg) => (
@@ -214,15 +189,15 @@ export default function Chat() {
                         "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border",
                         msg.role === 'user' 
                           ? "bg-primary/20 border-primary/30 text-primary" 
-                          : "bg-accent/20 border-accent/30 text-accent"
+                          : "bg-purple-500/20 border-purple-500/30 text-purple-400"
                       )}>
                         {msg.role === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
                       </div>
                       <div className={cn(
-                        "px-5 py-3.5 rounded-2xl max-w-[85%] text-[15px] leading-relaxed",
+                        "px-5 py-3.5 rounded-2xl max-w-[85%] text-[15px] leading-relaxed whitespace-pre-wrap",
                         msg.role === 'user'
                           ? "bg-primary text-primary-foreground rounded-tr-none shadow-lg shadow-primary/10"
-                          : "glass-panel rounded-tl-none text-foreground"
+                          : "bg-card/50 border border-white/10 rounded-tl-none text-foreground"
                       )}>
                         {msg.content}
                       </div>
@@ -231,20 +206,19 @@ export default function Chat() {
                 )}
                 {sendLocalChat.isPending && (
                    <div className="flex gap-4">
-                     <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border bg-accent/20 border-accent/30 text-accent">
+                     <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border bg-purple-500/20 border-purple-500/30 text-purple-400">
                        <Bot className="w-4 h-4" />
                      </div>
-                     <div className="glass-panel rounded-2xl rounded-tl-none px-5 py-4 flex gap-1 items-center h-[52px]">
-                       <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce" />
-                       <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce delay-75" />
-                       <div className="w-1.5 h-1.5 rounded-full bg-accent animate-bounce delay-150" />
+                     <div className="bg-card/50 border border-white/10 rounded-2xl rounded-tl-none px-5 py-4 flex gap-1 items-center h-[52px]">
+                       <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" />
+                       <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay: '75ms'}} />
+                       <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay: '150ms'}} />
                      </div>
                    </div>
                 )}
               </div>
             </div>
 
-            {/* Input Area */}
             <div className="p-4 bg-background/80 backdrop-blur-xl border-t border-white/5">
               <div className="max-w-3xl mx-auto relative flex flex-col">
                 <form 
@@ -254,7 +228,7 @@ export default function Chat() {
                   <textarea 
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    placeholder="Message LLM Hub..."
+                    placeholder="Message your Ollama model..."
                     className="w-full bg-transparent text-foreground placeholder:text-muted-foreground p-3 focus:outline-none resize-none min-h-[44px] max-h-[200px]"
                     rows={1}
                     onKeyDown={(e) => {
@@ -274,19 +248,19 @@ export default function Chat() {
                   </Button>
                 </form>
                 <div className="text-center mt-2">
-                  <p className="text-[10px] text-muted-foreground">Local model chats remain on your machine.</p>
+                  <p className="text-[10px] text-muted-foreground">All inference runs on your private server. Zero data leaves your network.</p>
                 </div>
               </div>
             </div>
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center p-8 relative z-10">
-            <div className="w-20 h-20 bg-gradient-to-br from-primary/20 to-accent/20 border border-white/10 rounded-3xl flex items-center justify-center mb-6 shadow-2xl backdrop-blur-xl">
+            <div className="w-20 h-20 bg-gradient-to-br from-primary/20 to-purple-500/20 border border-white/10 rounded-3xl flex items-center justify-center mb-6 shadow-2xl backdrop-blur-xl">
               <MessageSquare className="w-10 h-10 text-white opacity-80" />
             </div>
-            <h2 className="text-3xl font-display font-bold text-white mb-3">Welcome to LLM Hub</h2>
+            <h2 className="text-3xl font-bold text-white mb-3">Chat with Ollama</h2>
             <p className="text-muted-foreground max-w-md mb-8">
-              Chat with your local llama.cpp instance or connect to cloud models. All your conversations are saved locally.
+              Chat with your self-hosted models. All conversations are saved and all inference stays on your server.
             </p>
             
             <div className="relative">
@@ -296,30 +270,30 @@ export default function Chat() {
                 onClick={() => setShowModelSelect(!showModelSelect)}
               >
                 <span className="flex items-center gap-2">
-                  <activeModelObj.icon className="w-4 h-4 text-primary" />
-                  {activeModelObj.name}
+                  <HardDrive className="w-4 h-4 text-primary" />
+                  {selectedModel}
                 </span>
                 <ChevronDown className="w-4 h-4 opacity-50" />
               </Button>
 
               {showModelSelect && (
-                <div className="absolute top-full left-0 w-full mt-2 bg-[#18181B] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-2">
-                  {MODELS.map(m => (
+                <div className="absolute top-full left-0 w-full mt-2 bg-[#18181B] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50">
+                  {modelOptions.map(m => (
                     <button
                       key={m.id}
                       onClick={() => { setSelectedModel(m.id); setShowModelSelect(false); }}
                       className="w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-white/5 transition-colors text-white"
                     >
-                      <m.icon className="w-4 h-4 text-muted-foreground" />
+                      <HardDrive className="w-4 h-4 text-muted-foreground" />
                       {m.name}
-                      {m.type === 'local' && <span className="ml-auto text-[10px] uppercase bg-primary/20 text-primary px-2 py-0.5 rounded">Local</span>}
+                      <span className="ml-auto text-[10px] uppercase bg-primary/20 text-primary px-2 py-0.5 rounded">Local</span>
                     </button>
                   ))}
                 </div>
               )}
             </div>
 
-            <Button onClick={handleNewChat} className="mt-6 w-64 shadow-primary/25 shadow-lg" variant="glow">
+            <Button onClick={handleNewChat} className="mt-6 w-64 shadow-primary/25 shadow-lg bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white">
               Start Conversation
             </Button>
           </div>

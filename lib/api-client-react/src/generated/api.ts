@@ -23,10 +23,15 @@ import type {
   ChatResponse,
   Conversation,
   CreateConversationInput,
+  DeleteModelResponse,
   HealthStatus,
   LlmConfig,
   LlmConfigInput,
   LlmStatus,
+  OllamaModel,
+  PullModelInput,
+  PullModelResponse,
+  RunningModel,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -276,7 +281,7 @@ export const useSaveLlmConfig = <
 };
 
 /**
- * @summary Get llama.cpp server status (health, model, slots)
+ * @summary Get Ollama server status (health, running models, version)
  */
 export const getGetLlmStatusUrl = () => {
   return `/api/llm/status`;
@@ -327,7 +332,7 @@ export type GetLlmStatusQueryResult = NonNullable<
 export type GetLlmStatusQueryError = ErrorType<unknown>;
 
 /**
- * @summary Get llama.cpp server status (health, model, slots)
+ * @summary Get Ollama server status (health, running models, version)
  */
 
 export function useGetLlmStatus<
@@ -351,7 +356,327 @@ export function useGetLlmStatus<
 }
 
 /**
- * @summary Send a chat completion request to the local llama.cpp server
+ * @summary List models available on the Ollama server
+ */
+export const getListModelsUrl = () => {
+  return `/api/llm/models`;
+};
+
+export const listModels = async (
+  options?: RequestInit,
+): Promise<OllamaModel[]> => {
+  return customFetch<OllamaModel[]>(getListModelsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListModelsQueryKey = () => {
+  return [`/api/llm/models`] as const;
+};
+
+export const getListModelsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listModels>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listModels>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListModelsQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listModels>>> = ({
+    signal,
+  }) => listModels({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listModels>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListModelsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listModels>>
+>;
+export type ListModelsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List models available on the Ollama server
+ */
+
+export function useListModels<
+  TData = Awaited<ReturnType<typeof listModels>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listModels>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListModelsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Pull a model from the Ollama registry
+ */
+export const getPullModelUrl = () => {
+  return `/api/llm/models/pull`;
+};
+
+export const pullModel = async (
+  pullModelInput: PullModelInput,
+  options?: RequestInit,
+): Promise<PullModelResponse> => {
+  return customFetch<PullModelResponse>(getPullModelUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(pullModelInput),
+  });
+};
+
+export const getPullModelMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof pullModel>>,
+    TError,
+    { data: BodyType<PullModelInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof pullModel>>,
+  TError,
+  { data: BodyType<PullModelInput> },
+  TContext
+> => {
+  const mutationKey = ["pullModel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof pullModel>>,
+    { data: BodyType<PullModelInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return pullModel(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type PullModelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof pullModel>>
+>;
+export type PullModelMutationBody = BodyType<PullModelInput>;
+export type PullModelMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Pull a model from the Ollama registry
+ */
+export const usePullModel = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof pullModel>>,
+    TError,
+    { data: BodyType<PullModelInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof pullModel>>,
+  TError,
+  { data: BodyType<PullModelInput> },
+  TContext
+> => {
+  return useMutation(getPullModelMutationOptions(options));
+};
+
+/**
+ * @summary Delete a model from the Ollama server
+ */
+export const getDeleteModelUrl = (name: string) => {
+  return `/api/llm/models/${name}`;
+};
+
+export const deleteModel = async (
+  name: string,
+  options?: RequestInit,
+): Promise<DeleteModelResponse> => {
+  return customFetch<DeleteModelResponse>(getDeleteModelUrl(name), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteModelMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteModel>>,
+    TError,
+    { name: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteModel>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  const mutationKey = ["deleteModel"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteModel>>,
+    { name: string }
+  > = (props) => {
+    const { name } = props ?? {};
+
+    return deleteModel(name, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteModelMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteModel>>
+>;
+
+export type DeleteModelMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a model from the Ollama server
+ */
+export const useDeleteModel = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteModel>>,
+    TError,
+    { name: string },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteModel>>,
+  TError,
+  { name: string },
+  TContext
+> => {
+  return useMutation(getDeleteModelMutationOptions(options));
+};
+
+/**
+ * @summary List currently running/loaded models
+ */
+export const getListRunningModelsUrl = () => {
+  return `/api/llm/models/running`;
+};
+
+export const listRunningModels = async (
+  options?: RequestInit,
+): Promise<RunningModel[]> => {
+  return customFetch<RunningModel[]>(getListRunningModelsUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListRunningModelsQueryKey = () => {
+  return [`/api/llm/models/running`] as const;
+};
+
+export const getListRunningModelsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listRunningModels>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listRunningModels>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListRunningModelsQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listRunningModels>>
+  > = ({ signal }) => listRunningModels({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listRunningModels>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListRunningModelsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listRunningModels>>
+>;
+export type ListRunningModelsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List currently running/loaded models
+ */
+
+export function useListRunningModels<
+  TData = Awaited<ReturnType<typeof listRunningModels>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof listRunningModels>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListRunningModelsQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Send a chat completion request to the Ollama server
  */
 export const getSendChatMessageUrl = () => {
   return `/api/llm/chat`;
@@ -414,7 +739,7 @@ export type SendChatMessageMutationBody = BodyType<ChatRequest>;
 export type SendChatMessageMutationError = ErrorType<unknown>;
 
 /**
- * @summary Send a chat completion request to the local llama.cpp server
+ * @summary Send a chat completion request to the Ollama server
  */
 export const useSendChatMessage = <
   TError = ErrorType<unknown>,
@@ -437,7 +762,7 @@ export const useSendChatMessage = <
 };
 
 /**
- * @summary Generate a bash setup script based on current config
+ * @summary Generate a bash setup script for Ollama + OpenWebUI
  */
 export const getGetSetupScriptUrl = () => {
   return `/api/llm/setup-script`;
@@ -488,7 +813,7 @@ export type GetSetupScriptQueryResult = NonNullable<
 export type GetSetupScriptQueryError = ErrorType<unknown>;
 
 /**
- * @summary Generate a bash setup script based on current config
+ * @summary Generate a bash setup script for Ollama + OpenWebUI
  */
 
 export function useGetSetupScript<

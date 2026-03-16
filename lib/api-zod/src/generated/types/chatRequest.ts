@@ -8,7 +8,7 @@
 import type { ChatRequestMessage } from "./chatRequestMessage";
 
 export interface ChatRequest {
+  model: string;
   messages: ChatRequestMessage[];
   temperature?: number;
-  maxTokens?: number;
 }

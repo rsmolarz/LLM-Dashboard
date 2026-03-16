@@ -59,100 +59,130 @@ router.get("/llm/setup-script", async (_req, res): Promise<void> => {
 set -e
 
 echo "============================================"
-echo "  llama.cpp Docker Setup Script"
+echo "  Ollama + OpenWebUI Docker Setup Script"
 echo "============================================"
 echo ""
 
-CONTAINER_NAME="${config.containerName}"
-PORT=${config.port}
-CPU_THREADS=${config.cpuThreads}
-CTX_SIZE=${config.contextSize}
-GPU_LAYERS=${config.gpuLayers}
-MODEL_DIR="$HOME/models"
+OLLAMA_PORT=${config.port}
+WEBUI_PORT=3000
 
-# Create model directory
-mkdir -p "$MODEL_DIR"
+# Update system
+echo "[1/6] Updating system..."
+sudo apt update && sudo apt upgrade -y
+
+# Install Docker
+echo "[2/6] Installing Docker..."
+if ! command -v docker &> /dev/null; then
+    sudo apt install docker.io docker-compose -y
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    echo "[INFO] Docker installed successfully."
+else
+    echo "[INFO] Docker already installed."
+fi
 
 # Detect NVIDIA GPU
+echo "[3/6] Detecting GPU..."
 HAS_GPU=false
 if command -v nvidia-smi &> /dev/null; then
     echo "[INFO] NVIDIA GPU detected!"
-    nvidia-smi --query-gpu=name --format=csv,noheader
+    nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
     HAS_GPU=true
+
+    # Install NVIDIA Container Toolkit if not present
+    if ! dpkg -l | grep -q nvidia-container-toolkit; then
+        echo "[INFO] Installing NVIDIA Container Toolkit..."
+        curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+        curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \\
+            sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \\
+            sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+        sudo apt update
+        sudo apt install -y nvidia-container-toolkit
+        sudo nvidia-ctk runtime configure --runtime=docker
+        sudo systemctl restart docker
+        echo "[INFO] NVIDIA Container Toolkit installed."
+    fi
 else
-    echo "[INFO] No NVIDIA GPU detected. Running in CPU-only mode."
-    GPU_LAYERS=0
+    echo "[INFO] No NVIDIA GPU detected. Running CPU-only mode."
 fi
 
-# Download a starter model if none exists
-if [ -z "$(ls -A $MODEL_DIR/*.gguf 2>/dev/null)" ]; then
-    echo ""
-    echo "[INFO] No models found. Downloading Qwen 2.5 3B (~2GB)..."
-    curl -L -o "$MODEL_DIR/qwen2.5-3b-instruct-q4_k_m.gguf" \\
-        "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf"
-    echo "[INFO] Model downloaded successfully."
-fi
+# Stop existing containers if running
+echo "[4/6] Cleaning up old containers..."
+docker stop ollama 2>/dev/null || true
+docker rm ollama 2>/dev/null || true
+docker stop openwebui 2>/dev/null || true
+docker rm openwebui 2>/dev/null || true
 
-MODEL_FILE=$(ls "$MODEL_DIR"/*.gguf | head -1)
-echo ""
-echo "[INFO] Using model: $MODEL_FILE"
-
-# Stop existing container if running
-docker stop "$CONTAINER_NAME" 2>/dev/null || true
-docker rm "$CONTAINER_NAME" 2>/dev/null || true
-
-# Run llama.cpp server
-echo ""
-echo "[INFO] Starting llama.cpp server..."
-
-if [ "$HAS_GPU" = true ] && [ "$GPU_LAYERS" -gt 0 ]; then
-    echo "[INFO] Running with GPU acceleration ($GPU_LAYERS layers on GPU)"
+# Launch Ollama
+echo "[5/6] Starting Ollama server..."
+if [ "$HAS_GPU" = true ]; then
+    echo "[INFO] Running Ollama with GPU acceleration..."
     docker run -d \\
-        --name "$CONTAINER_NAME" \\
+        --name ollama \\
         --restart unless-stopped \\
         --gpus all \\
-        -p $PORT:8080 \\
-        -v "$MODEL_DIR:/models" \\
-        ghcr.io/ggml-org/llama.cpp:server-cuda \\
-        --model "/models/$(basename $MODEL_FILE)" \\
-        --host 0.0.0.0 \\
-        --port 8080 \\
-        --threads $CPU_THREADS \\
-        --ctx-size $CTX_SIZE \\
-        --n-gpu-layers $GPU_LAYERS
+        -p $OLLAMA_PORT:11434 \\
+        -v ollama:/root/.ollama \\
+        ollama/ollama
 else
-    echo "[INFO] Running in CPU-only mode"
+    echo "[INFO] Running Ollama in CPU-only mode..."
     docker run -d \\
-        --name "$CONTAINER_NAME" \\
+        --name ollama \\
         --restart unless-stopped \\
-        -p $PORT:8080 \\
-        -v "$MODEL_DIR:/models" \\
-        ghcr.io/ggml-org/llama.cpp:server \\
-        --model "/models/$(basename $MODEL_FILE)" \\
-        --host 0.0.0.0 \\
-        --port 8080 \\
-        --threads $CPU_THREADS \\
-        --ctx-size $CTX_SIZE
+        -p $OLLAMA_PORT:11434 \\
+        -v ollama:/root/.ollama \\
+        ollama/ollama
 fi
+
+# Wait for Ollama to start
+echo "[INFO] Waiting for Ollama to start..."
+sleep 5
+
+# Pull default models
+echo "[INFO] Pulling recommended models..."
+docker exec ollama ollama pull llama3
+docker exec ollama ollama pull mistral
+docker exec ollama ollama pull deepseek-coder
+
+# Launch OpenWebUI
+echo "[6/6] Starting OpenWebUI (ChatGPT-style interface)..."
+docker run -d \\
+    --name openwebui \\
+    --restart unless-stopped \\
+    -p $WEBUI_PORT:8080 \\
+    -v open-webui:/app/backend/data \\
+    -e OLLAMA_BASE_URL=http://host.docker.internal:$OLLAMA_PORT \\
+    --add-host=host.docker.internal:host-gateway \\
+    ghcr.io/open-webui/open-webui:main
 
 echo ""
 echo "============================================"
 echo "  Setup Complete!"
 echo "============================================"
 echo ""
-echo "  Container: $CONTAINER_NAME"
-echo "  Port: $PORT"
-echo "  Model: $(basename $MODEL_FILE)"
-echo "  GPU Layers: $GPU_LAYERS"
+echo "  Ollama API:    http://YOUR-VPS-IP:$OLLAMA_PORT"
+echo "  OpenWebUI:     http://YOUR-VPS-IP:$WEBUI_PORT"
+echo "  GPU Enabled:   $HAS_GPU"
 echo ""
-echo "  Test with: curl http://localhost:$PORT/health"
+echo "  Models installed:"
+echo "    - llama3     (general reasoning)"
+echo "    - mistral    (fast, efficient)"
+echo "    - deepseek-coder (coding)"
 echo ""
-echo "  Make sure port $PORT is open in your firewall!"
+echo "  Test with:"
+echo "    curl http://localhost:$OLLAMA_PORT/api/tags"
+echo ""
+echo "  IMPORTANT: Open these ports in your firewall:"
+echo "    sudo ufw allow $OLLAMA_PORT"
+echo "    sudo ufw allow $WEBUI_PORT"
+echo ""
+echo "  For security, restrict to your IP only:"
+echo "    sudo ufw allow from YOUR_IP to any port $OLLAMA_PORT"
 echo "============================================"
 `;
 
   res.setHeader("Content-Type", "text/plain");
-  res.setHeader("Content-Disposition", "attachment; filename=setup-llama.sh");
+  res.setHeader("Content-Disposition", "attachment; filename=setup-ollama.sh");
   res.send(script);
 });
 

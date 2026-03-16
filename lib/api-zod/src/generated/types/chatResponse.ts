@@ -10,5 +10,8 @@ export interface ChatResponse {
   content: string;
   /** @nullable */
   model?: string | null;
-  tokensUsed?: number;
+  /** @nullable */
+  totalDuration?: number | null;
+  /** @nullable */
+  evalCount?: number | null;
 }

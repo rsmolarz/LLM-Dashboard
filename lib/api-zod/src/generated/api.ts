@@ -22,10 +22,8 @@ export const GetLlmConfigResponse = zod.object({
   id: zod.number(),
   serverUrl: zod.string(),
   port: zod.number(),
-  cpuThreads: zod.number(),
-  contextSize: zod.number(),
-  gpuLayers: zod.number(),
-  containerName: zod.string(),
+  gpuEnabled: zod.boolean(),
+  defaultModel: zod.string(),
   createdAt: zod.date(),
   updatedAt: zod.date(),
 });
@@ -36,40 +34,88 @@ export const GetLlmConfigResponse = zod.object({
 export const SaveLlmConfigBody = zod.object({
   serverUrl: zod.string(),
   port: zod.number(),
-  cpuThreads: zod.number(),
-  contextSize: zod.number(),
-  gpuLayers: zod.number(),
-  containerName: zod.string(),
+  gpuEnabled: zod.boolean(),
+  defaultModel: zod.string(),
 });
 
 export const SaveLlmConfigResponse = zod.object({
   id: zod.number(),
   serverUrl: zod.string(),
   port: zod.number(),
-  cpuThreads: zod.number(),
-  contextSize: zod.number(),
-  gpuLayers: zod.number(),
-  containerName: zod.string(),
+  gpuEnabled: zod.boolean(),
+  defaultModel: zod.string(),
   createdAt: zod.date(),
   updatedAt: zod.date(),
 });
 
 /**
- * @summary Get llama.cpp server status (health, model, slots)
+ * @summary Get Ollama server status (health, running models, version)
  */
 export const GetLlmStatusResponse = zod.object({
   online: zod.boolean(),
   serverHealth: zod.string(),
-  modelLoaded: zod.string().nullish(),
-  slotsTotal: zod.number().optional(),
-  slotsUsed: zod.number().optional(),
+  version: zod.string().nullish(),
+  modelsCount: zod.number().optional(),
+  runningModels: zod.array(zod.string()).optional(),
   error: zod.string().nullish(),
 });
 
 /**
- * @summary Send a chat completion request to the local llama.cpp server
+ * @summary List models available on the Ollama server
+ */
+export const ListModelsResponseItem = zod.object({
+  name: zod.string(),
+  size: zod.number(),
+  digest: zod.string(),
+  modifiedAt: zod.string(),
+  parameterSize: zod.string().nullish(),
+  quantizationLevel: zod.string().nullish(),
+  family: zod.string().nullish(),
+});
+export const ListModelsResponse = zod.array(ListModelsResponseItem);
+
+/**
+ * @summary Pull a model from the Ollama registry
+ */
+export const PullModelBody = zod.object({
+  name: zod.string(),
+});
+
+export const PullModelResponse = zod.object({
+  success: zod.boolean(),
+  message: zod.string(),
+});
+
+/**
+ * @summary Delete a model from the Ollama server
+ */
+export const DeleteModelParams = zod.object({
+  name: zod.coerce.string(),
+});
+
+export const DeleteModelResponse = zod.object({
+  success: zod.boolean(),
+  message: zod.string(),
+});
+
+/**
+ * @summary List currently running/loaded models
+ */
+export const ListRunningModelsResponseItem = zod.object({
+  name: zod.string(),
+  size: zod.number(),
+  sizeVram: zod.number(),
+  expiresAt: zod.string(),
+});
+export const ListRunningModelsResponse = zod.array(
+  ListRunningModelsResponseItem,
+);
+
+/**
+ * @summary Send a chat completion request to the Ollama server
  */
 export const SendChatMessageBody = zod.object({
+  model: zod.string(),
   messages: zod.array(
     zod.object({
       role: zod.string(),
@@ -77,13 +123,13 @@ export const SendChatMessageBody = zod.object({
     }),
   ),
   temperature: zod.number().optional(),
-  maxTokens: zod.number().optional(),
 });
 
 export const SendChatMessageResponse = zod.object({
   content: zod.string(),
   model: zod.string().nullish(),
-  tokensUsed: zod.number().optional(),
+  totalDuration: zod.number().nullish(),
+  evalCount: zod.number().nullish(),
 });
 
 /**

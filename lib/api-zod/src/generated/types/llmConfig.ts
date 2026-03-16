@@ -10,10 +10,8 @@ export interface LlmConfig {
   id: number;
   serverUrl: string;
   port: number;
-  cpuThreads: number;
-  contextSize: number;
-  gpuLayers: number;
-  containerName: string;
+  gpuEnabled: boolean;
+  defaultModel: string;
   createdAt: Date;
   updatedAt: Date;
 }

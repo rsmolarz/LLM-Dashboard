@@ -13,7 +13,9 @@ tags:
   - name: llm-config
     description: LLM server configuration
   - name: llm-proxy
-    description: Proxy to local llama.cpp server
+    description: Proxy to local Ollama server
+  - name: llm-models
+    description: Model management
   - name: chat
     description: Chat history
 paths:
@@ -65,7 +67,7 @@ paths:
     get:
       operationId: getLlmStatus
       tags: [llm-proxy]
-      summary: Get llama.cpp server status (health, model, slots)
+      summary: Get Ollama server status (health, running models, version)
       responses:
         "200":
           description: Server status
@@ -74,11 +76,79 @@ paths:
               schema:
                 $ref: "#/components/schemas/LlmStatus"
 
+  /llm/models:
+    get:
+      operationId: listModels
+      tags: [llm-models]
+      summary: List models available on the Ollama server
+      responses:
+        "200":
+          description: List of models
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OllamaModel"
+
+  /llm/models/pull:
+    post:
+      operationId: pullModel
+      tags: [llm-models]
+      summary: Pull a model from the Ollama registry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PullModelInput"
+      responses:
+        "200":
+          description: Pull status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PullModelResponse"
+
+  /llm/models/{name}:
+    delete:
+      operationId: deleteModel
+      tags: [llm-models]
+      summary: Delete a model from the Ollama server
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Model deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteModelResponse"
+
+  /llm/models/running:
+    get:
+      operationId: listRunningModels
+      tags: [llm-models]
+      summary: List currently running/loaded models
+      responses:
+        "200":
+          description: List of running models
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RunningModel"
+
   /llm/chat:
     post:
       operationId: sendChatMessage
       tags: [llm-proxy]
-      summary: Send a chat completion request to the local llama.cpp server
+      summary: Send a chat completion request to the Ollama server
       requestBody:
         required: true
         content:
@@ -97,7 +167,7 @@ paths:
     get:
       operationId: getSetupScript
       tags: [llm-config]
-      summary: Generate a bash setup script based on current config
+      summary: Generate a bash setup script for Ollama + OpenWebUI
       responses:
         "200":
           description: Bash script content
@@ -216,13 +286,9 @@ components:
           type: string
         port:
           type: integer
-        cpuThreads:
-          type: integer
-        contextSize:
-          type: integer
-        gpuLayers:
-          type: integer
-        containerName:
+        gpuEnabled:
+          type: boolean
+        defaultModel:
           type: string
         createdAt:
           type: string
@@ -234,10 +300,8 @@ components:
         - id
         - serverUrl
         - port
-        - cpuThreads
-        - contextSize
-        - gpuLayers
-        - containerName
+        - gpuEnabled
+        - defaultModel
         - createdAt
         - updatedAt
 
@@ -248,21 +312,15 @@ components:
           type: string
         port:
           type: integer
-        cpuThreads:
-          type: integer
-        contextSize:
-          type: integer
-        gpuLayers:
-          type: integer
-        containerName:
+        gpuEnabled:
+          type: boolean
+        defaultModel:
           type: string
       required:
         - serverUrl
         - port
-        - cpuThreads
-        - contextSize
-        - gpuLayers
-        - containerName
+        - gpuEnabled
+        - defaultModel
 
     LlmStatus:
       type: object
@@ -271,30 +329,103 @@ components:
           type: boolean
         serverHealth:
           type: string
-        modelLoaded:
+        version:
           type: ["string", "null"]
-        slotsTotal:
+        modelsCount:
           type: integer
-        slotsUsed:
-          type: integer
+        runningModels:
+          type: array
+          items:
+            type: string
         error:
           type: ["string", "null"]
       required:
         - online
         - serverHealth
 
+    OllamaModel:
+      type: object
+      properties:
+        name:
+          type: string
+        size:
+          type: number
+        digest:
+          type: string
+        modifiedAt:
+          type: string
+        parameterSize:
+          type: ["string", "null"]
+        quantizationLevel:
+          type: ["string", "null"]
+        family:
+          type: ["string", "null"]
+      required:
+        - name
+        - size
+        - digest
+        - modifiedAt
+
+    RunningModel:
+      type: object
+      properties:
+        name:
+          type: string
+        size:
+          type: number
+        sizeVram:
+          type: number
+        expiresAt:
+          type: string
+      required:
+        - name
+        - size
+        - sizeVram
+        - expiresAt
+
+    PullModelInput:
+      type: object
+      properties:
+        name:
+          type: string
+      required:
+        - name
+
+    PullModelResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+        - message
+
+    DeleteModelResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+        - message
+
     ChatRequest:
       type: object
       properties:
+        model:
+          type: string
         messages:
           type: array
           items:
             $ref: "#/components/schemas/ChatRequestMessage"
         temperature:
           type: number
-        maxTokens:
-          type: integer
       required:
+        - model
         - messages
 
     ChatRequestMessage:
@@ -315,8 +446,10 @@ components:
           type: string
         model:
           type: ["string", "null"]
-        tokensUsed:
-          type: integer
+        totalDuration:
+          type: ["number", "null"]
+        evalCount:
+          type: ["integer", "null"]
       required:
         - content
 

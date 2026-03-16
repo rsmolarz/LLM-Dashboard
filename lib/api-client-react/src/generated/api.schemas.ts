@@ -13,10 +13,8 @@ export interface LlmConfig {
   id: number;
   serverUrl: string;
   port: number;
-  cpuThreads: number;
-  contextSize: number;
-  gpuLayers: number;
-  containerName: string;
+  gpuEnabled: boolean;
+  defaultModel: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -24,21 +22,53 @@ export interface LlmConfig {
 export interface LlmConfigInput {
   serverUrl: string;
   port: number;
-  cpuThreads: number;
-  contextSize: number;
-  gpuLayers: number;
-  containerName: string;
+  gpuEnabled: boolean;
+  defaultModel: string;
 }
 
 export interface LlmStatus {
   online: boolean;
   serverHealth: string;
   /** @nullable */
-  modelLoaded?: string | null;
-  slotsTotal?: number;
-  slotsUsed?: number;
+  version?: string | null;
+  modelsCount?: number;
+  runningModels?: string[];
   /** @nullable */
   error?: string | null;
+}
+
+export interface OllamaModel {
+  name: string;
+  size: number;
+  digest: string;
+  modifiedAt: string;
+  /** @nullable */
+  parameterSize?: string | null;
+  /** @nullable */
+  quantizationLevel?: string | null;
+  /** @nullable */
+  family?: string | null;
+}
+
+export interface RunningModel {
+  name: string;
+  size: number;
+  sizeVram: number;
+  expiresAt: string;
+}
+
+export interface PullModelInput {
+  name: string;
+}
+
+export interface PullModelResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface DeleteModelResponse {
+  success: boolean;
+  message: string;
 }
 
 export interface ChatRequestMessage {
@@ -47,16 +77,19 @@ export interface ChatRequestMessage {
 }
 
 export interface ChatRequest {
+  model: string;
   messages: ChatRequestMessage[];
   temperature?: number;
-  maxTokens?: number;
 }
 
 export interface ChatResponse {
   content: string;
   /** @nullable */
   model?: string | null;
-  tokensUsed?: number;
+  /** @nullable */
+  totalDuration?: number | null;
+  /** @nullable */
+  evalCount?: number | null;
 }
 
 export interface Conversation {

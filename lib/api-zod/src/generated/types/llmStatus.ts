@@ -10,9 +10,9 @@ export interface LlmStatus {
   online: boolean;
   serverHealth: string;
   /** @nullable */
-  modelLoaded?: string | null;
-  slotsTotal?: number;
-  slotsUsed?: number;
+  version?: string | null;
+  modelsCount?: number;
+  runningModels?: string[];
   /** @nullable */
   error?: string | null;
 }

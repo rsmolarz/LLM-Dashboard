@@ -2,6 +2,12 @@ import { Router, type IRouter } from "express";
 import { db, llmConfigTable } from "@workspace/db";
 import {
   GetLlmStatusResponse,
+  ListModelsResponse,
+  ListRunningModelsResponse,
+  PullModelBody,
+  PullModelResponse,
+  DeleteModelParams,
+  DeleteModelResponse,
   SendChatMessageBody,
   SendChatMessageResponse,
 } from "@workspace/api-zod";
@@ -22,9 +28,9 @@ router.get("/llm/status", async (_req, res): Promise<void> => {
       GetLlmStatusResponse.parse({
         online: false,
         serverHealth: "not_configured",
-        modelLoaded: null,
-        slotsTotal: 0,
-        slotsUsed: 0,
+        version: null,
+        modelsCount: 0,
+        runningModels: [],
         error: "Server URL not configured",
       })
     );
@@ -32,74 +38,64 @@ router.get("/llm/status", async (_req, res): Promise<void> => {
   }
 
   try {
-    const healthRes = await fetch(`${serverUrl}/health`, {
+    const tagsRes = await fetch(`${serverUrl}/api/tags`, {
       signal: AbortSignal.timeout(5000),
     });
 
-    if (!healthRes.ok) {
+    if (!tagsRes.ok) {
       res.json(
         GetLlmStatusResponse.parse({
           online: false,
           serverHealth: "error",
-          modelLoaded: null,
-          slotsTotal: 0,
-          slotsUsed: 0,
-          error: `Server returned ${healthRes.status}`,
+          version: null,
+          modelsCount: 0,
+          runningModels: [],
+          error: `Server returned ${tagsRes.status}`,
         })
       );
       return;
     }
 
-    const healthData = await healthRes.json() as Record<string, unknown>;
+    const tagsData = (await tagsRes.json()) as {
+      models?: Array<{ name: string }>;
+    };
+    const modelsCount = tagsData.models?.length ?? 0;
 
-    let modelName: string | null = null;
-    let slotsTotal = 0;
-    let slotsUsed = 0;
-
+    let version: string | null = null;
     try {
-      const slotsRes = await fetch(`${serverUrl}/slots`, {
-        signal: AbortSignal.timeout(5000),
+      const versionRes = await fetch(`${serverUrl}/api/version`, {
+        signal: AbortSignal.timeout(3000),
       });
-      if (slotsRes.ok) {
-        const slotsData = (await slotsRes.json()) as Array<Record<string, unknown>>;
-        slotsTotal = slotsData.length;
-        slotsUsed = slotsData.filter(
-          (s) => s.state !== undefined && s.state !== 0
-        ).length;
-        if (slotsData.length > 0 && slotsData[0].model) {
-          modelName = slotsData[0].model as string;
-        }
+      if (versionRes.ok) {
+        const versionData = (await versionRes.json()) as { version?: string };
+        version = versionData.version ?? null;
       }
     } catch {
-      // slots endpoint may not be available
+      // version endpoint may not be available
     }
 
-    if (!modelName) {
-      try {
-        const propsRes = await fetch(`${serverUrl}/props`, {
-          signal: AbortSignal.timeout(5000),
-        });
-        if (propsRes.ok) {
-          const propsData = (await propsRes.json()) as Record<string, unknown>;
-          if (propsData.default_generation_settings && typeof propsData.default_generation_settings === 'object') {
-            const settings = propsData.default_generation_settings as Record<string, unknown>;
-            if (settings.model) {
-              modelName = settings.model as string;
-            }
-          }
-        }
-      } catch {
-        // props endpoint may not be available
+    let runningModels: string[] = [];
+    try {
+      const psRes = await fetch(`${serverUrl}/api/ps`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (psRes.ok) {
+        const psData = (await psRes.json()) as {
+          models?: Array<{ name: string }>;
+        };
+        runningModels = psData.models?.map((m) => m.name) ?? [];
       }
+    } catch {
+      // ps endpoint may not be available
     }
 
     res.json(
       GetLlmStatusResponse.parse({
         online: true,
-        serverHealth: (healthData.status as string) || "ok",
-        modelLoaded: modelName,
-        slotsTotal,
-        slotsUsed,
+        serverHealth: "ok",
+        version,
+        modelsCount,
+        runningModels,
         error: null,
       })
     );
@@ -108,10 +104,198 @@ router.get("/llm/status", async (_req, res): Promise<void> => {
       GetLlmStatusResponse.parse({
         online: false,
         serverHealth: "offline",
-        modelLoaded: null,
-        slotsTotal: 0,
-        slotsUsed: 0,
+        version: null,
+        modelsCount: 0,
+        runningModels: [],
         error: err instanceof Error ? err.message : "Connection failed",
+      })
+    );
+  }
+});
+
+router.get("/llm/models", async (_req, res): Promise<void> => {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.json([]);
+    return;
+  }
+
+  try {
+    const tagsRes = await fetch(`${serverUrl}/api/tags`, {
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!tagsRes.ok) {
+      res.json([]);
+      return;
+    }
+
+    const data = (await tagsRes.json()) as {
+      models?: Array<{
+        name: string;
+        size: number;
+        digest: string;
+        modified_at: string;
+        details?: {
+          parameter_size?: string;
+          quantization_level?: string;
+          family?: string;
+        };
+      }>;
+    };
+
+    const models = (data.models ?? []).map((m) => ({
+      name: m.name,
+      size: m.size,
+      digest: m.digest,
+      modifiedAt: m.modified_at,
+      parameterSize: m.details?.parameter_size ?? null,
+      quantizationLevel: m.details?.quantization_level ?? null,
+      family: m.details?.family ?? null,
+    }));
+
+    res.json(ListModelsResponse.parse(models));
+  } catch {
+    res.json([]);
+  }
+});
+
+router.get("/llm/models/running", async (_req, res): Promise<void> => {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.json([]);
+    return;
+  }
+
+  try {
+    const psRes = await fetch(`${serverUrl}/api/ps`, {
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!psRes.ok) {
+      res.json([]);
+      return;
+    }
+
+    const data = (await psRes.json()) as {
+      models?: Array<{
+        name: string;
+        size: number;
+        size_vram: number;
+        expires_at: string;
+      }>;
+    };
+
+    const models = (data.models ?? []).map((m) => ({
+      name: m.name,
+      size: m.size,
+      sizeVram: m.size_vram,
+      expiresAt: m.expires_at,
+    }));
+
+    res.json(ListRunningModelsResponse.parse(models));
+  } catch {
+    res.json([]);
+  }
+});
+
+router.post("/llm/models/pull", async (req, res): Promise<void> => {
+  const parsed = PullModelBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.status(503).json(
+      PullModelResponse.parse({
+        success: false,
+        message: "Ollama server not configured",
+      })
+    );
+    return;
+  }
+
+  try {
+    const pullRes = await fetch(`${serverUrl}/api/pull`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: parsed.data.name, stream: false }),
+      signal: AbortSignal.timeout(600000),
+    });
+
+    if (!pullRes.ok) {
+      const text = await pullRes.text();
+      res.json(
+        PullModelResponse.parse({
+          success: false,
+          message: `Pull failed: ${text}`,
+        })
+      );
+      return;
+    }
+
+    res.json(
+      PullModelResponse.parse({
+        success: true,
+        message: `Model ${parsed.data.name} pulled successfully`,
+      })
+    );
+  } catch (err) {
+    res.json(
+      PullModelResponse.parse({
+        success: false,
+        message: err instanceof Error ? err.message : "Pull failed",
+      })
+    );
+  }
+});
+
+router.delete("/llm/models/:name", async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.json(
+      DeleteModelResponse.parse({
+        success: false,
+        message: "Ollama server not configured",
+      })
+    );
+    return;
+  }
+
+  try {
+    const delRes = await fetch(`${serverUrl}/api/delete`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: raw }),
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!delRes.ok) {
+      const text = await delRes.text();
+      res.json(
+        DeleteModelResponse.parse({
+          success: false,
+          message: `Delete failed: ${text}`,
+        })
+      );
+      return;
+    }
+
+    res.json(
+      DeleteModelResponse.parse({
+        success: true,
+        message: `Model ${raw} deleted`,
+      })
+    );
+  } catch (err) {
+    res.json(
+      DeleteModelResponse.parse({
+        success: false,
+        message: err instanceof Error ? err.message : "Delete failed",
       })
     );
   }
@@ -126,48 +310,51 @@ router.post("/llm/chat", async (req, res): Promise<void> => {
 
   const serverUrl = await getServerUrl();
   if (!serverUrl) {
-    res.status(503).json({ error: "LLM server not configured" });
+    res.status(503).json({ error: "Ollama server not configured" });
     return;
   }
 
   try {
-    const llamaRes = await fetch(`${serverUrl}/v1/chat/completions`, {
+    const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        model: parsed.data.model,
         messages: parsed.data.messages,
-        temperature: parsed.data.temperature ?? 0.7,
-        max_tokens: parsed.data.maxTokens ?? 512,
+        stream: false,
+        options: {
+          temperature: parsed.data.temperature ?? 0.7,
+        },
       }),
       signal: AbortSignal.timeout(120000),
     });
 
-    if (!llamaRes.ok) {
-      const text = await llamaRes.text();
-      res.status(502).json({ error: `LLM server error: ${text}` });
+    if (!ollamaRes.ok) {
+      const text = await ollamaRes.text();
+      res.status(502).json({ error: `Ollama error: ${text}` });
       return;
     }
 
-    const data = (await llamaRes.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
+    const data = (await ollamaRes.json()) as {
+      message?: { content?: string };
       model?: string;
-      usage?: { total_tokens?: number };
+      total_duration?: number;
+      eval_count?: number;
     };
 
-    const content =
-      data.choices?.[0]?.message?.content ?? "No response generated";
+    const content = data.message?.content ?? "No response generated";
 
     res.json(
       SendChatMessageResponse.parse({
         content,
         model: data.model ?? null,
-        tokensUsed: data.usage?.total_tokens ?? 0,
+        totalDuration: data.total_duration ?? null,
+        evalCount: data.eval_count ?? null,
       })
     );
   } catch (err) {
     res.status(502).json({
-      error:
-        err instanceof Error ? err.message : "Failed to connect to LLM server",
+      error: err instanceof Error ? err.message : "Failed to connect to Ollama",
     });
   }
 });
