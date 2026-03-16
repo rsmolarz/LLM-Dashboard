@@ -17,27 +17,36 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AddMemoryInput,
   AddMessageInput,
   AgentChatInput,
   AgentChatResponse,
   AgentEntry,
   AgentLogEntry,
+  AgentMemoryEntry,
+  AgentTaskEntry,
   ChatMessage,
   ChatRequest,
   ChatResponse,
   CollectTrainingInput,
   CollectTrainingResponse,
+  CompleteTaskInput,
   Conversation,
   CreateAgentInput,
   CreateConversationInput,
   CreateDocumentInput,
+  CreateTaskInput,
   DeleteModelResponse,
   DeployProfileResponse,
   ExportTrainingDataInput,
+  ExtractMemoriesInput,
+  ExtractMemoriesResponse,
   FleetStats,
   GatewayStatus,
   GetAgentLogsParams,
   HealthStatus,
+  ListAgentMemoriesParams,
+  ListAgentTasksParams,
   LlmConfig,
   LlmConfigInput,
   LlmStatus,
@@ -51,6 +60,8 @@ import type {
   RagDocument,
   RagStats,
   RateMessageInput,
+  RouteTaskInput,
+  RouteTaskResponse,
   RunningModel,
   SearchDocumentsInput,
   SearchResult,
@@ -58,6 +69,7 @@ import type {
   TrainingDataInput,
   TrainingStats,
   UpdateAgentInput,
+  UpdateTaskInput,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -3682,3 +3694,910 @@ export function useGetOpenclawSetupScript<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List memories for an agent
+ */
+export const getListAgentMemoriesUrl = (
+  agentId: string,
+  params?: ListAgentMemoriesParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/openclaw/agents/${agentId}/memories?${stringifiedParams}`
+    : `/api/openclaw/agents/${agentId}/memories`;
+};
+
+export const listAgentMemories = async (
+  agentId: string,
+  params?: ListAgentMemoriesParams,
+  options?: RequestInit,
+): Promise<AgentMemoryEntry[]> => {
+  return customFetch<AgentMemoryEntry[]>(
+    getListAgentMemoriesUrl(agentId, params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getListAgentMemoriesQueryKey = (
+  agentId: string,
+  params?: ListAgentMemoriesParams,
+) => {
+  return [
+    `/api/openclaw/agents/${agentId}/memories`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getListAgentMemoriesQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAgentMemories>>,
+  TError = ErrorType<unknown>,
+>(
+  agentId: string,
+  params?: ListAgentMemoriesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAgentMemories>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListAgentMemoriesQueryKey(agentId, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listAgentMemories>>
+  > = ({ signal }) =>
+    listAgentMemories(agentId, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!agentId,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAgentMemories>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAgentMemoriesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAgentMemories>>
+>;
+export type ListAgentMemoriesQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List memories for an agent
+ */
+
+export function useListAgentMemories<
+  TData = Awaited<ReturnType<typeof listAgentMemories>>,
+  TError = ErrorType<unknown>,
+>(
+  agentId: string,
+  params?: ListAgentMemoriesParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAgentMemories>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAgentMemoriesQueryOptions(
+    agentId,
+    params,
+    options,
+  );
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Add a memory for an agent
+ */
+export const getAddAgentMemoryUrl = (agentId: string) => {
+  return `/api/openclaw/agents/${agentId}/memories`;
+};
+
+export const addAgentMemory = async (
+  agentId: string,
+  addMemoryInput: AddMemoryInput,
+  options?: RequestInit,
+): Promise<AgentMemoryEntry> => {
+  return customFetch<AgentMemoryEntry>(getAddAgentMemoryUrl(agentId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(addMemoryInput),
+  });
+};
+
+export const getAddAgentMemoryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addAgentMemory>>,
+    TError,
+    { agentId: string; data: BodyType<AddMemoryInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof addAgentMemory>>,
+  TError,
+  { agentId: string; data: BodyType<AddMemoryInput> },
+  TContext
+> => {
+  const mutationKey = ["addAgentMemory"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof addAgentMemory>>,
+    { agentId: string; data: BodyType<AddMemoryInput> }
+  > = (props) => {
+    const { agentId, data } = props ?? {};
+
+    return addAgentMemory(agentId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AddAgentMemoryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof addAgentMemory>>
+>;
+export type AddAgentMemoryMutationBody = BodyType<AddMemoryInput>;
+export type AddAgentMemoryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Add a memory for an agent
+ */
+export const useAddAgentMemory = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof addAgentMemory>>,
+    TError,
+    { agentId: string; data: BodyType<AddMemoryInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof addAgentMemory>>,
+  TError,
+  { agentId: string; data: BodyType<AddMemoryInput> },
+  TContext
+> => {
+  return useMutation(getAddAgentMemoryMutationOptions(options));
+};
+
+/**
+ * @summary Delete an agent memory
+ */
+export const getDeleteAgentMemoryUrl = (agentId: string, memoryId: number) => {
+  return `/api/openclaw/agents/${agentId}/memories/${memoryId}`;
+};
+
+export const deleteAgentMemory = async (
+  agentId: string,
+  memoryId: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteAgentMemoryUrl(agentId, memoryId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteAgentMemoryMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAgentMemory>>,
+    TError,
+    { agentId: string; memoryId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteAgentMemory>>,
+  TError,
+  { agentId: string; memoryId: number },
+  TContext
+> => {
+  const mutationKey = ["deleteAgentMemory"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteAgentMemory>>,
+    { agentId: string; memoryId: number }
+  > = (props) => {
+    const { agentId, memoryId } = props ?? {};
+
+    return deleteAgentMemory(agentId, memoryId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteAgentMemoryMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteAgentMemory>>
+>;
+
+export type DeleteAgentMemoryMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete an agent memory
+ */
+export const useDeleteAgentMemory = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAgentMemory>>,
+    TError,
+    { agentId: string; memoryId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteAgentMemory>>,
+  TError,
+  { agentId: string; memoryId: number },
+  TContext
+> => {
+  return useMutation(getDeleteAgentMemoryMutationOptions(options));
+};
+
+/**
+ * @summary Auto-extract facts and summaries from agent chat history
+ */
+export const getExtractMemoriesFromChatUrl = (agentId: string) => {
+  return `/api/openclaw/agents/${agentId}/memories/extract`;
+};
+
+export const extractMemoriesFromChat = async (
+  agentId: string,
+  extractMemoriesInput: ExtractMemoriesInput,
+  options?: RequestInit,
+): Promise<ExtractMemoriesResponse> => {
+  return customFetch<ExtractMemoriesResponse>(
+    getExtractMemoriesFromChatUrl(agentId),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(extractMemoriesInput),
+    },
+  );
+};
+
+export const getExtractMemoriesFromChatMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof extractMemoriesFromChat>>,
+    TError,
+    { agentId: string; data: BodyType<ExtractMemoriesInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof extractMemoriesFromChat>>,
+  TError,
+  { agentId: string; data: BodyType<ExtractMemoriesInput> },
+  TContext
+> => {
+  const mutationKey = ["extractMemoriesFromChat"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof extractMemoriesFromChat>>,
+    { agentId: string; data: BodyType<ExtractMemoriesInput> }
+  > = (props) => {
+    const { agentId, data } = props ?? {};
+
+    return extractMemoriesFromChat(agentId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ExtractMemoriesFromChatMutationResult = NonNullable<
+  Awaited<ReturnType<typeof extractMemoriesFromChat>>
+>;
+export type ExtractMemoriesFromChatMutationBody =
+  BodyType<ExtractMemoriesInput>;
+export type ExtractMemoriesFromChatMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Auto-extract facts and summaries from agent chat history
+ */
+export const useExtractMemoriesFromChat = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof extractMemoriesFromChat>>,
+    TError,
+    { agentId: string; data: BodyType<ExtractMemoriesInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof extractMemoriesFromChat>>,
+  TError,
+  { agentId: string; data: BodyType<ExtractMemoriesInput> },
+  TContext
+> => {
+  return useMutation(getExtractMemoriesFromChatMutationOptions(options));
+};
+
+/**
+ * @summary List all tasks
+ */
+export const getListAgentTasksUrl = (params?: ListAgentTasksParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/openclaw/tasks?${stringifiedParams}`
+    : `/api/openclaw/tasks`;
+};
+
+export const listAgentTasks = async (
+  params?: ListAgentTasksParams,
+  options?: RequestInit,
+): Promise<AgentTaskEntry[]> => {
+  return customFetch<AgentTaskEntry[]>(getListAgentTasksUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListAgentTasksQueryKey = (params?: ListAgentTasksParams) => {
+  return [`/api/openclaw/tasks`, ...(params ? [params] : [])] as const;
+};
+
+export const getListAgentTasksQueryOptions = <
+  TData = Awaited<ReturnType<typeof listAgentTasks>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAgentTasksParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAgentTasks>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getListAgentTasksQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof listAgentTasks>>> = ({
+    signal,
+  }) => listAgentTasks(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listAgentTasks>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListAgentTasksQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listAgentTasks>>
+>;
+export type ListAgentTasksQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List all tasks
+ */
+
+export function useListAgentTasks<
+  TData = Awaited<ReturnType<typeof listAgentTasks>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListAgentTasksParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listAgentTasks>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListAgentTasksQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Create a new task
+ */
+export const getCreateAgentTaskUrl = () => {
+  return `/api/openclaw/tasks`;
+};
+
+export const createAgentTask = async (
+  createTaskInput: CreateTaskInput,
+  options?: RequestInit,
+): Promise<AgentTaskEntry> => {
+  return customFetch<AgentTaskEntry>(getCreateAgentTaskUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(createTaskInput),
+  });
+};
+
+export const getCreateAgentTaskMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAgentTask>>,
+    TError,
+    { data: BodyType<CreateTaskInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createAgentTask>>,
+  TError,
+  { data: BodyType<CreateTaskInput> },
+  TContext
+> => {
+  const mutationKey = ["createAgentTask"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createAgentTask>>,
+    { data: BodyType<CreateTaskInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createAgentTask(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateAgentTaskMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createAgentTask>>
+>;
+export type CreateAgentTaskMutationBody = BodyType<CreateTaskInput>;
+export type CreateAgentTaskMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Create a new task
+ */
+export const useCreateAgentTask = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createAgentTask>>,
+    TError,
+    { data: BodyType<CreateTaskInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createAgentTask>>,
+  TError,
+  { data: BodyType<CreateTaskInput> },
+  TContext
+> => {
+  return useMutation(getCreateAgentTaskMutationOptions(options));
+};
+
+/**
+ * @summary Update a task
+ */
+export const getUpdateAgentTaskUrl = (taskId: number) => {
+  return `/api/openclaw/tasks/${taskId}`;
+};
+
+export const updateAgentTask = async (
+  taskId: number,
+  updateTaskInput: UpdateTaskInput,
+  options?: RequestInit,
+): Promise<AgentTaskEntry> => {
+  return customFetch<AgentTaskEntry>(getUpdateAgentTaskUrl(taskId), {
+    ...options,
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(updateTaskInput),
+  });
+};
+
+export const getUpdateAgentTaskMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateAgentTask>>,
+    TError,
+    { taskId: number; data: BodyType<UpdateTaskInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateAgentTask>>,
+  TError,
+  { taskId: number; data: BodyType<UpdateTaskInput> },
+  TContext
+> => {
+  const mutationKey = ["updateAgentTask"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateAgentTask>>,
+    { taskId: number; data: BodyType<UpdateTaskInput> }
+  > = (props) => {
+    const { taskId, data } = props ?? {};
+
+    return updateAgentTask(taskId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateAgentTaskMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateAgentTask>>
+>;
+export type UpdateAgentTaskMutationBody = BodyType<UpdateTaskInput>;
+export type UpdateAgentTaskMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Update a task
+ */
+export const useUpdateAgentTask = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateAgentTask>>,
+    TError,
+    { taskId: number; data: BodyType<UpdateTaskInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateAgentTask>>,
+  TError,
+  { taskId: number; data: BodyType<UpdateTaskInput> },
+  TContext
+> => {
+  return useMutation(getUpdateAgentTaskMutationOptions(options));
+};
+
+/**
+ * @summary Delete a task
+ */
+export const getDeleteAgentTaskUrl = (taskId: number) => {
+  return `/api/openclaw/tasks/${taskId}`;
+};
+
+export const deleteAgentTask = async (
+  taskId: number,
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getDeleteAgentTaskUrl(taskId), {
+    ...options,
+    method: "DELETE",
+  });
+};
+
+export const getDeleteAgentTaskMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAgentTask>>,
+    TError,
+    { taskId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof deleteAgentTask>>,
+  TError,
+  { taskId: number },
+  TContext
+> => {
+  const mutationKey = ["deleteAgentTask"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof deleteAgentTask>>,
+    { taskId: number }
+  > = (props) => {
+    const { taskId } = props ?? {};
+
+    return deleteAgentTask(taskId, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DeleteAgentTaskMutationResult = NonNullable<
+  Awaited<ReturnType<typeof deleteAgentTask>>
+>;
+
+export type DeleteAgentTaskMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Delete a task
+ */
+export const useDeleteAgentTask = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof deleteAgentTask>>,
+    TError,
+    { taskId: number },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof deleteAgentTask>>,
+  TError,
+  { taskId: number },
+  TContext
+> => {
+  return useMutation(getDeleteAgentTaskMutationOptions(options));
+};
+
+/**
+ * @summary Mark a task as complete with result
+ */
+export const getCompleteAgentTaskUrl = (taskId: number) => {
+  return `/api/openclaw/tasks/${taskId}/complete`;
+};
+
+export const completeAgentTask = async (
+  taskId: number,
+  completeTaskInput: CompleteTaskInput,
+  options?: RequestInit,
+): Promise<AgentTaskEntry> => {
+  return customFetch<AgentTaskEntry>(getCompleteAgentTaskUrl(taskId), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(completeTaskInput),
+  });
+};
+
+export const getCompleteAgentTaskMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof completeAgentTask>>,
+    TError,
+    { taskId: number; data: BodyType<CompleteTaskInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof completeAgentTask>>,
+  TError,
+  { taskId: number; data: BodyType<CompleteTaskInput> },
+  TContext
+> => {
+  const mutationKey = ["completeAgentTask"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof completeAgentTask>>,
+    { taskId: number; data: BodyType<CompleteTaskInput> }
+  > = (props) => {
+    const { taskId, data } = props ?? {};
+
+    return completeAgentTask(taskId, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CompleteAgentTaskMutationResult = NonNullable<
+  Awaited<ReturnType<typeof completeAgentTask>>
+>;
+export type CompleteAgentTaskMutationBody = BodyType<CompleteTaskInput>;
+export type CompleteAgentTaskMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Mark a task as complete with result
+ */
+export const useCompleteAgentTask = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof completeAgentTask>>,
+    TError,
+    { taskId: number; data: BodyType<CompleteTaskInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof completeAgentTask>>,
+  TError,
+  { taskId: number; data: BodyType<CompleteTaskInput> },
+  TContext
+> => {
+  return useMutation(getCompleteAgentTaskMutationOptions(options));
+};
+
+/**
+ * @summary Auto-route a task to the best available agent
+ */
+export const getRouteTaskUrl = () => {
+  return `/api/openclaw/tasks/route`;
+};
+
+export const routeTask = async (
+  routeTaskInput: RouteTaskInput,
+  options?: RequestInit,
+): Promise<RouteTaskResponse> => {
+  return customFetch<RouteTaskResponse>(getRouteTaskUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(routeTaskInput),
+  });
+};
+
+export const getRouteTaskMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof routeTask>>,
+    TError,
+    { data: BodyType<RouteTaskInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof routeTask>>,
+  TError,
+  { data: BodyType<RouteTaskInput> },
+  TContext
+> => {
+  const mutationKey = ["routeTask"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof routeTask>>,
+    { data: BodyType<RouteTaskInput> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return routeTask(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RouteTaskMutationResult = NonNullable<
+  Awaited<ReturnType<typeof routeTask>>
+>;
+export type RouteTaskMutationBody = BodyType<RouteTaskInput>;
+export type RouteTaskMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Auto-route a task to the best available agent
+ */
+export const useRouteTask = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof routeTask>>,
+    TError,
+    { data: BodyType<RouteTaskInput> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof routeTask>>,
+  TError,
+  { data: BodyType<RouteTaskInput> },
+  TContext
+> => {
+  return useMutation(getRouteTaskMutationOptions(options));
+};

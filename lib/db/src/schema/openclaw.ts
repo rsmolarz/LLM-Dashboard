@@ -51,3 +51,37 @@ export const agentLogsTable = pgTable("agent_logs", {
 export const insertAgentLogSchema = createInsertSchema(agentLogsTable).omit({ id: true, createdAt: true });
 export type InsertAgentLog = z.infer<typeof insertAgentLogSchema>;
 export type AgentLog = typeof agentLogsTable.$inferSelect;
+
+export const agentMemoriesTable = pgTable("agent_memories", {
+  id: serial("id").primaryKey(),
+  agentId: text("agent_id").notNull(),
+  memoryType: text("memory_type").notNull().default("fact"),
+  content: text("content").notNull(),
+  source: text("source").notNull().default("manual"),
+  importance: integer("importance").notNull().default(5),
+  tags: text("tags").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const insertAgentMemorySchema = createInsertSchema(agentMemoriesTable).omit({ id: true, createdAt: true });
+export type InsertAgentMemory = z.infer<typeof insertAgentMemorySchema>;
+export type AgentMemory = typeof agentMemoriesTable.$inferSelect;
+
+export const agentTasksTable = pgTable("agent_tasks", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description").notNull().default(""),
+  assignedAgentId: text("assigned_agent_id"),
+  status: text("status").notNull().default("pending"),
+  priority: text("priority").notNull().default("medium"),
+  category: text("category").notNull().default("general"),
+  result: text("result"),
+  dueAt: timestamp("due_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const insertAgentTaskSchema = createInsertSchema(agentTasksTable).omit({ id: true, completedAt: true, createdAt: true, updatedAt: true });
+export type InsertAgentTask = z.infer<typeof insertAgentTaskSchema>;
+export type AgentTask = typeof agentTasksTable.$inferSelect;

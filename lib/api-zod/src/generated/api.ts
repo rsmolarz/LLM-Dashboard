@@ -624,6 +624,241 @@ export const GetOpenclawStatsResponse = zod.object({
   idleAgents: zod.number(),
   totalMessages: zod.number(),
   totalTasksCompleted: zod.number(),
+  totalTasks: zod.number(),
+  pendingTasks: zod.number(),
+  totalMemories: zod.number(),
   byCategory: zod.record(zod.string(), zod.number()),
   gatewayConnected: zod.boolean(),
+});
+
+/**
+ * @summary List memories for an agent
+ */
+export const ListAgentMemoriesParams = zod.object({
+  agentId: zod.coerce.string(),
+});
+
+export const ListAgentMemoriesQueryParams = zod.object({
+  type: zod.coerce.string().optional(),
+});
+
+export const ListAgentMemoriesResponseItem = zod.object({
+  id: zod.number(),
+  agentId: zod.string(),
+  memoryType: zod.string(),
+  content: zod.string(),
+  source: zod.string(),
+  importance: zod.number(),
+  tags: zod.string(),
+  createdAt: zod.date(),
+});
+export const ListAgentMemoriesResponse = zod.array(
+  ListAgentMemoriesResponseItem,
+);
+
+/**
+ * @summary Add a memory for an agent
+ */
+export const AddAgentMemoryParams = zod.object({
+  agentId: zod.coerce.string(),
+});
+
+export const AddAgentMemoryBody = zod.object({
+  memoryType: zod.string().optional(),
+  content: zod.string(),
+  source: zod.string().optional(),
+  importance: zod.number().optional(),
+  tags: zod.string().optional(),
+});
+
+/**
+ * @summary Delete an agent memory
+ */
+export const DeleteAgentMemoryParams = zod.object({
+  agentId: zod.coerce.string(),
+  memoryId: zod.coerce.number(),
+});
+
+/**
+ * @summary Auto-extract facts and summaries from agent chat history
+ */
+export const ExtractMemoriesFromChatParams = zod.object({
+  agentId: zod.coerce.string(),
+});
+
+export const ExtractMemoriesFromChatBody = zod.object({
+  messages: zod.array(
+    zod.object({
+      role: zod.string(),
+      content: zod.string(),
+    }),
+  ),
+});
+
+export const ExtractMemoriesFromChatResponse = zod.object({
+  extracted: zod.number(),
+  memories: zod.array(
+    zod.object({
+      id: zod.number(),
+      agentId: zod.string(),
+      memoryType: zod.string(),
+      content: zod.string(),
+      source: zod.string(),
+      importance: zod.number(),
+      tags: zod.string(),
+      createdAt: zod.date(),
+    }),
+  ),
+});
+
+/**
+ * @summary List all tasks
+ */
+export const ListAgentTasksQueryParams = zod.object({
+  status: zod.coerce.string().optional(),
+  agentId: zod.coerce.string().optional(),
+  priority: zod.coerce.string().optional(),
+});
+
+export const ListAgentTasksResponseItem = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  description: zod.string(),
+  assignedAgentId: zod.string().nullish(),
+  status: zod.string(),
+  priority: zod.string(),
+  category: zod.string(),
+  result: zod.string().nullish(),
+  dueAt: zod.date().nullish(),
+  completedAt: zod.date().nullish(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+export const ListAgentTasksResponse = zod.array(ListAgentTasksResponseItem);
+
+/**
+ * @summary Create a new task
+ */
+export const CreateAgentTaskBody = zod.object({
+  title: zod.string(),
+  description: zod.string().optional(),
+  assignedAgentId: zod.string().optional(),
+  priority: zod.string().optional(),
+  category: zod.string().optional(),
+  dueAt: zod.string().optional(),
+});
+
+/**
+ * @summary Update a task
+ */
+export const UpdateAgentTaskParams = zod.object({
+  taskId: zod.coerce.number(),
+});
+
+export const UpdateAgentTaskBody = zod.object({
+  title: zod.string().optional(),
+  description: zod.string().optional(),
+  assignedAgentId: zod.string().nullish(),
+  status: zod.string().optional(),
+  priority: zod.string().optional(),
+  category: zod.string().optional(),
+  result: zod.string().optional(),
+  dueAt: zod.string().nullish(),
+});
+
+export const UpdateAgentTaskResponse = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  description: zod.string(),
+  assignedAgentId: zod.string().nullish(),
+  status: zod.string(),
+  priority: zod.string(),
+  category: zod.string(),
+  result: zod.string().nullish(),
+  dueAt: zod.date().nullish(),
+  completedAt: zod.date().nullish(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
+ * @summary Delete a task
+ */
+export const DeleteAgentTaskParams = zod.object({
+  taskId: zod.coerce.number(),
+});
+
+/**
+ * @summary Mark a task as complete with result
+ */
+export const CompleteAgentTaskParams = zod.object({
+  taskId: zod.coerce.number(),
+});
+
+export const CompleteAgentTaskBody = zod.object({
+  result: zod.string(),
+});
+
+export const CompleteAgentTaskResponse = zod.object({
+  id: zod.number(),
+  title: zod.string(),
+  description: zod.string(),
+  assignedAgentId: zod.string().nullish(),
+  status: zod.string(),
+  priority: zod.string(),
+  category: zod.string(),
+  result: zod.string().nullish(),
+  dueAt: zod.date().nullish(),
+  completedAt: zod.date().nullish(),
+  createdAt: zod.date(),
+  updatedAt: zod.date(),
+});
+
+/**
+ * @summary Auto-route a task to the best available agent
+ */
+export const RouteTaskBody = zod.object({
+  title: zod.string(),
+  description: zod.string().optional(),
+  category: zod.string().optional(),
+  priority: zod.string().optional(),
+});
+
+export const RouteTaskResponse = zod.object({
+  task: zod.object({
+    id: zod.number(),
+    title: zod.string(),
+    description: zod.string(),
+    assignedAgentId: zod.string().nullish(),
+    status: zod.string(),
+    priority: zod.string(),
+    category: zod.string(),
+    result: zod.string().nullish(),
+    dueAt: zod.date().nullish(),
+    completedAt: zod.date().nullish(),
+    createdAt: zod.date(),
+    updatedAt: zod.date(),
+  }),
+  assignedAgent: zod
+    .object({
+      id: zod.number(),
+      agentId: zod.string(),
+      name: zod.string(),
+      description: zod.string(),
+      emoji: zod.string(),
+      model: zod.string(),
+      systemPrompt: zod.string(),
+      category: zod.string(),
+      status: zod.string(),
+      channels: zod.string(),
+      temperature: zod.number(),
+      maxTokens: zod.number(),
+      tasksCompleted: zod.number(),
+      totalMessages: zod.number(),
+      lastActive: zod.date().nullish(),
+      createdAt: zod.date(),
+      updatedAt: zod.date(),
+    })
+    .optional(),
+  reason: zod.string(),
 });

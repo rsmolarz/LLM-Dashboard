@@ -4,7 +4,8 @@ import {
   Bot, Plus, Trash2, Loader2, Settings, MessageSquare, Activity,
   Play, Square, Edit2, Copy, Download, Wifi, WifiOff, Search,
   BarChart3, ChevronRight, X, Send, Terminal, Users, Zap, Shield,
-  Code, Mail, Globe, FileText, Clock
+  Code, Mail, Globe, FileText, Clock, Brain, ListTodo, Route,
+  CheckCircle2, AlertCircle, ArrowUpCircle, Tag, Filter
 } from "lucide-react";
 import {
   useListAgents,
@@ -18,13 +19,21 @@ import {
   useGetOpenclawConfig,
   useUpdateOpenclawConfig,
   useGetOpenclawSetupScript,
+  useListAgentMemories,
+  useAddAgentMemory,
+  useDeleteAgentMemory,
+  useListAgentTasks,
+  useCreateAgentTask,
+  useUpdateAgentTask,
+  useCompleteAgentTask,
+  useRouteTask,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-type View = "fleet" | "create" | "detail" | "settings" | "setup";
+type View = "fleet" | "create" | "detail" | "settings" | "setup" | "tasks";
 
 const CATEGORIES = [
   { id: "general", label: "General", icon: Bot, color: "text-blue-400" },
@@ -82,6 +91,14 @@ export default function Agents() {
             <Button
               variant="ghost"
               size="sm"
+              onClick={() => setView("tasks")}
+              className="text-muted-foreground hover:text-white"
+            >
+              <ListTodo className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={() => setView("settings")}
               className="text-muted-foreground hover:text-white"
             >
@@ -106,20 +123,23 @@ export default function Agents() {
         </div>
 
         {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
             {[
               { label: "Total Agents", value: stats.totalAgents, icon: Users, color: "text-blue-400" },
               { label: "Active", value: stats.activeAgents, icon: Zap, color: "text-emerald-400" },
               { label: "Idle", value: stats.idleAgents, icon: Clock, color: "text-amber-400" },
               { label: "Messages", value: stats.totalMessages, icon: MessageSquare, color: "text-purple-400" },
               { label: "Tasks Done", value: stats.totalTasksCompleted, icon: Activity, color: "text-cyan-400" },
+              { label: "Total Tasks", value: (stats as any).totalTasks ?? 0, icon: ListTodo, color: "text-indigo-400" },
+              { label: "Pending", value: (stats as any).pendingTasks ?? 0, icon: AlertCircle, color: "text-orange-400" },
+              { label: "Memories", value: (stats as any).totalMemories ?? 0, icon: Brain, color: "text-pink-400" },
             ].map((stat) => (
-              <div key={stat.label} className="glass-panel rounded-xl border border-white/5 p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <stat.icon className={cn("w-4 h-4", stat.color)} />
-                  <span className="text-2xl font-bold text-white">{stat.value}</span>
+              <div key={stat.label} className="glass-panel rounded-xl border border-white/5 p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <stat.icon className={cn("w-3.5 h-3.5", stat.color)} />
+                  <span className="text-xl font-bold text-white">{stat.value}</span>
                 </div>
-                <p className="text-xs text-muted-foreground">{stat.label}</p>
+                <p className="text-[10px] text-muted-foreground">{stat.label}</p>
               </div>
             ))}
           </div>
@@ -183,6 +203,16 @@ export default function Agents() {
               exit={{ opacity: 0, y: -10 }}
             >
               <SetupView onBack={() => setView("fleet")} />
+            </motion.div>
+          )}
+          {view === "tasks" && (
+            <motion.div
+              key="tasks"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <TasksView agents={agents as any[]} onBack={() => setView("fleet")} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -505,7 +535,7 @@ function AgentDetailView({ agentId, onBack }: { agentId: string; onBack: () => v
   const [chatHistory, setChatHistory] = useState<Array<{ role: string; content: string }>>([]);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<any>(null);
-  const [detailTab, setDetailTab] = useState<"chat" | "logs" | "config">("chat");
+  const [detailTab, setDetailTab] = useState<"chat" | "logs" | "config" | "memory">("chat");
 
   if (!agent) {
     return (
@@ -649,18 +679,21 @@ function AgentDetailView({ agentId, onBack }: { agentId: string; onBack: () => v
       )}
 
       <div className="flex gap-2 border-b border-white/5 pb-0">
-        {(["chat", "logs", "config"] as const).map((tab) => (
+        {(["chat", "memory", "logs", "config"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setDetailTab(tab)}
             className={cn(
-              "px-4 py-2 text-sm font-medium transition-all border-b-2 -mb-[1px]",
+              "px-4 py-2 text-sm font-medium transition-all border-b-2 -mb-[1px] flex items-center gap-1.5",
               detailTab === tab
                 ? "text-primary border-primary"
                 : "text-muted-foreground border-transparent hover:text-white"
             )}
           >
-            {tab === "chat" ? "Chat" : tab === "logs" ? "Activity Log" : "Configuration"}
+            {tab === "chat" && <><MessageSquare className="w-3.5 h-3.5" /> Chat</>}
+            {tab === "memory" && <><Brain className="w-3.5 h-3.5" /> Memory</>}
+            {tab === "logs" && <><Activity className="w-3.5 h-3.5" /> Activity</>}
+            {tab === "config" && <><Settings className="w-3.5 h-3.5" /> Config</>}
           </button>
         ))}
       </div>
@@ -735,6 +768,10 @@ function AgentDetailView({ agentId, onBack }: { agentId: string; onBack: () => v
             </div>
           )}
         </div>
+      )}
+
+      {detailTab === "memory" && (
+        <AgentMemoryTab agentId={agentId} />
       )}
 
       {detailTab === "config" && (
@@ -909,6 +946,523 @@ function SetupView({ onBack }: { onBack: () => void }) {
           </ol>
         </div>
       </div>
+    </div>
+  );
+}
+
+function AgentMemoryTab({ agentId }: { agentId: string }) {
+  const queryClient = useQueryClient();
+  const { data: memories = [], isLoading } = useListAgentMemories(agentId);
+  const addMemory = useAddAgentMemory();
+  const deleteMemory = useDeleteAgentMemory();
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [memForm, setMemForm] = useState({ content: "", memoryType: "fact", importance: 5 });
+  const [typeFilter, setTypeFilter] = useState<string>("all");
+
+  const filteredMemories = typeFilter === "all"
+    ? (memories as any[])
+    : (memories as any[]).filter((m: any) => m.memoryType === typeFilter);
+
+  const handleAdd = async () => {
+    if (!memForm.content.trim()) return;
+    await addMemory.mutateAsync({
+      agentId,
+      data: {
+        content: memForm.content,
+        memoryType: memForm.memoryType as any,
+        importance: memForm.importance,
+        source: "manual",
+      },
+    });
+    queryClient.invalidateQueries({ queryKey: [`/api/openclaw/agents/${agentId}/memories`] });
+    setMemForm({ content: "", memoryType: "fact", importance: 5 });
+    setShowAdd(false);
+  };
+
+  const handleDelete = async (memoryId: number) => {
+    await deleteMemory.mutateAsync({ agentId, memoryId });
+    queryClient.invalidateQueries({ queryKey: [`/api/openclaw/agents/${agentId}/memories`] });
+  };
+
+  const typeColors: Record<string, string> = {
+    fact: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    summary: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+    preference: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+  };
+
+  return (
+    <div className="glass-panel rounded-xl border border-white/5 p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h4 className="font-semibold text-white flex items-center gap-2">
+            <Brain className="w-4 h-4 text-pink-400" />
+            Agent Memory
+          </h4>
+          <span className="text-xs text-muted-foreground">
+            {(memories as any[]).length} memories
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex gap-1">
+            {["all", "fact", "summary", "preference"].map((t) => (
+              <button
+                key={t}
+                onClick={() => setTypeFilter(t)}
+                className={cn(
+                  "px-2.5 py-1 rounded text-[10px] font-medium transition-all border",
+                  typeFilter === t
+                    ? "bg-primary/20 text-primary border-primary/30"
+                    : "bg-black/30 text-muted-foreground border-white/5 hover:border-white/10"
+                )}
+              >
+                {t === "all" ? "All" : t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+          <Button size="sm" onClick={() => setShowAdd(!showAdd)} className="bg-primary/20 text-primary hover:bg-primary/30 h-7 text-xs">
+            <Plus className="w-3 h-3 mr-1" />
+            Add
+          </Button>
+        </div>
+      </div>
+
+      {showAdd && (
+        <div className="bg-black/30 rounded-lg border border-white/10 p-4 space-y-3">
+          <textarea
+            value={memForm.content}
+            onChange={(e) => setMemForm({ ...memForm, content: e.target.value })}
+            placeholder="Enter memory content..."
+            rows={2}
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <div className="flex items-center gap-3">
+            <select
+              value={memForm.memoryType}
+              onChange={(e) => setMemForm({ ...memForm, memoryType: e.target.value })}
+              className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="fact">Fact</option>
+              <option value="summary">Summary</option>
+              <option value="preference">Preference</option>
+            </select>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>Importance:</span>
+              <input
+                type="range"
+                min={1}
+                max={10}
+                value={memForm.importance}
+                onChange={(e) => setMemForm({ ...memForm, importance: Number(e.target.value) })}
+                className="w-20 accent-primary"
+              />
+              <span className="text-white font-medium w-4">{memForm.importance}</span>
+            </div>
+            <div className="flex-1" />
+            <Button size="sm" variant="ghost" onClick={() => setShowAdd(false)} className="h-7 text-xs">Cancel</Button>
+            <Button size="sm" onClick={handleAdd} disabled={addMemory.isPending || !memForm.content.trim()} className="bg-primary hover:bg-primary/90 h-7 text-xs">
+              {addMemory.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {isLoading ? (
+        <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 text-primary animate-spin" /></div>
+      ) : filteredMemories.length === 0 ? (
+        <div className="text-center py-8">
+          <Brain className="w-8 h-8 text-muted-foreground mx-auto mb-2 opacity-50" />
+          <p className="text-sm text-muted-foreground">No memories stored yet</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">Memories are auto-extracted from chats or added manually</p>
+        </div>
+      ) : (
+        <div className="space-y-2 max-h-[400px] overflow-y-auto">
+          {filteredMemories.map((mem: any) => (
+            <div key={mem.id} className="group flex items-start gap-3 bg-black/20 rounded-lg px-3 py-2.5 hover:bg-black/30 transition-all">
+              <div className={cn("px-2 py-0.5 rounded text-[10px] font-medium border shrink-0 mt-0.5", typeColors[mem.memoryType] ?? "bg-gray-500/20 text-gray-400 border-gray-500/30")}>
+                {mem.memoryType}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-white">{mem.content}</p>
+                <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <ArrowUpCircle className="w-2.5 h-2.5" />
+                    {mem.importance}/10
+                  </span>
+                  <span>{mem.source}</span>
+                  <span>{new Date(mem.createdAt).toLocaleDateString()}</span>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleDelete(mem.id)}
+                className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 p-0 text-red-400 hover:text-red-300"
+              >
+                <Trash2 className="w-3 h-3" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="border-t border-white/5 pt-3">
+        <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+          <Zap className="w-3 h-3 text-amber-400" />
+          Memories are automatically injected as context when chatting with this agent
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const PRIORITY_CONFIG = {
+  urgent: { color: "bg-red-500/20 text-red-400 border-red-500/30", icon: AlertCircle },
+  high: { color: "bg-orange-500/20 text-orange-400 border-orange-500/30", icon: ArrowUpCircle },
+  medium: { color: "bg-blue-500/20 text-blue-400 border-blue-500/30", icon: Activity },
+  low: { color: "bg-gray-500/20 text-gray-400 border-gray-500/30", icon: Clock },
+};
+
+const STATUS_CONFIG: Record<string, { color: string; icon: any }> = {
+  pending: { color: "bg-amber-500/20 text-amber-400", icon: Clock },
+  "in-progress": { color: "bg-blue-500/20 text-blue-400", icon: Play },
+  completed: { color: "bg-emerald-500/20 text-emerald-400", icon: CheckCircle2 },
+  failed: { color: "bg-red-500/20 text-red-400", icon: AlertCircle },
+};
+
+function TasksView({ agents, onBack }: { agents: any[]; onBack: () => void }) {
+  const queryClient = useQueryClient();
+  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [showCreate, setShowCreate] = useState(false);
+  const [showRoute, setShowRoute] = useState(false);
+
+  const { data: tasks = [], isLoading } = useListAgentTasks(
+    statusFilter !== "all" ? { status: statusFilter } : undefined
+  );
+  const createTask = useCreateAgentTask();
+  const updateTask = useUpdateAgentTask();
+  const completeTask = useCompleteAgentTask();
+  const routeTask = useRouteTask();
+
+  const [taskForm, setTaskForm] = useState({
+    title: "", description: "", assignedAgentId: "", priority: "medium", category: "general",
+  });
+  const [routeForm, setRouteForm] = useState({
+    title: "", description: "", category: "general", priority: "medium",
+  });
+
+  const invalidateTasks = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/openclaw/tasks"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/openclaw/stats"] });
+  };
+
+  const handleCreate = async () => {
+    if (!taskForm.title.trim()) return;
+    await createTask.mutateAsync({
+      data: {
+        title: taskForm.title,
+        description: taskForm.description,
+        assignedAgentId: taskForm.assignedAgentId || undefined,
+        priority: taskForm.priority as any,
+        category: taskForm.category,
+      },
+    });
+    invalidateTasks();
+    setTaskForm({ title: "", description: "", assignedAgentId: "", priority: "medium", category: "general" });
+    setShowCreate(false);
+  };
+
+  const handleComplete = async (taskId: number) => {
+    await completeTask.mutateAsync({ taskId, data: { result: "Completed via dashboard" } });
+    invalidateTasks();
+  };
+
+  const handleStatusChange = async (taskId: number, status: string) => {
+    await updateTask.mutateAsync({ taskId, data: { status: status as any } });
+    invalidateTasks();
+  };
+
+  const [routeResult, setRouteResult] = useState<any>(null);
+
+  const handleRoute = async () => {
+    if (!routeForm.title.trim()) return;
+    const result = await routeTask.mutateAsync({
+      data: {
+        title: routeForm.title,
+        description: routeForm.description,
+        category: routeForm.category,
+        priority: routeForm.priority as any,
+      },
+    });
+    setRouteResult(result);
+    invalidateTasks();
+  };
+
+  const getAgentName = (agentId: string | null) => {
+    if (!agentId) return "Unassigned";
+    const agent = agents.find((a) => a.agentId === agentId);
+    return agent ? `${agent.emoji} ${agent.name}` : agentId;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={onBack}>
+            <X className="w-4 h-4 mr-1" /> Back
+          </Button>
+          <h3 className="text-xl font-bold text-white flex items-center gap-2">
+            <ListTodo className="w-5 h-5 text-indigo-400" />
+            Task Orchestration
+          </h3>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            onClick={() => { setShowRoute(!showRoute); setShowCreate(false); }}
+            className="bg-purple-500/20 text-purple-400 hover:bg-purple-500/30 border border-purple-500/20"
+          >
+            <Route className="w-3.5 h-3.5 mr-1.5" />
+            Auto-Route
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => { setShowCreate(!showCreate); setShowRoute(false); }}
+            className="bg-primary/20 text-primary hover:bg-primary/30"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1.5" />
+            New Task
+          </Button>
+        </div>
+      </div>
+
+      {showRoute && (
+        <div className="glass-panel rounded-xl border border-purple-500/20 p-5 space-y-4">
+          <h4 className="font-semibold text-white flex items-center gap-2">
+            <Route className="w-4 h-4 text-purple-400" />
+            Smart Task Router
+          </h4>
+          <p className="text-xs text-muted-foreground">
+            Describe a task and let the system automatically assign it to the best-suited agent based on category, workload, and capabilities.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              value={routeForm.title}
+              onChange={(e) => setRouteForm({ ...routeForm, title: e.target.value })}
+              placeholder="Task title..."
+              className="bg-black/40 border-white/10"
+            />
+            <select
+              value={routeForm.category}
+              onChange={(e) => setRouteForm({ ...routeForm, category: e.target.value })}
+              className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+          </div>
+          <textarea
+            value={routeForm.description}
+            onChange={(e) => setRouteForm({ ...routeForm, description: e.target.value })}
+            placeholder="Describe what needs to be done..."
+            rows={2}
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <div className="flex items-center gap-3">
+            <select
+              value={routeForm.priority}
+              onChange={(e) => setRouteForm({ ...routeForm, priority: e.target.value })}
+              className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="low">Low Priority</option>
+              <option value="medium">Medium Priority</option>
+              <option value="high">High Priority</option>
+              <option value="urgent">Urgent</option>
+            </select>
+            <div className="flex-1" />
+            <Button variant="ghost" size="sm" onClick={() => { setShowRoute(false); setRouteResult(null); }}>Cancel</Button>
+            <Button
+              size="sm"
+              onClick={handleRoute}
+              disabled={routeTask.isPending || !routeForm.title.trim()}
+              className="bg-purple-600 hover:bg-purple-700"
+            >
+              {routeTask.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Route className="w-3.5 h-3.5 mr-1.5" />}
+              Route Task
+            </Button>
+          </div>
+
+          {routeResult && (
+            <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4 mt-2">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span className="text-sm font-medium text-white">Task Routed Successfully</span>
+              </div>
+              <p className="text-xs text-muted-foreground">{routeResult.reason}</p>
+              <div className="flex items-center gap-2 mt-2">
+                <span className="text-sm text-white">{routeResult.assignedAgent?.emoji} {routeResult.assignedAgent?.name}</span>
+                <span className="text-[10px] text-muted-foreground font-mono">({routeResult.assignedAgent?.agentId})</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {showCreate && (
+        <div className="glass-panel rounded-xl border border-primary/20 p-5 space-y-4">
+          <h4 className="font-semibold text-white">Create New Task</h4>
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              value={taskForm.title}
+              onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
+              placeholder="Task title..."
+              className="bg-black/40 border-white/10"
+            />
+            <select
+              value={taskForm.assignedAgentId}
+              onChange={(e) => setTaskForm({ ...taskForm, assignedAgentId: e.target.value })}
+              className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="">Unassigned</option>
+              {agents.map((a) => <option key={a.agentId} value={a.agentId}>{a.emoji} {a.name}</option>)}
+            </select>
+          </div>
+          <textarea
+            value={taskForm.description}
+            onChange={(e) => setTaskForm({ ...taskForm, description: e.target.value })}
+            placeholder="Task description..."
+            rows={2}
+            className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+          />
+          <div className="flex items-center gap-3">
+            <select
+              value={taskForm.priority}
+              onChange={(e) => setTaskForm({ ...taskForm, priority: e.target.value })}
+              className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+            <select
+              value={taskForm.category}
+              onChange={(e) => setTaskForm({ ...taskForm, category: e.target.value })}
+              className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+            </select>
+            <div className="flex-1" />
+            <Button variant="ghost" size="sm" onClick={() => setShowCreate(false)}>Cancel</Button>
+            <Button size="sm" onClick={handleCreate} disabled={createTask.isPending || !taskForm.title.trim()} className="bg-primary hover:bg-primary/90">
+              {createTask.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : null}
+              Create Task
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex gap-1.5 flex-wrap">
+        {["all", "pending", "in-progress", "completed", "failed"].map((s) => {
+          const cfg = s !== "all" ? STATUS_CONFIG[s] : null;
+          return (
+            <button
+              key={s}
+              onClick={() => setStatusFilter(s)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5",
+                statusFilter === s ? "bg-primary/20 text-primary border border-primary/30" : "bg-black/30 text-muted-foreground border border-white/5 hover:border-white/10"
+              )}
+            >
+              {cfg && <cfg.icon className="w-3 h-3" />}
+              {s === "all" ? "All Tasks" : s.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ")}
+            </button>
+          );
+        })}
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 text-primary animate-spin" /></div>
+      ) : (tasks as any[]).length === 0 ? (
+        <div className="text-center py-12">
+          <ListTodo className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+          <p className="text-muted-foreground">No tasks found</p>
+          <p className="text-xs text-muted-foreground/60 mt-1">Create a task or use Auto-Route to assign tasks to agents</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {(tasks as any[]).map((task: any) => {
+            const prioConfig = PRIORITY_CONFIG[task.priority as keyof typeof PRIORITY_CONFIG] ?? PRIORITY_CONFIG.medium;
+            const statConfig = STATUS_CONFIG[task.status] ?? STATUS_CONFIG.pending;
+
+            return (
+              <div key={task.id} className="glass-panel rounded-xl border border-white/5 p-4 hover:border-white/10 transition-all">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <h4 className="font-medium text-white truncate">{task.title}</h4>
+                      <span className={cn("px-2 py-0.5 rounded text-[10px] font-medium border", prioConfig.color)}>
+                        {task.priority}
+                      </span>
+                      <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-medium", statConfig.color)}>
+                        {task.status}
+                      </span>
+                    </div>
+                    {task.description && (
+                      <p className="text-xs text-muted-foreground line-clamp-1 mb-1.5">{task.description}</p>
+                    )}
+                    <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Bot className="w-2.5 h-2.5" />
+                        {getAgentName(task.assignedAgentId)}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Tag className="w-2.5 h-2.5" />
+                        {task.category}
+                      </span>
+                      <span>{new Date(task.createdAt).toLocaleDateString()}</span>
+                      {task.completedAt && (
+                        <span className="text-emerald-400">
+                          Completed {new Date(task.completedAt).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {task.status === "pending" && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleStatusChange(task.id, "in-progress")}
+                        className="h-7 text-[10px] text-blue-400 hover:text-blue-300"
+                      >
+                        <Play className="w-3 h-3 mr-1" />
+                        Start
+                      </Button>
+                    )}
+                    {(task.status === "pending" || task.status === "in-progress") && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleComplete(task.id)}
+                        className="h-7 text-[10px] text-emerald-400 hover:text-emerald-300"
+                      >
+                        <CheckCircle2 className="w-3 h-3 mr-1" />
+                        Complete
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {task.result && (
+                  <div className="mt-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
+                    <p className="text-xs text-emerald-400">{task.result}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

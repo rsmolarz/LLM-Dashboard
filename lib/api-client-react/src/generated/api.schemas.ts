@@ -343,10 +343,114 @@ export interface FleetStats {
   idleAgents: number;
   totalMessages: number;
   totalTasksCompleted: number;
+  totalTasks: number;
+  pendingTasks: number;
+  totalMemories: number;
   byCategory: FleetStatsByCategory;
   gatewayConnected: boolean;
 }
 
+export interface AgentMemoryEntry {
+  id: number;
+  agentId: string;
+  memoryType: string;
+  content: string;
+  source: string;
+  importance: number;
+  tags: string;
+  createdAt: string;
+}
+
+export interface AddMemoryInput {
+  memoryType?: string;
+  content: string;
+  source?: string;
+  importance?: number;
+  tags?: string;
+}
+
+export type ExtractMemoriesInputMessagesItem = {
+  role: string;
+  content: string;
+};
+
+export interface ExtractMemoriesInput {
+  messages: ExtractMemoriesInputMessagesItem[];
+}
+
+export interface ExtractMemoriesResponse {
+  extracted: number;
+  memories: AgentMemoryEntry[];
+}
+
+export interface AgentTaskEntry {
+  id: number;
+  title: string;
+  description: string;
+  /** @nullable */
+  assignedAgentId?: string | null;
+  status: string;
+  priority: string;
+  category: string;
+  /** @nullable */
+  result?: string | null;
+  /** @nullable */
+  dueAt?: string | null;
+  /** @nullable */
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTaskInput {
+  title: string;
+  description?: string;
+  assignedAgentId?: string;
+  priority?: string;
+  category?: string;
+  dueAt?: string;
+}
+
+export interface UpdateTaskInput {
+  title?: string;
+  description?: string;
+  /** @nullable */
+  assignedAgentId?: string | null;
+  status?: string;
+  priority?: string;
+  category?: string;
+  result?: string;
+  /** @nullable */
+  dueAt?: string | null;
+}
+
+export interface CompleteTaskInput {
+  result: string;
+}
+
+export interface RouteTaskInput {
+  title: string;
+  description?: string;
+  category?: string;
+  priority?: string;
+}
+
+export interface RouteTaskResponse {
+  task: AgentTaskEntry;
+  assignedAgent?: AgentEntry;
+  reason: string;
+}
+
 export type GetAgentLogsParams = {
   limit?: number;
+};
+
+export type ListAgentMemoriesParams = {
+  type?: string;
+};
+
+export type ListAgentTasksParams = {
+  status?: string;
+  agentId?: string;
+  priority?: string;
 };

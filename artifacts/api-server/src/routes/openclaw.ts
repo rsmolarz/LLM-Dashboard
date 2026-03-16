@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
-import { eq, sql, desc } from "drizzle-orm";
-import { db, openclawConfigTable, agentsTable, agentLogsTable } from "@workspace/db";
+import { eq, sql, desc, and } from "drizzle-orm";
+import { db, openclawConfigTable, agentsTable, agentLogsTable, agentMemoriesTable, agentTasksTable } from "@workspace/db";
 import {
   GetOpenclawConfigResponse,
   UpdateOpenclawConfigBody,
@@ -21,6 +21,17 @@ import {
   GetAgentLogsQueryParams,
   GetAgentLogsResponse,
   GetOpenclawStatsResponse,
+  AddAgentMemoryParams,
+  AddAgentMemoryBody,
+  DeleteAgentMemoryParams,
+  ExtractMemoriesFromChatParams,
+  ExtractMemoriesFromChatBody,
+  CreateAgentTaskBody,
+  UpdateAgentTaskParams,
+  UpdateAgentTaskBody,
+  CompleteAgentTaskParams,
+  CompleteAgentTaskBody,
+  RouteTaskBody,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
@@ -277,6 +288,8 @@ router.delete("/openclaw/agents/:agentId", async (req, res): Promise<void> => {
     }
   }
 
+  await db.delete(agentMemoriesTable).where(eq(agentMemoriesTable.agentId, agentId));
+  await db.delete(agentTasksTable).where(eq(agentTasksTable.assignedAgentId, agentId));
   await db.delete(agentLogsTable).where(eq(agentLogsTable.agentId, agentId));
   await db.delete(agentsTable).where(eq(agentsTable.agentId, agentId));
   await logAgentActivity(agentId, "info", `Agent "${agent.name}" deleted`);
@@ -301,6 +314,21 @@ router.post("/openclaw/agents/:agentId/chat", async (req, res): Promise<void> =>
   const config = await getOpenclawConfig();
   const sessionKey = body.sessionKey || `session-${agentId}-${Date.now()}`;
 
+  const memories = await db
+    .select()
+    .from(agentMemoriesTable)
+    .where(eq(agentMemoriesTable.agentId, agentId))
+    .orderBy(desc(agentMemoriesTable.importance))
+    .limit(10);
+
+  let systemContent = agent.systemPrompt || "";
+  if (memories.length > 0) {
+    const memoryContext = memories
+      .map((m) => `[${m.memoryType}] ${m.content}`)
+      .join("\n");
+    systemContent += `\n\n## Persistent Memory\nThe following are remembered facts, summaries, and preferences:\n${memoryContext}`;
+  }
+
   if (config?.httpUrl && config?.authToken) {
     try {
       const chatRes = await fetch(`${config.httpUrl}/v1/chat/completions`, {
@@ -314,8 +342,8 @@ router.post("/openclaw/agents/:agentId/chat", async (req, res): Promise<void> =>
           model: "openclaw",
           stream: false,
           messages: [
-            ...(agent.systemPrompt
-              ? [{ role: "system", content: agent.systemPrompt }]
+            ...(systemContent
+              ? [{ role: "system", content: systemContent }]
               : []),
             { role: "user", content: body.message },
           ],
@@ -419,6 +447,13 @@ router.get("/openclaw/stats", async (_req, res): Promise<void> => {
     byCategory[agent.category] = (byCategory[agent.category] ?? 0) + 1;
   }
 
+  const [taskCountResult] = await db.select({ count: sql<number>`count(*)` }).from(agentTasksTable);
+  const totalTaskCount = Number(taskCountResult?.count ?? 0);
+  const [pendingResult] = await db.select({ count: sql<number>`count(*)` }).from(agentTasksTable).where(eq(agentTasksTable.status, "pending"));
+  const pendingTaskCount = Number(pendingResult?.count ?? 0);
+  const [memoryResult] = await db.select({ count: sql<number>`count(*)` }).from(agentMemoriesTable);
+  const totalMemoryCount = Number(memoryResult?.count ?? 0);
+
   let gatewayConnected = false;
   const config = await getOpenclawConfig();
   if (config?.httpUrl) {
@@ -442,10 +477,295 @@ router.get("/openclaw/stats", async (_req, res): Promise<void> => {
       idleAgents,
       totalMessages,
       totalTasksCompleted,
+      totalTasks: totalTaskCount,
+      pendingTasks: pendingTaskCount,
+      totalMemories: totalMemoryCount,
       byCategory,
       gatewayConnected,
     })
   );
+});
+
+// ===== MEMORY ROUTES =====
+
+router.get("/openclaw/agents/:agentId/memories", async (req, res): Promise<void> => {
+  const { agentId } = req.params;
+  const memType = req.query.type as string | undefined;
+
+  const conditions = [eq(agentMemoriesTable.agentId, agentId)];
+  if (memType) {
+    conditions.push(eq(agentMemoriesTable.memoryType, memType));
+  }
+
+  const memories = await db
+    .select()
+    .from(agentMemoriesTable)
+    .where(conditions.length === 1 ? conditions[0]! : and(...conditions))
+    .orderBy(desc(agentMemoriesTable.importance), desc(agentMemoriesTable.createdAt));
+
+  res.json(memories);
+});
+
+router.post("/openclaw/agents/:agentId/memories", async (req, res): Promise<void> => {
+  const { agentId } = AddAgentMemoryParams.parse(req.params);
+  const { content, memoryType, source, importance, tags } = AddAgentMemoryBody.parse(req.body);
+
+  const [memory] = await db
+    .insert(agentMemoriesTable)
+    .values({
+      agentId,
+      content,
+      memoryType: memoryType ?? "fact",
+      source: source ?? "manual",
+      importance: importance ?? 5,
+      tags: tags ?? "",
+    })
+    .returning();
+
+  await logAgentActivity(agentId, "info", `Memory added: ${(content as string).slice(0, 80)}...`, { memoryType: memoryType ?? "fact" });
+  res.status(201).json(memory);
+});
+
+router.delete("/openclaw/agents/:agentId/memories/:memoryId", async (req, res): Promise<void> => {
+  const { agentId, memoryId } = DeleteAgentMemoryParams.parse(req.params);
+  await db
+    .delete(agentMemoriesTable)
+    .where(and(eq(agentMemoriesTable.agentId, agentId), eq(agentMemoriesTable.id, memoryId)));
+  res.status(204).send();
+});
+
+router.post("/openclaw/agents/:agentId/memories/extract", async (req, res): Promise<void> => {
+  const { agentId } = ExtractMemoriesFromChatParams.parse(req.params);
+  const { messages } = ExtractMemoriesFromChatBody.parse(req.body);
+
+  const extracted: Array<typeof agentMemoriesTable.$inferSelect> = [];
+
+  for (const msg of messages) {
+    if (msg.role !== "assistant" || msg.content.length < 20) continue;
+
+    const content = msg.content;
+    const sentences = content.split(/[.!?]+/).filter((s: string) => s.trim().length > 15);
+
+    for (const sentence of sentences.slice(0, 3)) {
+      const trimmed = sentence.trim();
+      if (trimmed.length < 15 || trimmed.length > 500) continue;
+
+      const hasFactPattern = /\b(is|are|was|were|has|have|can|will|should|means|refers|defined|known|called|named|located|built|created|uses|requires)\b/i.test(trimmed);
+      if (!hasFactPattern) continue;
+
+      const [mem] = await db
+        .insert(agentMemoriesTable)
+        .values({
+          agentId,
+          content: trimmed,
+          memoryType: "fact",
+          source: "chat-extraction",
+          importance: 3,
+          tags: "",
+        })
+        .returning();
+      extracted.push(mem!);
+    }
+  }
+
+  if (messages.length > 4) {
+    const userMsgs = messages.filter((m: { role: string }) => m.role === "user").map((m: { content: string }) => m.content);
+    const summaryContent = `Conversation topics: ${userMsgs.slice(0, 5).map((m: string) => m.slice(0, 50)).join("; ")}`;
+    const [summaryMem] = await db
+      .insert(agentMemoriesTable)
+      .values({
+        agentId,
+        content: summaryContent,
+        memoryType: "summary",
+        source: "chat-extraction",
+        importance: 4,
+        tags: "",
+      })
+      .returning();
+    extracted.push(summaryMem!);
+  }
+
+  await logAgentActivity(agentId, "info", `Extracted ${extracted.length} memories from chat`, { count: extracted.length });
+
+  res.json({ extracted: extracted.length, memories: extracted });
+});
+
+// ===== TASK ROUTES =====
+
+router.get("/openclaw/tasks", async (req, res): Promise<void> => {
+  const { status, agentId, priority } = req.query as { status?: string; agentId?: string; priority?: string };
+
+  let query = db.select().from(agentTasksTable);
+  const conditions = [];
+  if (status) conditions.push(eq(agentTasksTable.status, status));
+  if (agentId) conditions.push(eq(agentTasksTable.assignedAgentId, agentId));
+  if (priority) conditions.push(eq(agentTasksTable.priority, priority));
+
+  const tasks = conditions.length > 0
+    ? await query.where(conditions.length === 1 ? conditions[0]! : and(...conditions)).orderBy(desc(agentTasksTable.createdAt))
+    : await query.orderBy(desc(agentTasksTable.createdAt));
+
+  res.json(tasks);
+});
+
+router.post("/openclaw/tasks", async (req, res): Promise<void> => {
+  const { title, description, assignedAgentId, priority, category, dueAt } = CreateAgentTaskBody.parse(req.body);
+
+  const [task] = await db
+    .insert(agentTasksTable)
+    .values({
+      title,
+      description: description ?? "",
+      assignedAgentId: assignedAgentId ?? null,
+      priority: priority ?? "medium",
+      category: category ?? "general",
+      dueAt: dueAt ? new Date(dueAt) : null,
+    })
+    .returning();
+
+  if (assignedAgentId) {
+    await logAgentActivity(assignedAgentId, "info", `Task assigned: ${title}`, { taskId: task!.id });
+  }
+
+  res.status(201).json(task);
+});
+
+router.put("/openclaw/tasks/:taskId", async (req, res): Promise<void> => {
+  const { taskId } = UpdateAgentTaskParams.parse(req.params);
+  const updates: Record<string, unknown> = {};
+
+  const { title, description, assignedAgentId, status, priority, category, result, dueAt } = UpdateAgentTaskBody.parse(req.body);
+  if (title !== undefined) updates.title = title;
+  if (description !== undefined) updates.description = description;
+  if (assignedAgentId !== undefined) updates.assignedAgentId = assignedAgentId;
+  if (status !== undefined) updates.status = status;
+  if (priority !== undefined) updates.priority = priority;
+  if (category !== undefined) updates.category = category;
+  if (result !== undefined) updates.result = result;
+  if (dueAt !== undefined) updates.dueAt = dueAt ? new Date(dueAt) : null;
+
+  const [task] = await db
+    .update(agentTasksTable)
+    .set(updates)
+    .where(eq(agentTasksTable.id, taskId))
+    .returning();
+
+  if (!task) {
+    res.status(404).json({ error: "Task not found" });
+    return;
+  }
+
+  res.json(task);
+});
+
+router.delete("/openclaw/tasks/:taskId", async (req, res): Promise<void> => {
+  const { taskId } = UpdateAgentTaskParams.parse(req.params);
+  await db.delete(agentTasksTable).where(eq(agentTasksTable.id, taskId));
+  res.status(204).send();
+});
+
+router.post("/openclaw/tasks/:taskId/complete", async (req, res): Promise<void> => {
+  const { taskId } = CompleteAgentTaskParams.parse(req.params);
+  const { result } = CompleteAgentTaskBody.parse(req.body);
+
+  const [existing] = await db.select().from(agentTasksTable).where(eq(agentTasksTable.id, taskId));
+  if (!existing) {
+    res.status(404).json({ error: "Task not found" });
+    return;
+  }
+
+  if (existing.status === "completed") {
+    res.json(existing);
+    return;
+  }
+
+  const [task] = await db
+    .update(agentTasksTable)
+    .set({
+      status: "completed",
+      result,
+      completedAt: new Date(),
+    })
+    .where(eq(agentTasksTable.id, taskId))
+    .returning();
+
+  if (task!.assignedAgentId) {
+    await db
+      .update(agentsTable)
+      .set({ tasksCompleted: sql`${agentsTable.tasksCompleted} + 1` })
+      .where(eq(agentsTable.agentId, task!.assignedAgentId));
+    await logAgentActivity(task!.assignedAgentId, "info", `Task completed: ${task!.title}`, { taskId: task!.id, result });
+  }
+
+  res.json(task);
+});
+
+router.post("/openclaw/tasks/route", async (req, res): Promise<void> => {
+  const { title, description, category, priority } = RouteTaskBody.parse(req.body);
+
+  const agents = await db.select().from(agentsTable);
+  if (agents.length === 0) {
+    res.status(400).json({ error: "No agents available for routing" });
+    return;
+  }
+
+  let bestAgent = agents[0]!;
+  let bestScore = -1;
+  const taskCategory = category ?? "general";
+
+  for (const agent of agents) {
+    let score = 0;
+
+    if (agent.category === taskCategory) score += 10;
+
+    if (agent.status === "idle") score += 5;
+    else if (agent.status === "active") score += 2;
+
+    const pendingTasks = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(agentTasksTable)
+      .where(and(
+        eq(agentTasksTable.assignedAgentId, agent.agentId),
+        eq(agentTasksTable.status, "pending")
+      ));
+    const pending = Number(pendingTasks[0]?.count ?? 0);
+    score -= pending * 2;
+
+    const titleLower = title.toLowerCase();
+    const descLower = (description ?? "").toLowerCase();
+    const combined = titleLower + " " + descLower;
+
+    if (agent.description) {
+      const descWords = agent.description.toLowerCase().split(/\s+/);
+      for (const word of descWords) {
+        if (word.length > 3 && combined.includes(word)) score += 2;
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestAgent = agent;
+    }
+  }
+
+  const [task] = await db
+    .insert(agentTasksTable)
+    .values({
+      title,
+      description: description ?? "",
+      assignedAgentId: bestAgent.agentId,
+      priority: priority ?? "medium",
+      category: taskCategory,
+    })
+    .returning();
+
+  await logAgentActivity(bestAgent.agentId, "info", `Auto-routed task: ${title}`, { taskId: task!.id, score: bestScore });
+
+  let reason = `Assigned to ${bestAgent.name}`;
+  if (bestAgent.category === taskCategory) reason += ` (category match: ${taskCategory})`;
+  reason += ` with routing score ${bestScore}`;
+
+  res.json({ task, assignedAgent: bestAgent, reason });
 });
 
 router.get("/openclaw/setup-script", async (_req, res): Promise<void> => {

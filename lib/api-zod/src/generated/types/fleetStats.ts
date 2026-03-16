@@ -13,6 +13,9 @@ export interface FleetStats {
   idleAgents: number;
   totalMessages: number;
   totalTasksCompleted: number;
+  totalTasks: number;
+  pendingTasks: number;
+  totalMemories: number;
   byCategory: FleetStatsByCategory;
   gatewayConnected: boolean;
 }

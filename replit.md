@@ -87,6 +87,9 @@ Features:
   - **Agent Detail**: Chat with individual agents via OpenClaw Gateway, activity logs, configuration JSON view, edit/delete
   - **Gateway Settings**: Configure OpenClaw Gateway URL, HTTP URL, and auth token
   - **VPS Setup Script**: Auto-generated bash script to install OpenClaw Gateway on VPS with systemd service
+  - **Agent Memory**: Per-agent persistent memory (facts, summaries, preferences) with add/delete/filter, auto-injected as context during chat
+  - **Task Orchestration**: Create/assign/complete tasks, status filters (pending/in-progress/completed/failed), priority levels (low/medium/high/urgent)
+  - **Smart Task Router**: Auto-assigns tasks to best-suited agents based on category match, workload, and capabilities
 
 ### `lib/db` (`@workspace/db`)
 
@@ -103,6 +106,8 @@ Tables:
 - `openclaw_config` — OpenClaw Gateway connection settings (gatewayUrl, httpUrl, authToken)
 - `agents` — AI agent definitions (agentId, name, emoji, model, systemPrompt, category, status, channels, temperature, maxTokens, tasksCompleted, totalMessages)
 - `agent_logs` — Agent activity audit trail (agentId, level, message, metadata)
+- `agent_memories` — Persistent agent memory (agentId, memoryType [fact/summary/preference], content, source, importance 1-10, tags)
+- `agent_tasks` — Task orchestration (title, description, assignedAgentId, status [pending/in-progress/completed/failed], priority [low/medium/high/urgent], category, result, dueAt, completedAt)
 
 ### `lib/api-spec` (`@workspace/api-spec`)
 
