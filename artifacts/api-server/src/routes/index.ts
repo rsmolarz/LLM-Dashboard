@@ -7,6 +7,7 @@ import modelProfilesRouter from "./model-profiles";
 import trainingDataRouter from "./training-data";
 import ragRouter from "./rag";
 import openclawRouter from "./openclaw";
+import scanRouter from "./scan";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(modelProfilesRouter);
 router.use(trainingDataRouter);
 router.use(ragRouter);
 router.use(openclawRouter);
+router.use(scanRouter);
 
 export default router;

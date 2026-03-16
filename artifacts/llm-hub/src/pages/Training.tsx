@@ -7,6 +7,7 @@ import {
   Link, Package, AlertCircle, ExternalLink, Layers, Bot,
   Zap, Eye, XCircle, RefreshCw, ThumbsUp, ThumbsDown
 } from "lucide-react";
+import ContextScanner from "@/components/ContextScanner";
 import {
   useListModelProfiles,
   useCreateModelProfile,
@@ -1036,6 +1037,8 @@ function KnowledgeBaseTab() {
       )}
 
       <DiscoveryAgentPanel />
+
+      <ContextScanner />
     </div>
   );
 }

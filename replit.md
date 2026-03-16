@@ -67,7 +67,9 @@ Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` 
   - `training-data.ts` — Training data CRUD, collect from conversations, export as JSONL
   - `rag.ts` — Document CRUD, auto-chunking, keyword-based similarity search
   - `openclaw.ts` — OpenClaw Gateway config, agent CRUD, agent chat via gateway, activity logs, fleet stats, VPS setup script
-- Depends on: `@workspace/db`, `@workspace/api-zod`
+  - `scan.ts` — Gmail and Google Drive scanning (`/scan/gmail`, `/scan/gmail/message`, `/scan/drive`, `/scan/drive/content`)
+  - `google-clients.ts` — Gmail (googleapis) and Google Drive (Replit connectors-sdk proxy) client helpers
+- Depends on: `@workspace/db`, `@workspace/api-zod`, `googleapis`, `@replit/connectors-sdk`
 
 ### `artifacts/llm-hub` (`@workspace/llm-hub`)
 
@@ -79,7 +81,7 @@ Features:
 - **Training Tab** (4 sub-tabs):
   - **Model Profiles**: Create custom model configs (system prompt, temperature, topP, topK, context length, repeat penalty), deploy to Ollama as Modelfiles
   - **Training Data**: Collect training pairs from conversations, add manually, rate quality, export as JSONL (OpenAI, Alpaca, ShareGPT formats)
-  - **Knowledge Base (RAG)**: Upload documents, auto-chunk for retrieval, keyword-based search, context injection into chat, URL fetching (server-side HTML→text with SSRF protection), bulk import (markdown-header-separated), curated example knowledge bases (48 sources across 9 categories: Market Data, Medical/ENT, Hedge Funds, Alternative Data, Influencer, Research, Code & Dev, Security, Business) with category filter pills, **Discovery Agent** (AI-powered, uses Ollama LLM to continuously find new databases/APIs/data sources, approve/reject/import workflow, category-targeted or custom prompt discovery)
+  - **Knowledge Base (RAG)**: Upload documents, auto-chunk for retrieval, keyword-based search, context injection into chat, URL fetching (server-side HTML→text with SSRF protection), bulk import (markdown-header-separated), curated example knowledge bases (48 sources across 9 categories: Market Data, Medical/ENT, Hedge Funds, Alternative Data, Influencer, Research, Code & Dev, Security, Business) with category filter pills, **Discovery Agent** (AI-powered, uses Ollama LLM to continuously find new databases/APIs/data sources, approve/reject/import workflow, category-targeted or custom prompt discovery), **Context Scanner** (Gmail + Google Drive search integration — scan emails and Drive files to find relevant context for discovery priorities)
   - **Fine-tuning**: Guided pipeline with step tracker, instructions for Unsloth/Axolotl/cloud GPU providers
 - **Agents Tab**: OpenClaw-powered agent fleet management
   - **Fleet Dashboard**: Real-time agent grid with stats (total, active, idle, messages, tasks), category filters (General, Research, Customer Service, Code & Dev, Business Ops, Content, Security), search

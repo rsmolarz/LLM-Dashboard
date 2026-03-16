@@ -42,6 +42,8 @@ import type {
   DeleteModelResponse,
   DeployProfileResponse,
   DiscoveredSource,
+  DriveFileContent,
+  DriveScanResponse,
   ExportTrainingDataInput,
   ExtractMemoriesInput,
   ExtractMemoriesResponse,
@@ -51,6 +53,8 @@ import type {
   GatewayStatus,
   GetAgentLogsParams,
   GetDiscoveryStats200,
+  GmailMessageDetail,
+  GmailScanResponse,
   HealthStatus,
   ListAgentMemoriesParams,
   ListAgentTasksParams,
@@ -73,6 +77,10 @@ import type {
   RunDiscovery200,
   RunDiscoveryBody,
   RunningModel,
+  ScanDriveBody,
+  ScanDriveContentBody,
+  ScanGmailBody,
+  ScanGmailMessageBody,
   SearchDocumentsInput,
   SearchResult,
   TrainingDataEntry,
@@ -5219,4 +5227,348 @@ export const useRouteTask = <
   TContext
 > => {
   return useMutation(getRouteTaskMutationOptions(options));
+};
+
+/**
+ * @summary Search Gmail messages
+ */
+export const getScanGmailUrl = () => {
+  return `/api/scan/gmail`;
+};
+
+export const scanGmail = async (
+  scanGmailBody: ScanGmailBody,
+  options?: RequestInit,
+): Promise<GmailScanResponse> => {
+  return customFetch<GmailScanResponse>(getScanGmailUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(scanGmailBody),
+  });
+};
+
+export const getScanGmailMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof scanGmail>>,
+    TError,
+    { data: BodyType<ScanGmailBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof scanGmail>>,
+  TError,
+  { data: BodyType<ScanGmailBody> },
+  TContext
+> => {
+  const mutationKey = ["scanGmail"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof scanGmail>>,
+    { data: BodyType<ScanGmailBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return scanGmail(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ScanGmailMutationResult = NonNullable<
+  Awaited<ReturnType<typeof scanGmail>>
+>;
+export type ScanGmailMutationBody = BodyType<ScanGmailBody>;
+export type ScanGmailMutationError = ErrorType<void>;
+
+/**
+ * @summary Search Gmail messages
+ */
+export const useScanGmail = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof scanGmail>>,
+    TError,
+    { data: BodyType<ScanGmailBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof scanGmail>>,
+  TError,
+  { data: BodyType<ScanGmailBody> },
+  TContext
+> => {
+  return useMutation(getScanGmailMutationOptions(options));
+};
+
+/**
+ * @summary Get full Gmail message body
+ */
+export const getScanGmailMessageUrl = () => {
+  return `/api/scan/gmail/message`;
+};
+
+export const scanGmailMessage = async (
+  scanGmailMessageBody: ScanGmailMessageBody,
+  options?: RequestInit,
+): Promise<GmailMessageDetail> => {
+  return customFetch<GmailMessageDetail>(getScanGmailMessageUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(scanGmailMessageBody),
+  });
+};
+
+export const getScanGmailMessageMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof scanGmailMessage>>,
+    TError,
+    { data: BodyType<ScanGmailMessageBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof scanGmailMessage>>,
+  TError,
+  { data: BodyType<ScanGmailMessageBody> },
+  TContext
+> => {
+  const mutationKey = ["scanGmailMessage"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof scanGmailMessage>>,
+    { data: BodyType<ScanGmailMessageBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return scanGmailMessage(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ScanGmailMessageMutationResult = NonNullable<
+  Awaited<ReturnType<typeof scanGmailMessage>>
+>;
+export type ScanGmailMessageMutationBody = BodyType<ScanGmailMessageBody>;
+export type ScanGmailMessageMutationError = ErrorType<void>;
+
+/**
+ * @summary Get full Gmail message body
+ */
+export const useScanGmailMessage = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof scanGmailMessage>>,
+    TError,
+    { data: BodyType<ScanGmailMessageBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof scanGmailMessage>>,
+  TError,
+  { data: BodyType<ScanGmailMessageBody> },
+  TContext
+> => {
+  return useMutation(getScanGmailMessageMutationOptions(options));
+};
+
+/**
+ * @summary Search Google Drive files
+ */
+export const getScanDriveUrl = () => {
+  return `/api/scan/drive`;
+};
+
+export const scanDrive = async (
+  scanDriveBody: ScanDriveBody,
+  options?: RequestInit,
+): Promise<DriveScanResponse> => {
+  return customFetch<DriveScanResponse>(getScanDriveUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(scanDriveBody),
+  });
+};
+
+export const getScanDriveMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof scanDrive>>,
+    TError,
+    { data: BodyType<ScanDriveBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof scanDrive>>,
+  TError,
+  { data: BodyType<ScanDriveBody> },
+  TContext
+> => {
+  const mutationKey = ["scanDrive"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof scanDrive>>,
+    { data: BodyType<ScanDriveBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return scanDrive(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ScanDriveMutationResult = NonNullable<
+  Awaited<ReturnType<typeof scanDrive>>
+>;
+export type ScanDriveMutationBody = BodyType<ScanDriveBody>;
+export type ScanDriveMutationError = ErrorType<void>;
+
+/**
+ * @summary Search Google Drive files
+ */
+export const useScanDrive = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof scanDrive>>,
+    TError,
+    { data: BodyType<ScanDriveBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof scanDrive>>,
+  TError,
+  { data: BodyType<ScanDriveBody> },
+  TContext
+> => {
+  return useMutation(getScanDriveMutationOptions(options));
+};
+
+/**
+ * @summary Get Google Drive file content
+ */
+export const getScanDriveContentUrl = () => {
+  return `/api/scan/drive/content`;
+};
+
+export const scanDriveContent = async (
+  scanDriveContentBody: ScanDriveContentBody,
+  options?: RequestInit,
+): Promise<DriveFileContent> => {
+  return customFetch<DriveFileContent>(getScanDriveContentUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(scanDriveContentBody),
+  });
+};
+
+export const getScanDriveContentMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof scanDriveContent>>,
+    TError,
+    { data: BodyType<ScanDriveContentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof scanDriveContent>>,
+  TError,
+  { data: BodyType<ScanDriveContentBody> },
+  TContext
+> => {
+  const mutationKey = ["scanDriveContent"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof scanDriveContent>>,
+    { data: BodyType<ScanDriveContentBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return scanDriveContent(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ScanDriveContentMutationResult = NonNullable<
+  Awaited<ReturnType<typeof scanDriveContent>>
+>;
+export type ScanDriveContentMutationBody = BodyType<ScanDriveContentBody>;
+export type ScanDriveContentMutationError = ErrorType<void>;
+
+/**
+ * @summary Get Google Drive file content
+ */
+export const useScanDriveContent = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof scanDriveContent>>,
+    TError,
+    { data: BodyType<ScanDriveContentBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof scanDriveContent>>,
+  TError,
+  { data: BodyType<ScanDriveContentBody> },
+  TContext
+> => {
+  return useMutation(getScanDriveContentMutationOptions(options));
 };

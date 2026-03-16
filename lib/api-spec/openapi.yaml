@@ -23,6 +23,8 @@ tags:
     description: Training data collection
   - name: rag
     description: RAG knowledge base
+  - name: scan
+    description: Gmail and Google Drive scanning
 paths:
   /healthz:
     get:
@@ -1231,6 +1233,114 @@ paths:
               schema:
                 $ref: "#/components/schemas/RouteTaskResponse"
 
+  /scan/gmail:
+    post:
+      operationId: scanGmail
+      tags: [scan]
+      summary: Search Gmail messages
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                query:
+                  type: string
+                  description: Gmail search query
+                maxResults:
+                  type: integer
+                  default: 20
+      responses:
+        "200":
+          description: Gmail search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GmailScanResponse"
+        "502":
+          description: Gmail connection error
+
+  /scan/gmail/message:
+    post:
+      operationId: scanGmailMessage
+      tags: [scan]
+      summary: Get full Gmail message body
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                messageId:
+                  type: string
+              required:
+                - messageId
+      responses:
+        "200":
+          description: Full message content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GmailMessageDetail"
+        "400":
+          description: Missing messageId
+
+  /scan/drive:
+    post:
+      operationId: scanDrive
+      tags: [scan]
+      summary: Search Google Drive files
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                query:
+                  type: string
+                  description: Search query for Drive
+                maxResults:
+                  type: integer
+                  default: 20
+      responses:
+        "200":
+          description: Drive search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriveScanResponse"
+        "502":
+          description: Drive connection error
+
+  /scan/drive/content:
+    post:
+      operationId: scanDriveContent
+      tags: [scan]
+      summary: Get Google Drive file content
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fileId:
+                  type: string
+              required:
+                - fileId
+      responses:
+        "200":
+          description: File content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DriveFileContent"
+        "400":
+          description: Missing fileId
+
 components:
   schemas:
     HealthStatus:
@@ -2245,3 +2355,115 @@ components:
         - searchQuery
         - reasoning
         - createdAt
+
+    GmailScanResponse:
+      type: object
+      properties:
+        source:
+          type: string
+        query:
+          type: string
+        total:
+          type: integer
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              subject:
+                type: string
+              from:
+                type: string
+              date:
+                type: string
+              snippet:
+                type: string
+              labels:
+                type: array
+                items:
+                  type: string
+      required:
+        - source
+        - query
+        - total
+        - results
+
+    GmailMessageDetail:
+      type: object
+      properties:
+        id:
+          type: string
+        subject:
+          type: string
+        from:
+          type: string
+        date:
+          type: string
+        body:
+          type: string
+        bodyLength:
+          type: integer
+      required:
+        - id
+        - subject
+        - from
+        - date
+        - body
+
+    DriveScanResponse:
+      type: object
+      properties:
+        source:
+          type: string
+        query:
+          type: string
+        total:
+          type: integer
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              mimeType:
+                type: string
+              modifiedTime:
+                type: string
+              size:
+                type: integer
+                nullable: true
+              webViewLink:
+                type: string
+              owner:
+                type: string
+      required:
+        - source
+        - query
+        - total
+        - results
+
+    DriveFileContent:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        mimeType:
+          type: string
+        content:
+          type: string
+          nullable: true
+        contentLength:
+          type: integer
+        message:
+          type: string
+      required:
+        - id
+        - name
+        - mimeType

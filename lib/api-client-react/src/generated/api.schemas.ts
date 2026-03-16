@@ -466,6 +466,57 @@ export interface DiscoveredSource {
   createdAt: string;
 }
 
+export type GmailScanResponseResultsItem = {
+  id?: string;
+  subject?: string;
+  from?: string;
+  date?: string;
+  snippet?: string;
+  labels?: string[];
+};
+
+export interface GmailScanResponse {
+  source: string;
+  query: string;
+  total: number;
+  results: GmailScanResponseResultsItem[];
+}
+
+export interface GmailMessageDetail {
+  id: string;
+  subject: string;
+  from: string;
+  date: string;
+  body: string;
+  bodyLength?: number;
+}
+
+export type DriveScanResponseResultsItem = {
+  id?: string;
+  name?: string;
+  mimeType?: string;
+  modifiedTime?: string;
+  size?: number | null;
+  webViewLink?: string;
+  owner?: string;
+};
+
+export interface DriveScanResponse {
+  source: string;
+  query: string;
+  total: number;
+  results: DriveScanResponseResultsItem[];
+}
+
+export interface DriveFileContent {
+  id: string;
+  name: string;
+  mimeType: string;
+  content?: string | null;
+  contentLength?: number;
+  message?: string;
+}
+
 export type FetchUrlBody = {
   url: string;
 };
@@ -583,4 +634,24 @@ export type ListAgentTasksParams = {
   status?: string;
   agentId?: string;
   priority?: string;
+};
+
+export type ScanGmailBody = {
+  /** Gmail search query */
+  query?: string;
+  maxResults?: number;
+};
+
+export type ScanGmailMessageBody = {
+  messageId: string;
+};
+
+export type ScanDriveBody = {
+  /** Search query for Drive */
+  query?: string;
+  maxResults?: number;
+};
+
+export type ScanDriveContentBody = {
+  fileId: string;
 };

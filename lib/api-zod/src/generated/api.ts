@@ -1000,3 +1000,88 @@ export const RouteTaskResponse = zod.object({
     .optional(),
   reason: zod.string(),
 });
+
+/**
+ * @summary Search Gmail messages
+ */
+export const scanGmailBodyMaxResultsDefault = 20;
+
+export const ScanGmailBody = zod.object({
+  query: zod.string().optional().describe("Gmail search query"),
+  maxResults: zod.number().default(scanGmailBodyMaxResultsDefault),
+});
+
+export const ScanGmailResponse = zod.object({
+  source: zod.string(),
+  query: zod.string(),
+  total: zod.number(),
+  results: zod.array(
+    zod.object({
+      id: zod.string().optional(),
+      subject: zod.string().optional(),
+      from: zod.string().optional(),
+      date: zod.string().optional(),
+      snippet: zod.string().optional(),
+      labels: zod.array(zod.string()).optional(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get full Gmail message body
+ */
+export const ScanGmailMessageBody = zod.object({
+  messageId: zod.string(),
+});
+
+export const ScanGmailMessageResponse = zod.object({
+  id: zod.string(),
+  subject: zod.string(),
+  from: zod.string(),
+  date: zod.string(),
+  body: zod.string(),
+  bodyLength: zod.number().optional(),
+});
+
+/**
+ * @summary Search Google Drive files
+ */
+export const scanDriveBodyMaxResultsDefault = 20;
+
+export const ScanDriveBody = zod.object({
+  query: zod.string().optional().describe("Search query for Drive"),
+  maxResults: zod.number().default(scanDriveBodyMaxResultsDefault),
+});
+
+export const ScanDriveResponse = zod.object({
+  source: zod.string(),
+  query: zod.string(),
+  total: zod.number(),
+  results: zod.array(
+    zod.object({
+      id: zod.string().optional(),
+      name: zod.string().optional(),
+      mimeType: zod.string().optional(),
+      modifiedTime: zod.string().optional(),
+      size: zod.number().nullish(),
+      webViewLink: zod.string().optional(),
+      owner: zod.string().optional(),
+    }),
+  ),
+});
+
+/**
+ * @summary Get Google Drive file content
+ */
+export const ScanDriveContentBody = zod.object({
+  fileId: zod.string(),
+});
+
+export const ScanDriveContentResponse = zod.object({
+  id: zod.string(),
+  name: zod.string(),
+  mimeType: zod.string(),
+  content: zod.string().nullish(),
+  contentLength: zod.number().optional(),
+  message: zod.string().optional(),
+});
