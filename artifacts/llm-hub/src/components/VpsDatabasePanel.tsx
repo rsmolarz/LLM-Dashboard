@@ -20,7 +20,7 @@ export default function VpsDatabasePanel() {
   const saveConfig = useSaveVpsDatabaseConfig();
   const testConnection = useTestVpsDatabase();
   const { data: setupScript, refetch: fetchScript } = useGetVpsDatabaseSetupScript({
-    query: { enabled: false }
+    query: { enabled: false } as any
   });
 
   const [form, setForm] = useState({
@@ -66,7 +66,7 @@ export default function VpsDatabasePanel() {
   const handleTest = () => {
     setTestResult(null);
     testConnection.mutate(
-      { data: {} as any },
+      undefined as any,
       {
         onSuccess: (data: any) => {
           setTestResult(data);

@@ -134,7 +134,7 @@ router.post("/scan/drive", async (req, res): Promise<void> => {
   try {
     const data = await driveProxyJson(
       `/drive/v3/files?q=${encodeURIComponent(driveQuery)}&pageSize=${limit}&fields=files(id,name,mimeType,modifiedTime,size,webViewLink,owners)&orderBy=modifiedTime desc`
-    );
+    ) as any;
 
     const files = (data.files || []).map((f: any) => ({
       id: f.id,
@@ -165,7 +165,7 @@ router.post("/scan/drive/content", async (req, res): Promise<void> => {
   }
 
   try {
-    const metadata = await driveProxyJson(`/drive/v3/files/${fileId}?fields=id,name,mimeType,modifiedTime`);
+    const metadata = await driveProxyJson(`/drive/v3/files/${fileId}?fields=id,name,mimeType,modifiedTime`) as any;
 
     let content = "";
 

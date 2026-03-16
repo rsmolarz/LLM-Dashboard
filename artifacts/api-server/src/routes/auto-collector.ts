@@ -210,7 +210,7 @@ async function collectDrive(queries: string[]): Promise<{ count: number; errors:
       const driveQuery = `fullText contains '${query.replace(/'/g, "\\'")}' and trashed=false`;
       const data = await driveProxyJson(
         `/drive/v3/files?q=${encodeURIComponent(driveQuery)}&pageSize=15&fields=files(id,name,mimeType,modifiedTime,size,webViewLink,owners)&orderBy=modifiedTime desc`
-      );
+      ) as any;
 
       for (const file of (data.files || [])) {
         try {
@@ -409,7 +409,7 @@ async function collectKnowledgeBase(): Promise<{ count: number; errors: string[]
         content: doc.content || "",
         metadata: {
           category: doc.category,
-          chunkCount: doc.chunkCount,
+          chunksCount: doc.chunksCount,
           docId: doc.id,
           collectedBy: "auto-collector",
         },
@@ -489,8 +489,8 @@ Return ONLY valid JSON, no other text.`;
 
         if (!ollamaRes.ok) continue;
 
-        const data = await ollamaRes.json() as { message?: { content?: string } };
-        const responseText = data.message?.content ?? "";
+        const ollamaData = await ollamaRes.json() as { message?: { content?: string } };
+        const responseText = ollamaData.message?.content ?? "";
 
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
         if (!jsonMatch) continue;

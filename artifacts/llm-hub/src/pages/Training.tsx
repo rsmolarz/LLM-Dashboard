@@ -326,7 +326,7 @@ function TrainingDataTab() {
   const handleExport = (format: string) => {
     exportData.mutate({ data: { format, minQuality: 0 } }, {
       onSuccess: (data) => {
-        const blob = new Blob([data as string], { type: "application/jsonl" });
+        const blob = new Blob([data as unknown as string], { type: "application/jsonl" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;

@@ -5,7 +5,7 @@ import { useGetLlmStatus } from "@workspace/api-client-react";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
-  const { data: status } = useGetLlmStatus({ query: { refetchInterval: 15000 } });
+  const { data: status } = useGetLlmStatus({ query: { refetchInterval: 15000 } as any });
 
   const navItems = [
     { href: "/", label: "Local LLM", icon: Server },

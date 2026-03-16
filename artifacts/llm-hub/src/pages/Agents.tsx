@@ -56,7 +56,7 @@ export default function Agents() {
   const queryClient = useQueryClient();
   const { data: agents = [], isLoading } = useListAgents();
   const { data: stats } = useGetOpenclawStats();
-  const { data: gatewayStatus } = useGetGatewayStatus({ query: { refetchInterval: 15000 } });
+  const { data: gatewayStatus } = useGetGatewayStatus({ query: { refetchInterval: 15000 } as any });
 
   const filteredAgents = agents.filter((a: any) => {
     const matchSearch = !searchFilter || 

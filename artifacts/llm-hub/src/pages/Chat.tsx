@@ -28,7 +28,7 @@ export default function Chat() {
 
   const { data: conversations = [], isLoading: convsLoading } = useListConversations();
   const { data: messages = [], isLoading: msgsLoading } = useGetMessages(selectedConvId || 0, {
-    query: { enabled: !!selectedConvId }
+    query: { enabled: !!selectedConvId } as any
   });
   const { data: ollamaModels = [] } = useListModels();
 

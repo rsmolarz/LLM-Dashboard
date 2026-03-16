@@ -37,16 +37,16 @@ type ConfigFormValues = z.infer<typeof configSchema>;
 export default function LocalLlm() {
   const queryClient = useQueryClient();
   const { data: status, isLoading: statusLoading } = useGetLlmStatus({ 
-    query: { refetchInterval: 15000 } 
+    query: { refetchInterval: 15000 } as any 
   });
   const { data: config, isLoading: configLoading } = useGetLlmConfig();
   const saveConfig = useSaveLlmConfig();
-  const { refetch: fetchScript } = useGetLlmSetupScript({ query: { enabled: false } });
+  const { refetch: fetchScript } = useGetLlmSetupScript({ query: { enabled: false } as any });
   const { data: models = [], isLoading: modelsLoading } = useListModels({
-    query: { refetchInterval: 30000 }
+    query: { refetchInterval: 30000 } as any
   });
   const { data: runningModels = [] } = useListRunningModels({
-    query: { refetchInterval: 15000 }
+    query: { refetchInterval: 15000 } as any
   });
   const pullModel = usePullModel();
   const deleteModel = useDeleteModel();

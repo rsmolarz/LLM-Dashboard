@@ -32,7 +32,7 @@ async function getGmailAccessToken() {
         'X-Replit-Token': xReplitToken
       }
     }
-  ).then(res => res.json()).then(data => data.items?.[0]);
+  ).then(res => res.json()).then((data: any) => data.items?.[0]);
 
   const accessToken = extractAccessToken(gmailConnectionSettings);
 

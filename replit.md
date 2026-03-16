@@ -146,3 +146,5 @@ Utility scripts package. Each script is a `.ts` file in `src/` with a correspond
 - **VPS IP**: 72.60.167.64 — serverUrl stored as full URL like `http://72.60.167.64:11434`
 - **RAG implementation**: PostgreSQL-based keyword matching (no vector DB). Documents auto-chunked at ~500 chars with 50-word overlap. Search uses word frequency scoring.
 - **Training data export formats**: OpenAI (ChatML), Alpaca (instruction/input/output), ShareGPT (for Unsloth/Axolotl)
+- **Auto-Collector Engine**: Scheduled pipeline collecting from Gmail, Drive, chat, Discovery Agent, Knowledge Base → VPS PostgreSQL. LLM processing via Ollama generates summaries, Q&A pairs, quality scores. In-memory scheduler (resets on restart).
+- **Vite config defaults**: PORT and BASE_PATH have fallback defaults so builds succeed without env vars set

@@ -38,10 +38,10 @@ export default function VpsTrainingDashboard() {
   if (statusFilter !== "all") queryParams.status = statusFilter;
 
   const { data: sourcesData, isLoading: sourcesLoading, error: sourcesError } = useListVpsTrainingSources(queryParams, {
-    query: { refetchInterval: 30000 }
+    query: { refetchInterval: 30000 } as any
   });
   const { data: stats } = useGetVpsTrainingStats({
-    query: { refetchInterval: 30000 }
+    query: { refetchInterval: 30000 } as any
   });
 
   const [initDone, setInitDone] = useState(false);
@@ -77,10 +77,10 @@ export default function VpsTrainingDashboard() {
     });
   };
 
-  const handleExport = (format: string) => {
+  const handleExport = (format: "openai" | "alpaca" | "raw") => {
     exportData.mutate({ data: { format, minQuality: 0 } }, {
       onSuccess: (data) => {
-        const blob = new Blob([data as string], { type: "application/jsonl" });
+        const blob = new Blob([data as unknown as string], { type: "application/jsonl" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -236,7 +236,7 @@ export default function VpsTrainingDashboard() {
               { format: "openai", label: "OpenAI Format", desc: "ChatML JSONL for fine-tuning" },
               { format: "alpaca", label: "Alpaca Format", desc: "instruction/input/output pairs" },
               { format: "raw", label: "Raw Export", desc: "Full source data as JSONL" },
-            ].map(f => (
+            ].map((f: { format: "openai" | "alpaca" | "raw"; label: string; desc: string }) => (
               <button
                 key={f.format}
                 onClick={() => handleExport(f.format)}
@@ -311,7 +311,7 @@ function SourceCard({
   statusColor: (status: string) => string;
 }) {
   const { data: fullSource } = useGetVpsTrainingSource(source.id, {
-    query: { enabled: expanded }
+    query: { enabled: expanded } as any
   });
 
   return (
