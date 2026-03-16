@@ -502,79 +502,75 @@ function TrainingDataTab() {
   );
 }
 
+const EXAMPLE_CATEGORIES = [
+  { id: "all", label: "All" },
+  { id: "market-data", label: "Market Data" },
+  { id: "medical", label: "Medical / ENT" },
+  { id: "hedge-fund", label: "Hedge Funds" },
+  { id: "alt-data", label: "Alternative Data" },
+  { id: "influencer", label: "Influencer" },
+  { id: "research", label: "Research" },
+  { id: "code", label: "Code & Dev" },
+  { id: "security", label: "Security" },
+  { id: "business", label: "Business" },
+];
+
 const EXAMPLE_KNOWLEDGE_BASES = [
-  {
-    title: "Python Official Docs",
-    url: "https://docs.python.org/3/tutorial/index.html",
-    category: "code",
-    description: "Python 3 tutorial - great for code agents",
-  },
-  {
-    title: "MDN JavaScript Guide",
-    url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide",
-    category: "code",
-    description: "JavaScript fundamentals from Mozilla",
-  },
-  {
-    title: "React Documentation",
-    url: "https://react.dev/learn",
-    category: "code",
-    description: "Official React learning docs",
-  },
-  {
-    title: "OpenAI API Reference",
-    url: "https://platform.openai.com/docs/api-reference",
-    category: "code",
-    description: "OpenAI API docs for AI integration agents",
-  },
-  {
-    title: "OWASP Top 10",
-    url: "https://owasp.org/www-project-top-ten/",
-    category: "security",
-    description: "Top 10 web application security risks",
-  },
-  {
-    title: "Kubernetes Docs",
-    url: "https://kubernetes.io/docs/concepts/overview/",
-    category: "code",
-    description: "Container orchestration concepts",
-  },
-  {
-    title: "AWS Well-Architected",
-    url: "https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html",
-    category: "business",
-    description: "Cloud architecture best practices",
-  },
-  {
-    title: "Google Developers - Web Fundamentals",
-    url: "https://developers.google.com/web/fundamentals",
-    category: "code",
-    description: "Web performance, accessibility, and best practices",
-  },
-  {
-    title: "HuggingFace Transformers Docs",
-    url: "https://huggingface.co/docs/transformers/index",
-    category: "research",
-    description: "NLP model library documentation",
-  },
-  {
-    title: "LangChain Documentation",
-    url: "https://python.langchain.com/docs/get_started/introduction",
-    category: "research",
-    description: "LLM application framework docs",
-  },
-  {
-    title: "Stripe API Reference",
-    url: "https://stripe.com/docs/api",
-    category: "business",
-    description: "Payment processing API docs",
-  },
-  {
-    title: "PostgreSQL Documentation",
-    url: "https://www.postgresql.org/docs/current/tutorial.html",
-    category: "code",
-    description: "PostgreSQL database tutorial",
-  },
+  { title: "SEC EDGAR Filings", url: "https://www.sec.gov/edgar/searchedgar/companysearch", category: "market-data", description: "10-K, 10-Q, S-1 filings, insider trades — detect valuation mispricing" },
+  { title: "FinancialModelingPrep API", url: "https://site.financialmodelingprep.com/developer/docs", category: "market-data", description: "Financial statements, earnings transcripts, analyst estimates, insider trading" },
+  { title: "Alpha Vantage", url: "https://www.alphavantage.co/documentation/", category: "market-data", description: "Macro indicators, FX, commodities, equities data API" },
+  { title: "FRED - Federal Reserve Data", url: "https://fred.stlouisfed.org/docs/api/fred/", category: "market-data", description: "Inflation, unemployment, rates, GDP, liquidity indicators — critical for macro agents" },
+  { title: "Reddit WallStreetBets Dataset", url: "https://huggingface.co/datasets/lewtun/reddit_wallstreetbets", category: "market-data", description: "Retail sentiment, meme stock detection, narrative shifts" },
+  { title: "Financial PhraseBank", url: "https://huggingface.co/datasets/financial_phrasebank", category: "market-data", description: "Sentiment-labeled financial text for NLP training" },
+  { title: "ClinicalTrials.gov", url: "https://clinicaltrials.gov/data-api/about-api", category: "market-data", description: "Track new drugs, surgical innovations, biotech startups" },
+
+  { title: "PubMed - Otolaryngology", url: "https://pubmed.ncbi.nlm.nih.gov/?term=otolaryngology", category: "medical", description: "ENT clinical studies, treatment outcomes, surgical techniques" },
+  { title: "PubMed Central (Full-Text)", url: "https://www.ncbi.nlm.nih.gov/pmc/tools/openftlist/", category: "medical", description: "Full-text medical articles — surgical techniques, case studies, imaging" },
+  { title: "AAO-HNS Clinical Guidelines", url: "https://www.entnet.org/quality-practice/quality-products/clinical-practice-guidelines/", category: "medical", description: "Sinusitis, tonsillectomy, otitis media, Bell's palsy guidelines" },
+  { title: "NICE Clinical Guidelines", url: "https://www.nice.org.uk/guidance", category: "medical", description: "Head & neck cancer, sleep apnea, hearing loss decision frameworks" },
+  { title: "UMLS - Medical Ontology", url: "https://www.nlm.nih.gov/research/umls/", category: "medical", description: "Disease relationships, drug interactions, symptoms — clinical decision engine" },
+  { title: "Olfactory Receptor Database", url: "https://senselab.med.yale.edu/ordb/", category: "medical", description: "Anosmia research, COVID smell loss, neurodegenerative detection" },
+  { title: "Saarbruecken Voice Database", url: "https://stimmdb.coli.uni-saarland.de/", category: "medical", description: "Vocal cord pathology, dysphonia samples — voice disorder detection" },
+  { title: "Cancer Imaging Archive", url: "https://www.cancerimagingarchive.net/", category: "medical", description: "Head & neck CT/MRI datasets, annotated imaging for ENT AI" },
+  { title: "PubMed - Biomedical Literature", url: "https://pubmed.ncbi.nlm.nih.gov/", category: "medical", description: "Biomedical research — biotech investments, emerging therapies" },
+
+  { title: "Preqin - Fund Intelligence", url: "https://www.preqin.com/", category: "hedge-fund", description: "Hedge fund performance, investor allocations, LP/family office tracking" },
+  { title: "Hedge Fund Research (HFR)", url: "https://www.hedgefundresearch.com/", category: "hedge-fund", description: "5,600+ hedge funds, performance data, macro strategy benchmarking" },
+  { title: "Eurekahedge", url: "https://www.eurekahedge.com/", category: "hedge-fund", description: "Hedge fund indices, macro strategies, fund flows — strong in Asia" },
+  { title: "BarclayHedge", url: "https://www.barclayhedge.com/", category: "hedge-fund", description: "CTAs and systematic trading fund data" },
+  { title: "With Intelligence", url: "https://www.withintelligence.com/", category: "hedge-fund", description: "Fund manager data, allocators, institutional relationships" },
+
+  { title: "Exabel - Alt Data Platform", url: "https://www.exabel.com/", category: "alt-data", description: "Aggregates alternative datasets into usable trading signals" },
+  { title: "ExtractAlpha", url: "https://extractalpha.com/", category: "alt-data", description: "Marketplace for hedge-fund alternative data signals" },
+  { title: "ImportYeti - Supply Chain", url: "https://www.importyeti.com/", category: "alt-data", description: "Supply chain/shipping data — detect disruptions, production changes" },
+
+  { title: "HypeAuditor", url: "https://hypeauditor.com/", category: "influencer", description: "Influencer authenticity, fake followers, engagement rates, demographics" },
+  { title: "Upfluence", url: "https://www.upfluence.com/", category: "influencer", description: "Enterprise influencer CRM — discovery, outreach, affiliate tracking" },
+  { title: "Modash", url: "https://www.modash.io/", category: "influencer", description: "250M+ creators, audience analytics, contact info" },
+  { title: "Collabstr", url: "https://collabstr.com/", category: "influencer", description: "Creator marketplace for influencer partnerships" },
+  { title: "Influencers.club API", url: "https://influencers.club/", category: "influencer", description: "340M+ social profiles across dozens of platforms" },
+
+  { title: "HuggingFace Datasets", url: "https://huggingface.co/datasets", category: "research", description: "The #1 go-to — thousands of curated ML datasets" },
+  { title: "HuggingFace Transformers", url: "https://huggingface.co/docs/transformers/index", category: "research", description: "NLP model library documentation" },
+  { title: "arXiv Research Papers", url: "https://arxiv.org/", category: "research", description: "Cutting-edge AI, biotech, materials science research" },
+  { title: "Semantic Scholar API", url: "https://api.semanticscholar.org/", category: "research", description: "Largest research corpus — cross-disciplinary search" },
+  { title: "The Pile (EleutherAI)", url: "https://pile.eleuther.ai/", category: "research", description: "825GB diverse text dataset used by GPT/LLaMA" },
+  { title: "Common Crawl", url: "https://commoncrawl.org/", category: "research", description: "Massive web crawl data — the foundation of modern LLMs" },
+  { title: "LangChain Documentation", url: "https://python.langchain.com/docs/get_started/introduction", category: "research", description: "LLM application framework docs" },
+
+  { title: "Python Official Docs", url: "https://docs.python.org/3/tutorial/index.html", category: "code", description: "Python 3 tutorial — great for code agents" },
+  { title: "MDN JavaScript Guide", url: "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide", category: "code", description: "JavaScript fundamentals from Mozilla" },
+  { title: "React Documentation", url: "https://react.dev/learn", category: "code", description: "Official React learning docs" },
+  { title: "OpenAI API Reference", url: "https://platform.openai.com/docs/api-reference", category: "code", description: "OpenAI API docs for AI integration agents" },
+  { title: "Kubernetes Docs", url: "https://kubernetes.io/docs/concepts/overview/", category: "code", description: "Container orchestration concepts" },
+  { title: "PostgreSQL Documentation", url: "https://www.postgresql.org/docs/current/tutorial.html", category: "code", description: "PostgreSQL database tutorial" },
+  { title: "Unstructured.io", url: "https://docs.unstructured.io/", category: "code", description: "Parse PDFs, docs, HTML — essential data processing tool" },
+
+  { title: "OWASP Top 10", url: "https://owasp.org/www-project-top-ten/", category: "security", description: "Top 10 web application security risks" },
+
+  { title: "AWS Well-Architected", url: "https://docs.aws.amazon.com/wellarchitected/latest/framework/welcome.html", category: "business", description: "Cloud architecture best practices" },
+  { title: "Stripe API Reference", url: "https://stripe.com/docs/api", category: "business", description: "Payment processing API docs" },
+  { title: "Google Web Fundamentals", url: "https://developers.google.com/web/fundamentals", category: "business", description: "Web performance, accessibility, and best practices" },
 ];
 
 function KnowledgeBaseTab() {
@@ -588,6 +584,7 @@ function KnowledgeBaseTab() {
   const bulkImport = useBulkImportDocuments();
 
   const [activePanel, setActivePanel] = useState<"none" | "upload" | "url" | "bulk" | "examples">("none");
+  const [exampleFilter, setExampleFilter] = useState("all");
   const [uploadForm, setUploadForm] = useState({ title: "", content: "", category: "general" });
   const [urlForm, setUrlForm] = useState({ url: "", category: "general" });
   const [fetchedContent, setFetchedContent] = useState<any>(null);
@@ -759,11 +756,33 @@ function KnowledgeBaseTab() {
             <div>
               <h4 className="font-semibold text-white flex items-center gap-2">
                 <Sparkles className="w-4 h-4 text-amber-400" /> Example Knowledge Bases
+                <span className="text-xs font-normal text-muted-foreground ml-1">({EXAMPLE_KNOWLEDGE_BASES.length} sources)</span>
               </h4>
               <p className="text-xs text-muted-foreground mt-1">Click any source to pre-fill the URL import form, then fetch and review before saving</p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {EXAMPLE_KNOWLEDGE_BASES.map((example) => (
+            <div className="flex flex-wrap gap-1.5">
+              {EXAMPLE_CATEGORIES.map((cat) => (
+                <button
+                  key={cat.id}
+                  onClick={() => setExampleFilter(cat.id)}
+                  className={cn(
+                    "px-2.5 py-1 rounded-full text-[11px] font-medium transition-all border",
+                    exampleFilter === cat.id
+                      ? "bg-primary/20 border-primary/40 text-primary"
+                      : "bg-black/20 border-white/10 text-muted-foreground hover:border-white/20 hover:text-white"
+                  )}
+                >
+                  {cat.label}
+                  <span className="ml-1 opacity-60">
+                    {cat.id === "all"
+                      ? EXAMPLE_KNOWLEDGE_BASES.length
+                      : EXAMPLE_KNOWLEDGE_BASES.filter((e) => e.category === cat.id).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[400px] overflow-y-auto pr-1">
+              {EXAMPLE_KNOWLEDGE_BASES.filter((e) => exampleFilter === "all" || e.category === exampleFilter).map((example) => (
                 <button
                   key={example.url}
                   onClick={() => handleImportExample(example)}
