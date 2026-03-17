@@ -130,6 +130,7 @@ const PROJECT_LOG: LogItem[] = [
       { title: "Model Profiles", status: "done", priority: "medium", category: "training", details: "Named model configurations with deployment tracking" },
       { title: "Knowledge Base / RAG documents", status: "done", priority: "high", category: "training", details: "13 documents, 140 chunks across categories" },
       { title: "ENT Training Pipeline", status: "done", priority: "medium", category: "training", details: "10 otolaryngology modules, 137 RAG chunks, Meditron fine-tuning" },
+      { title: "ENT Endoscopy Datasets", status: "done", priority: "high", category: "training", details: "10 datasets registered (7 public, 3 restricted). 8 AI knowledge topics (85 chunks): laryngoscopy, nasal endoscopy, sinus surgery, CT segmentation, transfer learning. UW Sinus Surgery + NasalSeg + HyperKvasir downloaded." },
       { title: "VPS Training Sources", status: "done", priority: "high", category: "training", details: "60 sources from auto-collector and manual input" },
       { title: "Fine-tuning interface", status: "partial", priority: "high", category: "training", details: "UI exists but actual Ollama fine-tuning (modelfile create) needs testing and polish" },
       { title: "Model Evolution Engine", status: "done", priority: "medium", category: "training", details: "Benchmarks, synthetic data gen, feedback loop, model updates" },

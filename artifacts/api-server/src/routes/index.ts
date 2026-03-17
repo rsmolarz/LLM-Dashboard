@@ -22,6 +22,7 @@ import projectBrainRouter from "./project-brain";
 import analyticsRouter from "./analytics";
 import notificationsRouter from "./notifications";
 import automationsRouter from "./automations";
+import entEndoscopyDatasetsRouter from "./ent-endoscopy-datasets";
 
 const router: IRouter = Router();
 
@@ -48,5 +49,6 @@ router.use(projectBrainRouter);
 router.use(analyticsRouter);
 router.use(notificationsRouter);
 router.use(automationsRouter);
+router.use(entEndoscopyDatasetsRouter);
 
 export default router;

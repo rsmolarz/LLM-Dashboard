@@ -12,7 +12,7 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 
 ## Key Features
 - **Local LLM Management**: Connect to VPS Ollama, pull/delete models, chat interface
-- **Chat**: Multi-conversation chat with model selection, message rating (1-5)
+- **Chat**: Multi-conversation chat with model selection, message rating (1-5), streaming responses
 - **Training & Customization** (10 tabs): Overview Dashboard, Model Profiles, Training Data, Knowledge Base, ENT Training, VPS Training, Fine-tuning, Backup, Model Evolution, Project Brain
 - **Deep Research**: Multi-model research engine at `/research`. "Deep" mode fans out to all local Ollama models in parallel; "Extensive" mode adds Claude and GPT. Session saving, follow-up questions, source citations
 - **Vision Studio**: `/vision` page with image generation (GPT-Image-1) and vision analysis (llava:13b on VPS). Domain presets for Medical/ENT, Finance, Social Media, Real Estate
@@ -25,6 +25,7 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **Smarter RAG**: TF-IDF scoring with stop word removal and term frequency-inverse document frequency for better brain context retrieval
 - **Mobile Responsive**: Hamburger menu on mobile, responsive grid layouts, touch-friendly controls across all pages
 - **System Monitor**: `/monitor` dashboard with real-time health metrics, auto-collector status, VPS model inventory, database stats, knowledge base categories
+- **User Authentication**: Replit Auth (OIDC PKCE) with session management, per-user data scoping
 
 ## VPS Configuration
 - IP: 72.60.167.64, Ollama: port 11434, OpenClaw: port 18789
@@ -41,6 +42,7 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - DB `deployed` field in model_profiles is text ("true"/"false") not boolean
 - VPS provider: Hostinger — "LocalLLM" firewall with ports 22, 80, 443, 5432, 11434, 18789 open
 - Vite config defaults: PORT and BASE_PATH have fallback defaults so builds succeed without env vars
+- Auth route uses inline Zod schemas (not from @workspace/api-zod); AuthUser type defined in lib/auth.ts
 
 ## AI Integrations
 - OpenAI (gpt-5.2) via `@workspace/integrations-openai-ai-server`, uses `AI_INTEGRATIONS_OPENAI_BASE_URL` + `_API_KEY`
@@ -58,34 +60,16 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - Topics: Pure Tone Audiometry, Tympanometry, FNL, Otoscopy, Vestibular Testing, Nasal Endoscopy, ENT Surgical Procedures, Hearing Aids/CI, Pediatric ENT, Head & Neck Oncology
 - Fine-tuning Q&A pair generation via Meditron model
 
-## Model Evolution Engine
-- **Benchmarks**: Automated performance testing across reasoning, coding, medical, general, and analysis categories. Scores stored in VPS `model_benchmarks` table for trend tracking
-- **Synthetic Data Generation**: Uses cloud AI (GPT-5.2 / Claude) to generate expert-quality training pairs for local models. Categories: general, medical, coding, finance, reasoning
-- **Feedback Learning Loop**: Harvests rated chat messages — high-rated (4-5) become positive training examples, low-rated (1-2) identify improvement areas
-- **Model Updates**: Check for newer model versions and pull updates from Ollama registry
-- **Auto-Evolution Scheduler**: Optional 6-hour cycle that automatically benchmarks models
-
-## Backup System
-- Full backup snapshots: Replit DB, VPS DB, Ollama model inventory, training data
-- Stored in VPS `backup_snapshots` table
-
-## Project Brain
-- Deep document indexer for Google Drive files and Notion pages
-- Content chunking + LLM-powered Q&A training pair generation
-- VPS tables: brain_sources, brain_chunks, brain_training_pairs
-- Sources: Google Drive (file browser + folder import), Notion (URL/content paste), Manual text input
-- Processed content also stored in training_sources for unified training pipeline
-- Uses any Ollama model on VPS for summarization and pair generation
-
-## Tech Stack
-- **Runtime**: Node.js, TypeScript
-- **Backend**: Express
-- **ORM**: Drizzle with PostgreSQL
-- **Validation**: Zod, drizzle-zod
-- **API Codegen**: Orval
-- **Bundler**: esbuild
-- **Frontend**: React + Vite + Tailwind CSS + shadcn/ui
-- **LLM Runtime**: Ollama
-- **Google APIs**: googleapis (Gmail), @replit/connectors-sdk (Drive proxy)
-- **PostgreSQL Client**: pg
-- **AI Agent Framework**: OpenClaw Gateway
+## ENT Endoscopy Datasets (NEW)
+- 10 datasets registered (7 publicly available, 3 restricted access)
+- 8 AI knowledge topics ingested (85 chunks) covering:
+  - Flexible Laryngoscopy AI-Assisted Diagnosis
+  - Nasal Endoscopy Pathology Recognition
+  - Endoscopic Sinus Surgery Instrument/Anatomy Recognition
+  - Clinical Training Scenarios (laryngoscopy + nasal endoscopy)
+  - CT Sinus Segmentation for AI
+  - Image Quality/Preprocessing for AI
+  - Transfer Learning Strategies for ENT
+- Downloaded datasets: UW Sinus Surgery (instrument segmentation), NasalSeg (CT segmentation), HyperKvasir (GI transfer learning)
+- API endpoints: GET /ent-datasets/registry, POST /ent-datasets/ingest-all, POST /ent-datasets/generate-training-pairs, POST /ent-datasets/bulk-ingest-training
+- Route file: artifacts/api-server/src/routes/ent-endoscopy-datasets.ts
