@@ -339,6 +339,60 @@ async function searchRagContext(query: string, maxResults = 3): Promise<string |
     .join("\n\n---\n\n");
 }
 
+async function searchBrainContext(query: string, maxResults = 5): Promise<string | null> {
+  const { Client } = await import("pg");
+  const client = new Client({
+    host: "72.60.167.64",
+    port: 5432,
+    database: "llmhub",
+    user: "llmhub",
+    password: "Asherharper1!",
+    ssl: false,
+    connectionTimeoutMillis: 5000,
+  });
+  try {
+    await client.connect();
+    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    if (queryWords.length === 0) return null;
+
+    const result = await client.query(
+      `SELECT bc.content, bc.summary, bs.name as source_name
+       FROM brain_chunks bc
+       JOIN brain_sources bs ON bs.id = bc.source_id
+       WHERE bs.status = 'indexed'
+       ORDER BY bc.id LIMIT 500`
+    );
+
+    if (result.rows.length === 0) return null;
+
+    const scored = result.rows.map((row: any) => {
+      const lowerContent = (row.content + " " + (row.summary || "")).toLowerCase();
+      let score = 0;
+      for (const word of queryWords) {
+        const regex = new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        const matches = lowerContent.match(regex);
+        if (matches) score += matches.length;
+      }
+      return { ...row, score };
+    });
+
+    const relevant = scored
+      .filter(s => s.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, maxResults);
+
+    if (relevant.length === 0) return null;
+
+    return relevant
+      .map(r => `[From: ${r.source_name}]\n${r.content}`)
+      .join("\n\n---\n\n");
+  } catch {
+    return null;
+  } finally {
+    await client.end();
+  }
+}
+
 router.post("/llm/chat", async (req, res): Promise<void> => {
   const parsed = SendChatMessageBody.safeParse(req.body);
   if (!parsed.success) {
@@ -353,24 +407,32 @@ router.post("/llm/chat", async (req, res): Promise<void> => {
   }
 
   let ragContext: string | null = null;
+  let brainContext: string | null = null;
   let messagesWithRag = parsed.data.messages;
 
-  if (parsed.data.useRag) {
-    const lastUserMsg = [...parsed.data.messages].reverse().find(m => m.role === "user");
-    if (lastUserMsg) {
-      ragContext = await searchRagContext(lastUserMsg.content);
-      if (ragContext) {
-        messagesWithRag = parsed.data.messages.map((m, i) => {
-          if (i === parsed.data.messages.length - 1 && m.role === "user") {
-            return {
-              ...m,
-              content: `Use the following knowledge base context to help answer the question. If the context is not relevant, answer based on your own knowledge.\n\n--- KNOWLEDGE BASE CONTEXT ---\n${ragContext}\n--- END CONTEXT ---\n\nQuestion: ${m.content}`,
-            };
-          }
-          return m;
-        });
+  const lastUserMsg = [...parsed.data.messages].reverse().find(m => m.role === "user");
+
+  if (parsed.data.useRag && lastUserMsg) {
+    ragContext = await searchRagContext(lastUserMsg.content);
+  }
+
+  const useBrain = (req.body as any).useBrain;
+  if (useBrain && lastUserMsg) {
+    brainContext = await searchBrainContext(lastUserMsg.content);
+  }
+
+  const combinedContext = [ragContext, brainContext].filter(Boolean).join("\n\n===\n\n");
+
+  if (combinedContext) {
+    messagesWithRag = parsed.data.messages.map((m, i) => {
+      if (i === parsed.data.messages.length - 1 && m.role === "user") {
+        return {
+          ...m,
+          content: `Use the following knowledge context to help answer the question. If the context is not relevant, answer based on your own knowledge.\n\n--- PROJECT KNOWLEDGE CONTEXT ---\n${combinedContext}\n--- END CONTEXT ---\n\nQuestion: ${m.content}`,
+        };
       }
-    }
+      return m;
+    });
   }
 
   try {
@@ -409,7 +471,7 @@ router.post("/llm/chat", async (req, res): Promise<void> => {
         model: data.model ?? null,
         totalDuration: data.total_duration ?? null,
         evalCount: data.eval_count ?? null,
-        ragContext: ragContext ? "Knowledge base context was used" : null,
+        ragContext: (ragContext || brainContext) ? `Context used: ${[ragContext ? "Knowledge Base" : "", brainContext ? "Project Brain" : ""].filter(Boolean).join(" + ")}` : null,
       })
     );
   } catch (err) {

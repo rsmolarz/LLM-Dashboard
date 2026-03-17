@@ -47,6 +47,17 @@ const CATEGORIES = [
 
 const EMOJI_OPTIONS = ["🤖", "🦞", "🧠", "🔬", "💼", "🛡️", "📝", "🎯", "🔧", "📊", "🌐", "⚡", "🎨", "📡", "🦾"];
 
+const TOOL_PRESETS = [
+  { id: "web_search", label: "Web Search", icon: Globe, desc: "Search the internet for information" },
+  { id: "code_exec", label: "Code Execution", icon: Code, desc: "Run code snippets in a sandbox" },
+  { id: "file_read", label: "File Reader", icon: FileText, desc: "Read and parse files" },
+  { id: "email_send", label: "Email", icon: Mail, desc: "Send emails via Gmail" },
+  { id: "db_query", label: "Database", icon: Terminal, desc: "Query PostgreSQL databases" },
+  { id: "api_call", label: "API Caller", icon: Globe, desc: "Make HTTP API requests" },
+  { id: "summarize", label: "Summarizer", icon: Brain, desc: "Summarize long documents" },
+  { id: "translate", label: "Translator", icon: Globe, desc: "Translate between languages" },
+];
+
 export default function Agents() {
   const [view, setView] = useState<View>("fleet");
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -356,10 +367,31 @@ function CreateAgentView({ onBack }: { onBack: () => void }) {
     temperature: 0.7,
     maxTokens: 4096,
   });
+  const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
+
+  const toggleTool = (toolId: string) => {
+    setSelectedTools((prev) => {
+      const next = new Set(prev);
+      if (next.has(toolId)) next.delete(toolId);
+      else next.add(toolId);
+      return next;
+    });
+  };
 
   const handleSubmit = async () => {
     if (!form.agentId || !form.name) return;
-    await createAgent.mutateAsync({ data: form });
+    const toolsPrompt = selectedTools.size > 0
+      ? `\n\nYou have access to the following tools: ${Array.from(selectedTools).map(id => {
+          const t = TOOL_PRESETS.find(p => p.id === id);
+          return t ? `${t.label} (${t.desc})` : id;
+        }).join(", ")}. Use them when appropriate to complete tasks.`
+      : "";
+    const finalData = {
+      ...form,
+      systemPrompt: form.systemPrompt + toolsPrompt,
+      description: form.description + (selectedTools.size > 0 ? ` [Tools: ${Array.from(selectedTools).join(", ")}]` : ""),
+    };
+    await createAgent.mutateAsync({ data: finalData });
     queryClient.invalidateQueries({ queryKey: ["/api/openclaw/agents"] });
     queryClient.invalidateQueries({ queryKey: ["/api/openclaw/stats"] });
     onBack();
@@ -479,6 +511,34 @@ function CreateAgentView({ onBack }: { onBack: () => void }) {
               className="mt-1 bg-black/40 border-white/10"
             />
           </div>
+        </div>
+
+        <div>
+          <label className="text-sm font-medium text-muted-foreground">Agent Tools</label>
+          <p className="text-[10px] text-muted-foreground mb-2">Select capabilities this agent can use</p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {TOOL_PRESETS.map((tool) => (
+              <button
+                key={tool.id}
+                onClick={() => toggleTool(tool.id)}
+                className={cn(
+                  "flex items-center gap-2 p-2.5 rounded-lg text-xs transition-all border text-left",
+                  selectedTools.has(tool.id)
+                    ? "bg-primary/15 text-primary border-primary/30"
+                    : "bg-black/30 text-muted-foreground border-white/5 hover:border-white/10"
+                )}
+              >
+                <tool.icon className="w-3.5 h-3.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{tool.label}</p>
+                  <p className="text-[9px] opacity-60 truncate">{tool.desc}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+          {selectedTools.size > 0 && (
+            <p className="text-[10px] text-primary mt-1.5">{selectedTools.size} tool(s) selected</p>
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-4">

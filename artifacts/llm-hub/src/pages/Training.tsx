@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Brain, Database, BookOpen, Wand2, Plus, Trash2, Loader2, 
@@ -46,12 +46,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-type Tab = "profiles" | "data" | "knowledge" | "finetune" | "vps-training" | "ent-training" | "backup" | "evolution" | "brain";
+type Tab = "overview" | "profiles" | "data" | "knowledge" | "finetune" | "vps-training" | "ent-training" | "backup" | "evolution" | "brain";
 
 export default function Training() {
-  const [activeTab, setActiveTab] = useState<Tab>("profiles");
+  const [activeTab, setActiveTab] = useState<Tab>("overview");
 
   const tabs: { id: Tab; label: string; icon: React.ReactNode; desc: string }[] = [
+    { id: "overview", label: "Overview", icon: <BarChart3 className="w-4 h-4" />, desc: "Unified training dashboard" },
     { id: "profiles", label: "Model Profiles", icon: <Brain className="w-4 h-4" />, desc: "Custom model configurations" },
     { id: "data", label: "Training Data", icon: <Database className="w-4 h-4" />, desc: "Collect & manage datasets" },
     { id: "knowledge", label: "Knowledge Base", icon: <BookOpen className="w-4 h-4" />, desc: "RAG document store" },
@@ -105,6 +106,7 @@ export default function Training() {
             exit={{ opacity: 0, y: -10 }}
             transition={{ duration: 0.2 }}
           >
+            {activeTab === "overview" && <TrainingOverviewTab />}
             {activeTab === "profiles" && <ModelProfilesTab />}
             {activeTab === "data" && <TrainingDataTab />}
             {activeTab === "knowledge" && <KnowledgeBaseTab />}
@@ -117,6 +119,165 @@ export default function Training() {
           </motion.div>
         </AnimatePresence>
       </div>
+    </div>
+  );
+}
+
+function TrainingOverviewTab() {
+  const { data: localStats } = useGetTrainingStats();
+  const { data: ragStats } = useGetRagStats();
+  const { data: documents = [] } = useListDocuments();
+  const { data: entries = [] } = useListTrainingData();
+
+  const [vpsStats, setVpsStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchVps = async () => {
+      try {
+        const API_BASE = `${import.meta.env.BASE_URL}api`.replace(/\/\//g, "/");
+        const res = await fetch(`${API_BASE}/project-brain/unified-stats`);
+        const data = await res.json();
+        setVpsStats(data.stats);
+      } catch {}
+      setLoading(false);
+    };
+    fetchVps();
+    const iv = setInterval(fetchVps, 30000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const brain = vpsStats?.brain || { indexedSources: 0, totalChunks: 0, trainingPairs: 0, byType: [] };
+  const vps = vpsStats?.vps || { trainingSources: 0, benchmarks: 0, backups: 0 };
+  const localEntries = localStats?.totalEntries ?? 0;
+  const totalTrainingPairs = localEntries + brain.trainingPairs;
+
+  const sources = [
+    {
+      name: "Project Brain",
+      icon: <Globe className="w-5 h-5" />,
+      color: "text-purple-400",
+      bg: "bg-purple-500/10 border-purple-500/20",
+      stats: [
+        { label: "Indexed Sources", value: brain.indexedSources },
+        { label: "Chunks", value: brain.totalChunks },
+        { label: "Training Pairs", value: brain.trainingPairs },
+      ],
+      desc: "Google Drive, Notion, and manual documents indexed by Project Brain",
+    },
+    {
+      name: "Local Training Data",
+      icon: <Database className="w-5 h-5" />,
+      color: "text-blue-400",
+      bg: "bg-blue-500/10 border-blue-500/20",
+      stats: [
+        { label: "Entries", value: localEntries },
+        { label: "Avg Quality", value: localStats?.avgQuality?.toFixed(1) ?? "N/A" },
+        { label: "Categories", value: Object.keys(localStats?.byCategory ?? {}).length },
+      ],
+      desc: "Training pairs collected from conversations, manual input, and synthetic generation",
+    },
+    {
+      name: "Knowledge Base (RAG)",
+      icon: <BookOpen className="w-5 h-5" />,
+      color: "text-cyan-400",
+      bg: "bg-cyan-500/10 border-cyan-500/20",
+      stats: [
+        { label: "Documents", value: documents.length },
+        { label: "Total Chunks", value: ragStats?.totalChunks ?? 0 },
+        { label: "Categories", value: ragStats?.totalDocuments ?? 0 },
+      ],
+      desc: "RAG document store for real-time context injection during chat",
+    },
+    {
+      name: "VPS Training Sources",
+      icon: <Layers className="w-5 h-5" />,
+      color: "text-orange-400",
+      bg: "bg-orange-500/10 border-orange-500/20",
+      stats: [
+        { label: "Sources", value: vps.trainingSources },
+        { label: "Benchmarks", value: vps.benchmarks },
+        { label: "Backups", value: vps.backups },
+      ],
+      desc: "Auto-collected training data from Gmail, Drive, and web scraping on VPS",
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h3 className="text-xl font-semibold text-white">Training Overview</h3>
+        <p className="text-sm text-muted-foreground">Unified view of all training data across every source</p>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/20 rounded-xl p-5">
+          <p className="text-3xl font-bold text-white">{totalTrainingPairs.toLocaleString()}</p>
+          <p className="text-xs text-muted-foreground mt-1">Total Training Pairs</p>
+        </div>
+        <div className="bg-gradient-to-br from-purple-500/10 to-purple-500/5 border border-purple-500/20 rounded-xl p-5">
+          <p className="text-3xl font-bold text-white">{brain.indexedSources + documents.length}</p>
+          <p className="text-xs text-muted-foreground mt-1">Total Knowledge Sources</p>
+        </div>
+        <div className="bg-gradient-to-br from-cyan-500/10 to-cyan-500/5 border border-cyan-500/20 rounded-xl p-5">
+          <p className="text-3xl font-bold text-white">{(brain.totalChunks + (ragStats?.totalChunks ?? 0)).toLocaleString()}</p>
+          <p className="text-xs text-muted-foreground mt-1">Total Chunks Indexed</p>
+        </div>
+        <div className="bg-gradient-to-br from-amber-500/10 to-amber-500/5 border border-amber-500/20 rounded-xl p-5">
+          <p className="text-3xl font-bold text-white">{vps.benchmarks}</p>
+          <p className="text-xs text-muted-foreground mt-1">Model Benchmarks</p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {sources.map((source) => (
+          <div key={source.name} className={cn("rounded-xl border p-5 space-y-3", source.bg)}>
+            <div className="flex items-center gap-3">
+              <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center bg-black/30", source.color)}>
+                {source.icon}
+              </div>
+              <div>
+                <h4 className="font-semibold text-white">{source.name}</h4>
+                <p className="text-[10px] text-muted-foreground">{source.desc}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {source.stats.map((stat) => (
+                <div key={stat.label} className="bg-black/20 rounded-lg p-2.5 text-center">
+                  <p className="text-lg font-bold text-white">{stat.value}</p>
+                  <p className="text-[10px] text-muted-foreground">{stat.label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {brain.byType.length > 0 && (
+        <div className="bg-card/50 border border-white/10 rounded-xl p-5">
+          <h4 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+            <Globe className="w-4 h-4 text-purple-400" />
+            Brain Sources by Type
+          </h4>
+          <div className="grid grid-cols-3 gap-3">
+            {brain.byType.map((t: any) => (
+              <div key={t.type} className="bg-black/20 rounded-lg p-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-white capitalize">{t.type}</p>
+                  <p className="text-[10px] text-muted-foreground">{t.sources} sources</p>
+                </div>
+                <p className="text-lg font-bold text-purple-400">{t.chunks}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {loading && (
+        <div className="flex justify-center py-6">
+          <Loader2 className="w-5 h-5 animate-spin text-primary" />
+        </div>
+      )}
     </div>
   );
 }

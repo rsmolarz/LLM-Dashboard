@@ -404,4 +404,85 @@ Provide your synthesis in this structure:
   res.end();
 });
 
+const researchSessions: Array<{
+  id: string;
+  prompt: string;
+  mode: string;
+  synthesis: string;
+  modelCount: number;
+  createdAt: string;
+  followUps: Array<{ question: string; answer: string; timestamp: string }>;
+}> = [];
+
+router.get("/research/sessions", async (_req, res): Promise<void> => {
+  res.json({ success: true, sessions: researchSessions.slice().reverse() });
+});
+
+router.post("/research/save-session", async (req, res): Promise<void> => {
+  const { prompt, mode, synthesis, modelCount } = req.body;
+  if (!prompt || !synthesis) {
+    res.status(400).json({ success: false, error: "prompt and synthesis required" });
+    return;
+  }
+  const session = {
+    id: `research-${Date.now()}`,
+    prompt,
+    mode: mode || "deep",
+    synthesis,
+    modelCount: modelCount || 0,
+    createdAt: new Date().toISOString(),
+    followUps: [],
+  };
+  researchSessions.push(session);
+  if (researchSessions.length > 50) researchSessions.shift();
+  res.json({ success: true, session });
+});
+
+router.post("/research/follow-up", async (req, res): Promise<void> => {
+  const { sessionId, question } = req.body;
+  if (!sessionId || !question) {
+    res.status(400).json({ success: false, error: "sessionId and question required" });
+    return;
+  }
+
+  const session = researchSessions.find(s => s.id === sessionId);
+  if (!session) {
+    res.status(404).json({ success: false, error: "Session not found" });
+    return;
+  }
+
+  const serverUrl = await getOllamaUrl();
+  if (!serverUrl) {
+    res.status(503).json({ success: false, error: "Ollama not configured" });
+    return;
+  }
+
+  try {
+    const context = `Previous research question: ${session.prompt}\n\nPrevious synthesis:\n${session.synthesis}\n\n${session.followUps.length > 0 ? "Previous follow-up Q&A:\n" + session.followUps.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n") + "\n\n" : ""}`;
+    const models = await getOllamaModels(serverUrl);
+    const followUpModel = models.includes("qwen2.5:7b") ? "qwen2.5:7b" : models[0] || "llama3.2:latest";
+    const answer = await queryOllama(
+      serverUrl,
+      followUpModel,
+      `${context}Follow-up question: ${question}\n\nProvide a detailed answer based on the previous research context.`
+    );
+
+    session.followUps.push({
+      question,
+      answer,
+      timestamp: new Date().toISOString(),
+    });
+
+    res.json({ success: true, answer, followUpCount: session.followUps.length });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete("/research/sessions/:id", async (req, res): Promise<void> => {
+  const idx = researchSessions.findIndex(s => s.id === req.params.id);
+  if (idx >= 0) researchSessions.splice(idx, 1);
+  res.json({ success: true });
+});
+
 export default router;

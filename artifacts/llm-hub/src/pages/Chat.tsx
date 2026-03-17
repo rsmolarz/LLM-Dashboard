@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { format } from "date-fns";
 import { 
   MessageSquare, Plus, Trash2, Send, Bot, User, 
-  ChevronDown, HardDrive, ThumbsUp, ThumbsDown, BookOpen
+  ChevronDown, HardDrive, ThumbsUp, ThumbsDown, BookOpen, Brain
 } from "lucide-react";
 import { 
   useListConversations, 
@@ -33,6 +33,7 @@ export default function Chat() {
   const { data: ollamaModels = [] } = useListModels();
 
   const [useRag, setUseRag] = useState(false);
+  const [useBrain, setUseBrain] = useState(false);
   
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
@@ -95,7 +96,7 @@ export default function Chat() {
 
     try {
       const res = await sendLocalChat.mutateAsync({
-        data: { model: modelToUse, messages: formattedHistory, useRag }
+        data: { model: modelToUse, messages: formattedHistory, useRag, useBrain } as any
       });
 
       await addMsg.mutateAsync({
@@ -274,6 +275,19 @@ export default function Chat() {
                       <BookOpen className="w-3 h-3" />
                       RAG
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setUseBrain(!useBrain)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all border",
+                        useBrain
+                          ? "bg-purple-500/10 border-purple-500/30 text-purple-400"
+                          : "bg-transparent border-white/10 text-muted-foreground hover:text-white"
+                      )}
+                    >
+                      <Brain className="w-3 h-3" />
+                      Brain
+                    </button>
                     <Button 
                       type="submit" 
                       size="icon" 
@@ -286,7 +300,7 @@ export default function Chat() {
                 </form>
                 <div className="text-center mt-2">
                   <p className="text-[10px] text-muted-foreground">
-                    All inference runs on your private server. {useRag && <span className="text-blue-400">Knowledge Base context enabled.</span>}
+                    All inference runs on your private server. {useRag && <span className="text-blue-400">Knowledge Base context enabled. </span>}{useBrain && <span className="text-purple-400">Project Brain context enabled.</span>}
                   </p>
                 </div>
               </div>

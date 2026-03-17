@@ -682,4 +682,68 @@ router.post("/project-brain/export-pairs", async (_req, res): Promise<void> => {
   }
 });
 
+router.get("/project-brain/unified-stats", async (_req, res): Promise<void> => {
+  try {
+    const client = new Client(VPS_DB_CONFIG);
+    try {
+      await client.connect();
+
+      const brainSources = await client.query(`SELECT COUNT(*) as count FROM brain_sources WHERE status = 'indexed'`);
+      const brainChunks = await client.query(`SELECT COUNT(*) as count FROM brain_chunks`);
+      const brainPairs = await client.query(`SELECT COUNT(*) as count FROM brain_training_pairs`);
+
+      let trainingSources = { rows: [{ count: 0 }] };
+      try {
+        trainingSources = await client.query(`SELECT COUNT(*) as count FROM training_sources`);
+      } catch {}
+
+      let benchmarks = { rows: [{ count: 0 }] };
+      try {
+        benchmarks = await client.query(`SELECT COUNT(*) as count FROM model_benchmarks`);
+      } catch {}
+
+      let backups = { rows: [{ count: 0 }] };
+      try {
+        backups = await client.query(`SELECT COUNT(*) as count FROM backup_snapshots`);
+      } catch {}
+
+      const brainByType = await client.query(
+        `SELECT bs.type, COUNT(bc.id) as chunks, COUNT(DISTINCT bs.id) as sources
+         FROM brain_sources bs
+         LEFT JOIN brain_chunks bc ON bc.source_id = bs.id
+         WHERE bs.status = 'indexed'
+         GROUP BY bs.type`
+      );
+
+      res.json({
+        success: true,
+        stats: {
+          brain: {
+            indexedSources: parseInt(brainSources.rows[0].count),
+            totalChunks: parseInt(brainChunks.rows[0].count),
+            trainingPairs: parseInt(brainPairs.rows[0].count),
+            byType: brainByType.rows,
+          },
+          vps: {
+            trainingSources: parseInt(trainingSources.rows[0].count),
+            benchmarks: parseInt(benchmarks.rows[0].count),
+            backups: parseInt(backups.rows[0].count),
+          },
+        },
+      });
+    } finally {
+      await client.end();
+    }
+  } catch (err: any) {
+    res.json({
+      success: false,
+      error: err.message,
+      stats: {
+        brain: { indexedSources: 0, totalChunks: 0, trainingPairs: 0, byType: [] },
+        vps: { trainingSources: 0, benchmarks: 0, backups: 0 },
+      },
+    });
+  }
+});
+
 export default router;

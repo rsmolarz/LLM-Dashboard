@@ -13,10 +13,11 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 ## Key Features
 - **Local LLM Management**: Connect to VPS Ollama, pull/delete models, chat interface
 - **Chat**: Multi-conversation chat with model selection, message rating (1-5)
-- **Training & Customization** (9 tabs): Model Profiles, Training Data, Knowledge Base, ENT Training, VPS Training, Fine-tuning, Backup, Model Evolution, Project Brain
-- **Deep Research**: Multi-model research engine at `/research`. "Deep" mode fans out to all local Ollama models in parallel; "Extensive" mode adds Claude and GPT via Replit AI Integrations
+- **Training & Customization** (10 tabs): Overview Dashboard, Model Profiles, Training Data, Knowledge Base, ENT Training, VPS Training, Fine-tuning, Backup, Model Evolution, Project Brain
+- **Deep Research**: Multi-model research engine at `/research`. "Deep" mode fans out to all local Ollama models in parallel; "Extensive" mode adds Claude and GPT. Session saving, follow-up questions, source citations
 - **Vision Studio**: `/vision` page with image generation (GPT-Image-1) and vision analysis (llava:13b on VPS). Domain presets for Medical/ENT, Finance, Social Media, Real Estate
-- **Agents**: `/agents` page for agent orchestration
+- **Agents**: `/agents` page for agent orchestration with fleet management, task routing, agent memories, tool definitions, category filtering
+- **Chat RAG**: Knowledge Base + Project Brain context injection toggles for augmented chat responses
 - **System Monitor**: `/monitor` dashboard with real-time health metrics, auto-collector status, VPS model inventory, database stats, knowledge base categories
 
 ## VPS Configuration
@@ -82,4 +83,3 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **Google APIs**: googleapis (Gmail), @replit/connectors-sdk (Drive proxy)
 - **PostgreSQL Client**: pg
 - **AI Agent Framework**: OpenClaw Gateway
-
