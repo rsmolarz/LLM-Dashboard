@@ -5,11 +5,11 @@ import { count, desc, eq } from "drizzle-orm";
 const router: IRouter = Router();
 
 const VPS_DB_CONFIG = {
-  host: process.env.VPS_DB_HOST || "72.60.167.64",
+  host: process.env.VPS_DB_HOST,
   port: parseInt(process.env.VPS_DB_PORT || "5432"),
-  database: process.env.VPS_DB_NAME || "llmhub",
-  user: process.env.VPS_DB_USER || "llmhub",
-  password: process.env.VPS_DB_PASSWORD || "Asherharper1!",
+  database: process.env.VPS_DB_NAME,
+  user: process.env.VPS_DB_USER,
+  password: process.env.VPS_DB_PASSWORD,
   ssl: false,
   connectionTimeoutMillis: 5000,
 };

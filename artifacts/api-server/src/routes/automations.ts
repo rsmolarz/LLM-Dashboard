@@ -3,6 +3,17 @@ import { pushNotification } from "./notifications";
 
 const router: IRouter = Router();
 
+interface AutomationRun {
+  id: string;
+  automationId: string;
+  runNumber: number;
+  startedAt: string;
+  completedAt: string | null;
+  status: "running" | "success" | "error";
+  result: string | null;
+  durationMs: number | null;
+}
+
 interface Automation {
   id: string;
   name: string;
@@ -18,6 +29,7 @@ interface Automation {
 
 const automations: Automation[] = [];
 const timers: Map<string, ReturnType<typeof setInterval>> = new Map();
+const executionHistory: AutomationRun[] = [];
 let autoCounter = 0;
 
 function parseScheduleMs(schedule: string): number | null {
@@ -31,6 +43,107 @@ function parseScheduleMs(schedule: string): number | null {
   return null;
 }
 
+async function executeAutomationAction(auto: Automation): Promise<string> {
+  const API_BASE = `http://localhost:${process.env.PORT || 3000}/api`;
+
+  switch (auto.type) {
+    case "backup": {
+      const res = await fetch(`${API_BASE}/backup/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: auto.config.target || "all" }),
+      });
+      const data = await res.json() as any;
+      return `Backup export completed: ${data.filename || "unknown"} (${data.sizeHuman || "?"})`;
+    }
+
+    case "research": {
+      const prompt = auto.config.prompt || "Summarize recent AI developments";
+      const res = await fetch(`${API_BASE}/research/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, mode: auto.config.mode || "deep" }),
+      });
+      if (!res.ok) throw new Error(`Research failed: ${res.status}`);
+      return `Research task started for: "${prompt.slice(0, 80)}"`;
+    }
+
+    case "training": {
+      const res = await fetch(`${API_BASE}/auto-collector/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json() as any;
+      return `Auto-collector run completed: ${data.message || "done"}`;
+    }
+
+    case "benchmark": {
+      const res = await fetch(`${API_BASE}/model-evolution/benchmark`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          models: auto.config.models || [],
+          prompt: auto.config.prompt || "Explain the concept of machine learning in simple terms.",
+        }),
+      });
+      const data = await res.json() as any;
+      return `Benchmark completed: ${data.results?.length || 0} models tested`;
+    }
+
+    case "agent-task": {
+      const res = await fetch(`${API_BASE}/openclaw/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: auto.config.title || auto.name,
+          description: auto.config.description || "Automated task",
+          priority: auto.config.priority || "medium",
+          category: auto.config.category || "general",
+        }),
+      });
+      const data = await res.json() as any;
+      return `Agent task created: ${data.title || auto.name} (ID: ${data.id || "?"})`;
+    }
+
+    default:
+      return `Unknown automation type: ${auto.type}`;
+  }
+}
+
+async function runAutomation(auto: Automation) {
+  const startTime = Date.now();
+  const run: AutomationRun = {
+    id: `run-${Date.now()}`,
+    automationId: auto.id,
+    runNumber: auto.runCount + 1,
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    status: "running",
+    result: null,
+    durationMs: null,
+  };
+  executionHistory.push(run);
+  if (executionHistory.length > 200) executionHistory.shift();
+
+  auto.lastRun = Date.now();
+  auto.runCount++;
+
+  try {
+    const result = await executeAutomationAction(auto);
+    run.status = "success";
+    run.result = result;
+    run.completedAt = new Date().toISOString();
+    run.durationMs = Date.now() - startTime;
+    pushNotification("success", `Automation completed: ${auto.name}`, result);
+  } catch (err: any) {
+    run.status = "error";
+    run.result = err?.message || "Unknown error";
+    run.completedAt = new Date().toISOString();
+    run.durationMs = Date.now() - startTime;
+    pushNotification("error", `Automation failed: ${auto.name}`, run.result!);
+  }
+}
+
 function scheduleAutomation(auto: Automation) {
   const existing = timers.get(auto.id);
   if (existing) clearInterval(existing);
@@ -40,11 +153,9 @@ function scheduleAutomation(auto: Automation) {
 
   auto.nextRun = Date.now() + ms;
 
-  const timer = setInterval(() => {
-    auto.lastRun = Date.now();
-    auto.runCount++;
+  const timer = setInterval(async () => {
     auto.nextRun = Date.now() + ms;
-    pushNotification("info", `Automation ran: ${auto.name}`, `Type: ${auto.type}, Run #${auto.runCount}`);
+    await runAutomation(auto);
   }, ms);
 
   timers.set(auto.id, timer);
@@ -52,6 +163,10 @@ function scheduleAutomation(auto: Automation) {
 
 router.get("/automations", (_req, res): void => {
   res.json({ automations });
+});
+
+router.get("/automations/history", (_req, res): void => {
+  res.json({ history: executionHistory.slice().reverse() });
 });
 
 router.post("/automations", (req, res): void => {
@@ -114,12 +229,10 @@ router.delete("/automations/:id", (req, res): void => {
   res.json({ success: true });
 });
 
-router.post("/automations/:id/run", (req, res): void => {
+router.post("/automations/:id/run", async (req, res): Promise<void> => {
   const auto = automations.find((a) => a.id === req.params.id);
   if (!auto) { res.status(404).json({ error: "Not found" }); return; }
-  auto.lastRun = Date.now();
-  auto.runCount++;
-  pushNotification("info", `Manual run: ${auto.name}`, `Type: ${auto.type}, Run #${auto.runCount}`);
+  await runAutomation(auto);
   res.json({ success: true, automation: auto });
 });
 

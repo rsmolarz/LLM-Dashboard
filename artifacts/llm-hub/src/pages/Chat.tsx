@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { format } from "date-fns";
 import { 
   MessageSquare, Plus, Trash2, Send, Bot, User, 
@@ -10,14 +10,14 @@ import {
   useDeleteConversation,
   useGetMessages,
   useAddMessage,
-  useSendChatMessage,
   useListModels,
   useRateMessage,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+
+const BASE = import.meta.env.BASE_URL;
 
 export default function Chat() {
   const queryClient = useQueryClient();
@@ -25,6 +25,8 @@ export default function Chat() {
   const [selectedModel, setSelectedModel] = useState("llama3");
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [input, setInput] = useState("");
+  const [streamingContent, setStreamingContent] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
 
   const { data: conversations = [], isLoading: convsLoading } = useListConversations();
   const { data: messages = [], isLoading: msgsLoading } = useGetMessages(selectedConvId || 0, {
@@ -38,16 +40,16 @@ export default function Chat() {
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
   const addMsg = useAddMessage();
-  const sendLocalChat = useSendChatMessage();
   const rateMsg = useRateMessage();
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, sendLocalChat.isPending]);
+  }, [messages, streamingContent, isStreaming]);
 
   const modelOptions = ollamaModels.length > 0 
     ? ollamaModels.map(m => ({ id: m.name, name: m.name }))
@@ -74,8 +76,8 @@ export default function Chat() {
     });
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || !selectedConvId) return;
+  const handleSend = useCallback(async () => {
+    if (!input.trim() || !selectedConvId || isStreaming) return;
     const userMsgContent = input;
     setInput("");
 
@@ -94,24 +96,66 @@ export default function Chat() {
       content: m.content
     }));
 
+    setIsStreaming(true);
+    setStreamingContent("");
+    abortRef.current = new AbortController();
+
     try {
-      const res = await sendLocalChat.mutateAsync({
-        data: { model: modelToUse, messages: formattedHistory, useRag, useBrain } as any
+      const response = await fetch(`${BASE}api/llm/chat/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: modelToUse, messages: formattedHistory, useRag, useBrain }),
+        signal: abortRef.current.signal,
       });
+
+      if (!response.ok) throw new Error(`Server error: ${response.status}`);
+
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error("No response body");
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let fullContent = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.type === "token") {
+              fullContent += event.content;
+              setStreamingContent(fullContent);
+            } else if (event.type === "done") {
+              fullContent = event.fullContent || fullContent;
+            }
+          } catch {}
+        }
+      }
+
+      setIsStreaming(false);
+      setStreamingContent("");
 
       await addMsg.mutateAsync({
         id: selectedConvId,
-        data: { role: 'assistant', content: res.content }
+        data: { role: 'assistant', content: fullContent || "No response received." }
       });
       queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
-    } catch {
+    } catch (err: any) {
+      setIsStreaming(false);
+      setStreamingContent("");
+      if (err.name === "AbortError") return;
       await addMsg.mutateAsync({
         id: selectedConvId,
-        data: { role: 'assistant', content: "Error: Could not connect to Ollama server. Make sure it's running." }
+        data: { role: 'assistant', content: `Error: ${err.message || "Could not connect to Ollama server."}` }
       });
       queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
     }
-  };
+  }, [input, selectedConvId, isStreaming, messages, conversations, selectedModel, useRag, useBrain, addMsg, queryClient]);
 
   return (
     <div className="flex-1 flex overflow-hidden h-full">
@@ -227,15 +271,22 @@ export default function Chat() {
                     </div>
                   ))
                 )}
-                {sendLocalChat.isPending && (
+                {isStreaming && (
                    <div className="flex gap-4">
                      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border bg-purple-500/20 border-purple-500/30 text-purple-400">
                        <Bot className="w-4 h-4" />
                      </div>
-                     <div className="bg-card/50 border border-white/10 rounded-2xl rounded-tl-none px-5 py-4 flex gap-1 items-center h-[52px]">
-                       <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" />
-                       <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay: '75ms'}} />
-                       <div className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay: '150ms'}} />
+                     <div className="max-w-[85%]">
+                       <div className="px-5 py-3.5 rounded-2xl rounded-tl-none text-[15px] leading-relaxed whitespace-pre-wrap bg-card/50 border border-white/10 text-foreground">
+                         {streamingContent || (
+                           <span className="flex gap-1 items-center h-5">
+                             <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" />
+                             <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay: '75ms'}} />
+                             <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay: '150ms'}} />
+                           </span>
+                         )}
+                         <span className="inline-block w-0.5 h-4 bg-purple-400 animate-pulse ml-0.5 align-text-bottom" />
+                       </div>
                      </div>
                    </div>
                 )}
@@ -292,7 +343,7 @@ export default function Chat() {
                       type="submit" 
                       size="icon" 
                       className="h-10 w-10 shrink-0 rounded-xl"
-                      disabled={!input.trim() || sendLocalChat.isPending || addMsg.isPending}
+                      disabled={!input.trim() || isStreaming || addMsg.isPending}
                     >
                       <Send className="w-4 h-4" />
                     </Button>

@@ -5,16 +5,16 @@ import { Client } from "pg";
 const router: IRouter = Router();
 
 const VPS_DB_CONFIG = {
-  host: "72.60.167.64",
-  port: 5432,
-  database: "llmhub",
-  user: "llmhub",
-  password: "Asherharper1!",
+  host: process.env.VPS_DB_HOST,
+  port: parseInt(process.env.VPS_DB_PORT || "5432"),
+  database: process.env.VPS_DB_NAME,
+  user: process.env.VPS_DB_USER,
+  password: process.env.VPS_DB_PASSWORD,
   ssl: false,
   connectionTimeoutMillis: 10000,
 };
 
-const OLLAMA_BASE = "http://72.60.167.64:11434";
+const OLLAMA_BASE = process.env.VPS_OLLAMA_URL || "http://localhost:11434";
 
 interface BrainSource {
   id: string;

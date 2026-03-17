@@ -5,3 +5,5 @@ export * from "./training-data";
 export * from "./documents";
 export * from "./openclaw";
 export * from "./vps-database";
+export * from "./research";
+export * from "./auth";

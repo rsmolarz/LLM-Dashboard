@@ -4,10 +4,10 @@ import { z } from "zod/v4";
 
 export const vpsDatabaseConfigTable = pgTable("vps_database_config", {
   id: serial("id").primaryKey(),
-  host: text("host").notNull().default("72.60.167.64"),
+  host: text("host").notNull().default(""),
   port: text("port").notNull().default("5432"),
-  database: text("database").notNull().default("llmhub"),
-  username: text("username").notNull().default("llmhub"),
+  database: text("database").notNull().default(""),
+  username: text("username").notNull().default(""),
   password: text("password").notNull().default(""),
   sslEnabled: boolean("ssl_enabled").notNull().default(false),
   isActive: boolean("is_active").notNull().default(false),

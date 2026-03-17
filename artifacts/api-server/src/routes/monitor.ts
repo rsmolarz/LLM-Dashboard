@@ -20,7 +20,7 @@ async function getOllamaStatus() {
   try {
     const { llmConfigTable } = await import("@workspace/db/schema");
     const [config] = await db.select().from(llmConfigTable).limit(1);
-    const url = config?.serverUrl || "http://72.60.167.64:11434";
+    const url = config?.serverUrl || process.env.VPS_OLLAMA_URL || "http://localhost:11434";
 
     const tagsResponse = await fetch(`${url}/api/tags`, { signal: AbortSignal.timeout(5000) });
     if (!tagsResponse.ok) throw new Error("Ollama not responding");

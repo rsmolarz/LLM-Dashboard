@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { eq } from "drizzle-orm";
 import { db, llmConfigTable } from "@workspace/db";
 
 const router: IRouter = Router();
@@ -404,18 +405,34 @@ Provide your synthesis in this structure:
   res.end();
 });
 
-const researchSessions: Array<{
-  id: string;
-  prompt: string;
-  mode: string;
-  synthesis: string;
-  modelCount: number;
-  createdAt: string;
-  followUps: Array<{ question: string; answer: string; timestamp: string }>;
-}> = [];
+import { researchSessionsTable, researchFollowUpsTable } from "@workspace/db/schema";
+import { desc as descOrder } from "drizzle-orm";
 
 router.get("/research/sessions", async (_req, res): Promise<void> => {
-  res.json({ success: true, sessions: researchSessions.slice().reverse() });
+  try {
+    const sessions = await db.select().from(researchSessionsTable).orderBy(descOrder(researchSessionsTable.createdAt)).limit(50);
+    const enriched = await Promise.all(sessions.map(async (s) => {
+      const followUps = await db.select().from(researchFollowUpsTable)
+        .where(eq(researchFollowUpsTable.sessionId, s.sessionId))
+        .orderBy(researchFollowUpsTable.createdAt);
+      return {
+        id: s.sessionId,
+        prompt: s.prompt,
+        mode: s.mode,
+        synthesis: s.synthesis,
+        modelCount: s.modelCount,
+        createdAt: s.createdAt?.toISOString() || new Date().toISOString(),
+        followUps: followUps.map(f => ({
+          question: f.question,
+          answer: f.answer,
+          timestamp: f.createdAt?.toISOString() || new Date().toISOString(),
+        })),
+      };
+    }));
+    res.json({ success: true, sessions: enriched });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.post("/research/save-session", async (req, res): Promise<void> => {
@@ -424,18 +441,30 @@ router.post("/research/save-session", async (req, res): Promise<void> => {
     res.status(400).json({ success: false, error: "prompt and synthesis required" });
     return;
   }
-  const session = {
-    id: `research-${Date.now()}`,
-    prompt,
-    mode: mode || "deep",
-    synthesis,
-    modelCount: modelCount || 0,
-    createdAt: new Date().toISOString(),
-    followUps: [],
-  };
-  researchSessions.push(session);
-  if (researchSessions.length > 50) researchSessions.shift();
-  res.json({ success: true, session });
+  try {
+    const sessionId = `research-${Date.now()}`;
+    const [session] = await db.insert(researchSessionsTable).values({
+      sessionId,
+      prompt,
+      mode: mode || "deep",
+      synthesis,
+      modelCount: modelCount || 0,
+    }).returning();
+    res.json({
+      success: true,
+      session: {
+        id: sessionId,
+        prompt,
+        mode: mode || "deep",
+        synthesis,
+        modelCount: modelCount || 0,
+        createdAt: session?.createdAt?.toISOString() || new Date().toISOString(),
+        followUps: [],
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 router.post("/research/follow-up", async (req, res): Promise<void> => {
@@ -445,20 +474,24 @@ router.post("/research/follow-up", async (req, res): Promise<void> => {
     return;
   }
 
-  const session = researchSessions.find(s => s.id === sessionId);
-  if (!session) {
-    res.status(404).json({ success: false, error: "Session not found" });
-    return;
-  }
-
-  const serverUrl = await getOllamaUrl();
-  if (!serverUrl) {
-    res.status(503).json({ success: false, error: "Ollama not configured" });
-    return;
-  }
-
   try {
-    const context = `Previous research question: ${session.prompt}\n\nPrevious synthesis:\n${session.synthesis}\n\n${session.followUps.length > 0 ? "Previous follow-up Q&A:\n" + session.followUps.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n") + "\n\n" : ""}`;
+    const [session] = await db.select().from(researchSessionsTable)
+      .where(eq(researchSessionsTable.sessionId, sessionId));
+    if (!session) {
+      res.status(404).json({ success: false, error: "Session not found" });
+      return;
+    }
+
+    const existingFollowUps = await db.select().from(researchFollowUpsTable)
+      .where(eq(researchFollowUpsTable.sessionId, sessionId));
+
+    const serverUrl = await getOllamaUrl();
+    if (!serverUrl) {
+      res.status(503).json({ success: false, error: "Ollama not configured" });
+      return;
+    }
+
+    const context = `Previous research question: ${session.prompt}\n\nPrevious synthesis:\n${session.synthesis}\n\n${existingFollowUps.length > 0 ? "Previous follow-up Q&A:\n" + existingFollowUps.map(f => `Q: ${f.question}\nA: ${f.answer}`).join("\n\n") + "\n\n" : ""}`;
     const models = await getOllamaModels(serverUrl);
     const followUpModel = models.includes("qwen2.5:7b") ? "qwen2.5:7b" : models[0] || "llama3.2:latest";
     const answer = await queryOllama(
@@ -467,22 +500,26 @@ router.post("/research/follow-up", async (req, res): Promise<void> => {
       `${context}Follow-up question: ${question}\n\nProvide a detailed answer based on the previous research context.`
     );
 
-    session.followUps.push({
+    await db.insert(researchFollowUpsTable).values({
+      sessionId,
       question,
       answer,
-      timestamp: new Date().toISOString(),
     });
 
-    res.json({ success: true, answer, followUpCount: session.followUps.length });
+    res.json({ success: true, answer, followUpCount: existingFollowUps.length + 1 });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 router.delete("/research/sessions/:id", async (req, res): Promise<void> => {
-  const idx = researchSessions.findIndex(s => s.id === req.params.id);
-  if (idx >= 0) researchSessions.splice(idx, 1);
-  res.json({ success: true });
+  try {
+    await db.delete(researchFollowUpsTable).where(eq(researchFollowUpsTable.sessionId, req.params.id));
+    await db.delete(researchSessionsTable).where(eq(researchSessionsTable.sessionId, req.params.id));
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 export default router;

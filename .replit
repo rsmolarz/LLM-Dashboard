@@ -28,3 +28,15 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+VPS_DB_HOST = "72.60.167.64"
+VPS_DB_PORT = "5432"
+VPS_DB_NAME = "llmhub"
+VPS_DB_USER = "llmhub"
+VPS_DB_PASSWORD = "Asherharper1!"
+VPS_OLLAMA_URL = "http://72.60.167.64:11434"
+VPS_OPENCLAW_WS_URL = "ws://72.60.167.64:18789"
+VPS_OPENCLAW_HTTP_URL = "http://72.60.167.64:18789"

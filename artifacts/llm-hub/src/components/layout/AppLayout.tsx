@@ -1,14 +1,16 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
 import { NotificationBell } from "@/components/NotificationBell";
+import { useAuth } from "@workspace/replit-auth-web";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { data: status } = useGetLlmStatus({ query: { refetchInterval: 15000 } as any });
+  const { user, isLoading: authLoading, isAuthenticated, login, logout } = useAuth();
 
   const navItems = [
     { href: "/", label: "Local LLM", icon: Server },
@@ -79,6 +81,28 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               {status?.online ? "Core Online" : "Core Offline"}
             </span>
           </div>
+          {!authLoading && (
+            isAuthenticated ? (
+              <div className="flex items-center gap-2">
+                {user?.profileImageUrl ? (
+                  <img src={user.profileImageUrl} alt="" className="w-6 h-6 rounded-full border border-white/20" />
+                ) : (
+                  <div className="w-6 h-6 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center">
+                    <User className="w-3 h-3 text-primary" />
+                  </div>
+                )}
+                <span className="hidden lg:inline text-xs text-muted-foreground">{user?.username}</span>
+                <button onClick={logout} className="p-1.5 rounded-lg hover:bg-white/5 text-muted-foreground hover:text-white transition-colors" title="Log out">
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button onClick={login} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/20 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/30 transition-colors">
+                <LogIn className="w-3.5 h-3.5" />
+                Sign In
+              </button>
+            )
+          )}
         </div>
       </header>
 

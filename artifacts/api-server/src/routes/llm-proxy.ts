@@ -387,11 +387,11 @@ function computeTfIdf(docs: string[][], queryTokens: string[]) {
 async function searchBrainContext(query: string, maxResults = 5): Promise<string | null> {
   const { Client } = await import("pg");
   const client = new Client({
-    host: "72.60.167.64",
-    port: 5432,
-    database: "llmhub",
-    user: "llmhub",
-    password: "Asherharper1!",
+    host: process.env.VPS_DB_HOST,
+    port: parseInt(process.env.VPS_DB_PORT || "5432"),
+    database: process.env.VPS_DB_NAME,
+    user: process.env.VPS_DB_USER,
+    password: process.env.VPS_DB_PASSWORD,
     ssl: false,
     connectionTimeoutMillis: 5000,
   });
@@ -432,24 +432,12 @@ async function searchBrainContext(query: string, maxResults = 5): Promise<string
   }
 }
 
-router.post("/llm/chat", async (req, res): Promise<void> => {
-  const parsed = SendChatMessageBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
-    return;
-  }
-
-  const serverUrl = await getServerUrl();
-  if (!serverUrl) {
-    res.status(503).json({ error: "Ollama server not configured" });
-    return;
-  }
-
+async function prepareRagMessages(req: any, parsed: any) {
   let ragContext: string | null = null;
   let brainContext: string | null = null;
   let messagesWithRag = parsed.data.messages;
 
-  const lastUserMsg = [...parsed.data.messages].reverse().find(m => m.role === "user");
+  const lastUserMsg = [...parsed.data.messages].reverse().find((m: any) => m.role === "user");
 
   if (parsed.data.useRag && lastUserMsg) {
     ragContext = await searchRagContext(lastUserMsg.content);
@@ -463,7 +451,7 @@ router.post("/llm/chat", async (req, res): Promise<void> => {
   const combinedContext = [ragContext, brainContext].filter(Boolean).join("\n\n===\n\n");
 
   if (combinedContext) {
-    messagesWithRag = parsed.data.messages.map((m, i) => {
+    messagesWithRag = parsed.data.messages.map((m: any, i: number) => {
       if (i === parsed.data.messages.length - 1 && m.role === "user") {
         return {
           ...m,
@@ -473,6 +461,24 @@ router.post("/llm/chat", async (req, res): Promise<void> => {
       return m;
     });
   }
+
+  return { messagesWithRag, ragContext, brainContext };
+}
+
+router.post("/llm/chat", async (req, res): Promise<void> => {
+  const parsed = SendChatMessageBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.status(503).json({ error: "Ollama server not configured" });
+    return;
+  }
+
+  const { messagesWithRag, ragContext, brainContext } = await prepareRagMessages(req, parsed);
 
   try {
     const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
@@ -517,6 +523,118 @@ router.post("/llm/chat", async (req, res): Promise<void> => {
     res.status(502).json({
       error: err instanceof Error ? err.message : "Failed to connect to Ollama",
     });
+  }
+});
+
+router.post("/llm/chat/stream", async (req, res): Promise<void> => {
+  const parsed = SendChatMessageBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.status(503).json({ error: "Ollama server not configured" });
+    return;
+  }
+
+  const { messagesWithRag, ragContext, brainContext } = await prepareRagMessages(req, parsed);
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  if (ragContext || brainContext) {
+    const ctxLabel = [ragContext ? "Knowledge Base" : "", brainContext ? "Project Brain" : ""].filter(Boolean).join(" + ");
+    res.write(`data: ${JSON.stringify({ type: "context", context: ctxLabel })}\n\n`);
+  }
+
+  try {
+    const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: parsed.data.model,
+        messages: messagesWithRag,
+        stream: true,
+        options: {
+          temperature: parsed.data.temperature ?? 0.7,
+        },
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!ollamaRes.ok) {
+      res.write(`data: ${JSON.stringify({ type: "error", error: `Ollama error: ${ollamaRes.status}` })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const reader = ollamaRes.body?.getReader();
+    if (!reader) {
+      res.write(`data: ${JSON.stringify({ type: "error", error: "No response body" })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullContent = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const chunk = JSON.parse(line);
+          if (chunk.message?.content) {
+            fullContent += chunk.message.content;
+            res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
+          }
+          if (chunk.done) {
+            res.write(`data: ${JSON.stringify({
+              type: "done",
+              model: chunk.model,
+              totalDuration: chunk.total_duration,
+              evalCount: chunk.eval_count,
+              fullContent,
+            })}\n\n`);
+          }
+        } catch {}
+      }
+    }
+
+    if (buffer.trim()) {
+      try {
+        const chunk = JSON.parse(buffer);
+        if (chunk.message?.content) {
+          fullContent += chunk.message.content;
+          res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
+        }
+        if (chunk.done) {
+          res.write(`data: ${JSON.stringify({
+            type: "done",
+            model: chunk.model,
+            totalDuration: chunk.total_duration,
+            evalCount: chunk.eval_count,
+            fullContent,
+          })}\n\n`);
+        }
+      } catch {}
+    }
+
+    res.end();
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ type: "error", error: err instanceof Error ? err.message : "Stream failed" })}\n\n`);
+    res.end();
   }
 });
 

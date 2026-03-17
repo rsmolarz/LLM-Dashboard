@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
+import authRouter from "./auth";
 import llmConfigRouter from "./llm-config";
 import llmProxyRouter from "./llm-proxy";
 import chatRouter from "./chat";
@@ -25,6 +26,7 @@ import automationsRouter from "./automations";
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(authRouter);
 router.use(llmConfigRouter);
 router.use(llmProxyRouter);
 router.use(chatRouter);

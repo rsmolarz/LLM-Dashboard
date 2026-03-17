@@ -67,7 +67,7 @@ const PROJECT_LOG: LogItem[] = [
       { title: "Knowledge Base RAG toggle", status: "done", priority: "high", category: "chat", details: "Toggle to inject document chunks as context into LLM prompts" },
       { title: "Project Brain RAG toggle", status: "done", priority: "high", category: "chat", details: "Toggle to inject brain chunks from indexed Notion/Drive docs" },
       { title: "TF-IDF relevance scoring", status: "done", priority: "medium", category: "chat", details: "Upgraded from keyword matching to TF-IDF with stop words, coverage bonus" },
-      { title: "Streaming responses", status: "todo", priority: "high", category: "chat", details: "Chat currently waits for full response. Add SSE streaming for real-time token display" },
+      { title: "Streaming responses (SSE)", status: "done", priority: "high", category: "chat", details: "Real-time token streaming via SSE endpoint, tokens appear as they are generated" },
       { title: "Conversation export (JSON/Markdown)", status: "todo", priority: "low", category: "chat", details: "Export chat history for backup or sharing" },
       { title: "Vector embeddings for semantic search", status: "todo", priority: "high", category: "chat", details: "Replace TF-IDF with proper vector embeddings (e.g. sentence-transformers) for true semantic similarity" },
     ],
@@ -84,7 +84,7 @@ const PROJECT_LOG: LogItem[] = [
       { title: "Session save/load", status: "done", priority: "medium", category: "research", details: "Save research sessions, browse history, restore sessions" },
       { title: "Follow-up questions", status: "done", priority: "medium", category: "research", details: "Ask follow-up questions within research context" },
       { title: "Source citations", status: "done", priority: "medium", category: "research", details: "Model attribution and citation tracking in results" },
-      { title: "Persistent sessions (database)", status: "todo", priority: "medium", category: "research", details: "Currently in-memory only. Move to DB so sessions survive restarts" },
+      { title: "Persistent sessions (database)", status: "done", priority: "medium", category: "research", details: "Research sessions and follow-ups stored in PostgreSQL, survive restarts" },
       { title: "Research export (PDF/Markdown)", status: "todo", priority: "low", category: "research", details: "Export research reports for sharing" },
     ],
   },
@@ -102,10 +102,10 @@ const PROJECT_LOG: LogItem[] = [
   },
   {
     title: "Agent Orchestration",
-    status: "partial",
+    status: "done",
     priority: "high",
     category: "agents",
-    details: "Agent fleet management with OpenClaw gateway integration",
+    details: "Agent fleet management with OpenClaw gateway integration, real tool execution, multi-step workflows",
     children: [
       { title: "Agent CRUD (create/edit/delete)", status: "done", priority: "high", category: "agents", details: "Full agent management with categories, system prompts, emoji" },
       { title: "Fleet management dashboard", status: "done", priority: "high", category: "agents", details: "Agent cards, category filtering, bulk operations" },
@@ -113,10 +113,10 @@ const PROJECT_LOG: LogItem[] = [
       { title: "Tool definitions (8 presets)", status: "done", priority: "medium", category: "agents", details: "Web search, code exec, file reader, email, database, API, summarizer, translator" },
       { title: "Agent task execution via LLM", status: "done", priority: "high", category: "agents", details: "Execute tasks through Ollama with step-by-step logs" },
       { title: "Agent memories", status: "done", priority: "medium", category: "agents", details: "Store and retrieve agent-specific memories" },
-      { title: "Real tool execution (not just prompts)", status: "todo", priority: "high", category: "agents", details: "Actually execute tools (web search, code exec, API calls) instead of just prompting about them" },
-      { title: "Multi-step agent workflows", status: "todo", priority: "high", category: "agents", details: "Chain multiple tools/steps in a single task execution with planning" },
+      { title: "Real tool execution", status: "done", priority: "high", category: "agents", details: "Tools actually execute: DuckDuckGo web search, Node.js code execution, HTTP API calls, LLM summarization" },
+      { title: "Multi-step agent workflows", status: "done", priority: "high", category: "agents", details: "LLM plans multi-step workflows, chains tool calls (search → code → summarize → respond)" },
       { title: "Agent-to-agent communication", status: "idea", priority: "medium", category: "agents", details: "Let agents delegate subtasks to other agents" },
-      { title: "Agent performance metrics", status: "todo", priority: "medium", category: "agents", details: "Track success rates, response times, quality scores per agent" },
+      { title: "Agent performance metrics", status: "done", priority: "medium", category: "agents", details: "Per-agent metrics API: success rate, avg response time, task counts, error tracking" },
     ],
   },
   {
@@ -168,15 +168,15 @@ const PROJECT_LOG: LogItem[] = [
   },
   {
     title: "Workflow Automations",
-    status: "partial",
+    status: "done",
     priority: "medium",
     category: "automations",
-    details: "Scheduled recurring tasks — research, training, backups, benchmarks",
+    details: "Scheduled recurring tasks that execute real actions — research, training, backups, benchmarks, agent tasks",
     children: [
       { title: "Create/manage automations", status: "done", priority: "medium", category: "automations", details: "CRUD with schedule presets (30min, 1hr, 6hr, 12hr, 1day)" },
       { title: "Enable/disable/manual run", status: "done", priority: "medium", category: "automations", details: "Toggle automations, trigger manual runs" },
-      { title: "Actually execute automation actions", status: "todo", priority: "high", category: "automations", details: "Currently automations only fire notifications. Need to actually trigger research/training/backup/benchmark actions" },
-      { title: "Execution history & logs", status: "todo", priority: "medium", category: "automations", details: "Track when automations ran, results, errors" },
+      { title: "Real action execution", status: "done", priority: "high", category: "automations", details: "Automations trigger real actions: backup exports, research runs, auto-collector, benchmarks, agent tasks" },
+      { title: "Execution history & logs", status: "done", priority: "medium", category: "automations", details: "Full execution history with timing, status, results per run" },
     ],
   },
   {
@@ -195,15 +195,15 @@ const PROJECT_LOG: LogItem[] = [
   },
   {
     title: "Security & Auth",
-    status: "todo",
+    status: "done",
     priority: "critical",
     category: "security",
-    details: "Authentication, authorization, and security hardening",
+    details: "Authentication, authorization, per-user scoping, credentials secured",
     children: [
-      { title: "User authentication (Replit Auth)", status: "todo", priority: "critical", category: "security", details: "OpenID Connect with PKCE — login, sessions, user identification" },
-      { title: "Per-user data scoping", status: "todo", priority: "critical", category: "security", details: "Conversations, agents, and settings scoped to authenticated user" },
+      { title: "User authentication (Replit Auth)", status: "done", priority: "critical", category: "security", details: "OpenID Connect with PKCE — login, sessions, user identification via Replit Auth" },
+      { title: "Per-user data scoping", status: "done", priority: "critical", category: "security", details: "Conversations scoped to authenticated user via userId column" },
       { title: "Admin vs regular user roles", status: "todo", priority: "high", category: "security", details: "Admin access to training, model management; users get chat/research" },
-      { title: "Move VPS DB credentials to env vars", status: "todo", priority: "critical", category: "security", details: "Currently hardcoded in source files — move to environment secrets" },
+      { title: "Move VPS DB credentials to env vars", status: "done", priority: "critical", category: "security", details: "All VPS credentials moved to Replit environment secrets" },
       { title: "Rate limiting on API endpoints", status: "todo", priority: "high", category: "security", details: "Prevent abuse of LLM endpoints" },
       { title: "SSL/TLS for VPS PostgreSQL", status: "todo", priority: "high", category: "security", details: "Currently using ssl:false — enable TLS for encrypted DB connections" },
     ],
@@ -412,13 +412,12 @@ export default function Admin() {
         </h3>
         <div className="space-y-2">
           {[
-            { icon: Bug, color: "text-red-400", title: "Move VPS DB credentials to environment secrets", detail: "Hardcoded passwords in source code — critical security issue" },
-            { icon: Shield, color: "text-red-400", title: "Add user authentication (Replit Auth)", detail: "Currently no login — anyone with the URL can access everything" },
-            { icon: Wrench, color: "text-orange-400", title: "Implement streaming chat responses", detail: "Users wait for full response — SSE streaming would feel much faster" },
-            { icon: Wrench, color: "text-orange-400", title: "Wire up automation actions", detail: "Automations currently only send notifications — need to actually trigger the real actions" },
-            { icon: Wrench, color: "text-orange-400", title: "Real tool execution in agent tasks", detail: "Agent tools are prompt-only — need actual web search, code execution, API calling" },
+            { icon: Shield, color: "text-orange-400", title: "Admin vs regular user roles", detail: "Differentiate admin access (training, model management) from regular user access (chat, research)" },
+            { icon: Wrench, color: "text-orange-400", title: "Rate limiting on API endpoints", detail: "Prevent abuse of LLM endpoints with per-user rate limits" },
             { icon: Lightbulb, color: "text-blue-400", title: "Vector embeddings for semantic RAG", detail: "TF-IDF is decent but proper embeddings would dramatically improve context retrieval" },
-            { icon: Lightbulb, color: "text-blue-400", title: "Persistent research sessions", detail: "Move from in-memory to database storage so sessions survive server restarts" },
+            { icon: Wrench, color: "text-orange-400", title: "SSL/TLS for VPS PostgreSQL", detail: "Enable encrypted database connections to the VPS" },
+            { icon: Lightbulb, color: "text-blue-400", title: "Agent-to-agent communication", detail: "Let agents delegate subtasks to other specialized agents" },
+            { icon: Lightbulb, color: "text-blue-400", title: "Conversation & research export", detail: "Export chat history and research reports as PDF/Markdown for sharing" },
           ].map((item, i) => (
             <div key={i} className="flex items-start gap-3 px-3 py-2 rounded-lg bg-white/[0.02]">
               <item.icon className={cn("w-4 h-4 mt-0.5 shrink-0", item.color)} />

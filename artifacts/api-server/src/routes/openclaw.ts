@@ -56,8 +56,8 @@ router.get("/openclaw/config", async (_req, res): Promise<void> => {
     [config] = await db
       .insert(openclawConfigTable)
       .values({
-        gatewayUrl: "ws://72.60.167.64:18789",
-        httpUrl: "http://72.60.167.64:18789",
+        gatewayUrl: process.env.VPS_OPENCLAW_WS_URL || "ws://localhost:18789",
+        httpUrl: process.env.VPS_OPENCLAW_HTTP_URL || "http://localhost:18789",
         authToken: "",
       })
       .returning();
@@ -877,8 +877,109 @@ echo ""
   res.send(script);
 });
 
+async function executeToolCall(toolId: string, args: Record<string, any>): Promise<{ success: boolean; result: string }> {
+  switch (toolId) {
+    case "web_search": {
+      const query = args.query || args.q || "";
+      try {
+        const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1`, {
+          signal: AbortSignal.timeout(10000),
+        });
+        const data = await res.json() as any;
+        const results: string[] = [];
+        if (data.Abstract) results.push(`Summary: ${data.Abstract}`);
+        if (data.RelatedTopics) {
+          for (const topic of data.RelatedTopics.slice(0, 5)) {
+            if (topic.Text) results.push(`- ${topic.Text}`);
+          }
+        }
+        return { success: true, result: results.length > 0 ? results.join("\n") : `Search results for "${query}" returned no instant answers. The query was processed.` };
+      } catch (err: any) {
+        return { success: false, result: `Web search failed: ${err.message}` };
+      }
+    }
+
+    case "code_exec": {
+      const code = args.code || "";
+      const language = args.language || "javascript";
+      try {
+        if (language === "javascript" || language === "js") {
+          const { execSync } = require("child_process");
+          const output = execSync(`node -e ${JSON.stringify(code)}`, {
+            timeout: 10000,
+            encoding: "utf8",
+            maxBuffer: 1024 * 100,
+          });
+          return { success: true, result: output.trim() || "(no output)" };
+        }
+        return { success: false, result: `Language "${language}" not supported. Use javascript.` };
+      } catch (err: any) {
+        return { success: false, result: `Code execution error: ${err.stderr || err.message}` };
+      }
+    }
+
+    case "api_call": {
+      const url = args.url || "";
+      const method = (args.method || "GET").toUpperCase();
+      try {
+        const fetchOpts: RequestInit = {
+          method,
+          signal: AbortSignal.timeout(15000),
+          headers: args.headers || {},
+        };
+        if (method !== "GET" && args.body) {
+          fetchOpts.body = typeof args.body === "string" ? args.body : JSON.stringify(args.body);
+          (fetchOpts.headers as Record<string, string>)["Content-Type"] = "application/json";
+        }
+        const res = await fetch(url, fetchOpts);
+        const text = await res.text();
+        return { success: res.ok, result: text.substring(0, 3000) };
+      } catch (err: any) {
+        return { success: false, result: `API call failed: ${err.message}` };
+      }
+    }
+
+    case "summarize": {
+      const text = args.text || "";
+      const serverUrl = process.env.VPS_OLLAMA_URL || "http://localhost:11434";
+      try {
+        const res = await fetch(`${serverUrl}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: "qwen2.5:7b",
+            messages: [{ role: "user", content: `Summarize the following text concisely:\n\n${text.substring(0, 5000)}` }],
+            stream: false,
+          }),
+          signal: AbortSignal.timeout(60000),
+        });
+        const data = await res.json() as any;
+        return { success: true, result: data.message?.content || "Summary not generated" };
+      } catch (err: any) {
+        return { success: false, result: `Summarization failed: ${err.message}` };
+      }
+    }
+
+    case "db_query": {
+      return { success: false, result: "Database queries require explicit approval. Use the dashboard DB tools instead." };
+    }
+
+    default:
+      return { success: false, result: `Unknown tool: ${toolId}` };
+  }
+}
+
+router.post("/openclaw/tools/execute", async (req, res): Promise<void> => {
+  const { toolId, args } = req.body;
+  if (!toolId) { res.status(400).json({ error: "toolId required" }); return; }
+  const startTime = Date.now();
+  const result = await executeToolCall(toolId, args || {});
+  res.json({ ...result, toolId, durationMs: Date.now() - startTime });
+});
+
 router.post("/openclaw/execute-task/:taskId", async (req, res): Promise<void> => {
   try {
+    const startTime = Date.now();
     const taskId = parseInt(req.params.taskId);
     const [task] = await db.select().from(agentTasksTable).where(eq(agentTasksTable.id, taskId)).limit(1);
     if (!task) { res.status(404).json({ error: "Task not found" }); return; }
@@ -893,27 +994,94 @@ router.post("/openclaw/execute-task/:taskId", async (req, res): Promise<void> =>
     await db.update(agentTasksTable).set({ status: "in-progress" }).where(eq(agentTasksTable.id, taskId));
 
     const config = await getOpenclawConfig();
-    const serverUrl = config?.gatewayUrl?.replace(/:\d+$/, ":11434") || "http://72.60.167.64:11434";
+    const serverUrl = config?.gatewayUrl?.replace(/:\d+$/, ":11434") || process.env.VPS_OLLAMA_URL || "http://localhost:11434";
 
-    const systemPrompt = agent?.systemPrompt || "You are a helpful AI assistant. Complete the assigned task thoroughly.";
-    const taskPrompt = `Task: ${task.title}\n\nDescription: ${task.description || "No additional details."}\n\nPlease complete this task step by step. Provide a clear, actionable result.`;
+    const systemPrompt = agent?.systemPrompt || "You are a helpful AI assistant with access to tools. Complete the assigned task thoroughly.";
 
-    const steps: Array<{ step: number; type: string; content: string; timestamp: number }> = [];
-    steps.push({ step: 1, type: "thinking", content: `Analyzing task: "${task.title}"`, timestamp: Date.now() });
+    const steps: Array<{ step: number; type: string; content: string; timestamp: number; durationMs?: number }> = [];
+    steps.push({ step: 1, type: "planning", content: `Analyzing task: "${task.title}"`, timestamp: Date.now() });
 
-    let ollamaModel = "qwen2.5:7b";
+    let ollamaModel = agent?.model || "qwen2.5:7b";
     try {
       const modelsRes = await fetch(`${serverUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
       if (modelsRes.ok) {
         const modelsData = (await modelsRes.json()) as { models?: Array<{ name: string }> };
         if (modelsData.models && modelsData.models.length > 0) {
-          const preferred = modelsData.models.find(m => m.name.includes("qwen"));
-          ollamaModel = preferred?.name || modelsData.models[0].name;
+          const hasModel = modelsData.models.find(m => m.name === ollamaModel);
+          if (!hasModel) {
+            const preferred = modelsData.models.find(m => m.name.includes("qwen"));
+            ollamaModel = preferred?.name || modelsData.models[0].name;
+          }
         }
       }
     } catch {}
 
-    steps.push({ step: 2, type: "tool", content: `Using model: ${ollamaModel}`, timestamp: Date.now() });
+    const planPrompt = `You are planning how to complete a task. Given the task below, output a JSON array of steps. Each step has a "type" (one of: "think", "web_search", "code_exec", "api_call", "summarize", "respond") and an "input" string.
+
+Task: ${task.title}
+Description: ${task.description || "No additional details."}
+
+Respond ONLY with a valid JSON array. Example:
+[{"type":"think","input":"Analyze the requirements"},{"type":"web_search","input":"latest AI trends 2026"},{"type":"respond","input":"Compile findings"}]`;
+
+    let plan: Array<{ type: string; input: string }> = [{ type: "respond", input: task.title }];
+    try {
+      const planRes = await fetch(`${serverUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: ollamaModel,
+          messages: [{ role: "system", content: "You are a task planner. Respond only with valid JSON arrays." }, { role: "user", content: planPrompt }],
+          stream: false,
+          options: { temperature: 0.3 },
+        }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (planRes.ok) {
+        const planData = await planRes.json() as any;
+        const content = planData.message?.content || "";
+        const jsonMatch = content.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (Array.isArray(parsed) && parsed.length > 0) plan = parsed;
+        }
+      }
+    } catch {}
+
+    steps.push({ step: 2, type: "plan", content: `Plan: ${plan.length} steps - ${plan.map(p => p.type).join(" → ")}`, timestamp: Date.now() });
+
+    let context = "";
+    let stepNum = 3;
+    let toolsUsed = 0;
+
+    for (const planStep of plan.slice(0, 8)) {
+      const stepStart = Date.now();
+      if (planStep.type === "web_search") {
+        const toolResult = await executeToolCall("web_search", { query: planStep.input });
+        context += `\n\n[Web Search: ${planStep.input}]\n${toolResult.result}`;
+        steps.push({ step: stepNum++, type: "tool:web_search", content: toolResult.result.substring(0, 500), timestamp: Date.now(), durationMs: Date.now() - stepStart });
+        toolsUsed++;
+      } else if (planStep.type === "code_exec") {
+        const toolResult = await executeToolCall("code_exec", { code: planStep.input });
+        context += `\n\n[Code Execution]\n${toolResult.result}`;
+        steps.push({ step: stepNum++, type: "tool:code_exec", content: toolResult.result.substring(0, 500), timestamp: Date.now(), durationMs: Date.now() - stepStart });
+        toolsUsed++;
+      } else if (planStep.type === "api_call") {
+        const toolResult = await executeToolCall("api_call", { url: planStep.input });
+        context += `\n\n[API Call: ${planStep.input}]\n${toolResult.result}`;
+        steps.push({ step: stepNum++, type: "tool:api_call", content: toolResult.result.substring(0, 500), timestamp: Date.now(), durationMs: Date.now() - stepStart });
+        toolsUsed++;
+      } else if (planStep.type === "summarize") {
+        const toolResult = await executeToolCall("summarize", { text: context });
+        context = toolResult.result;
+        steps.push({ step: stepNum++, type: "tool:summarize", content: toolResult.result.substring(0, 500), timestamp: Date.now(), durationMs: Date.now() - stepStart });
+        toolsUsed++;
+      } else if (planStep.type === "think") {
+        steps.push({ step: stepNum++, type: "thinking", content: planStep.input, timestamp: Date.now() });
+      }
+    }
+
+    const taskPrompt = `${systemPrompt}\n\nTask: ${task.title}\nDescription: ${task.description || "No additional details."}${context ? `\n\nContext gathered from tools:\n${context}` : ""}\n\nProvide a thorough, actionable result.`;
 
     try {
       const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
@@ -934,9 +1102,10 @@ router.post("/openclaw/execute-task/:taskId", async (req, res): Promise<void> =>
       if (!ollamaRes.ok) throw new Error(`Ollama returned ${ollamaRes.status}`);
       const ollamaData = (await ollamaRes.json()) as { message?: { content: string } };
       const result = ollamaData.message?.content || "No response generated";
+      const totalDuration = Date.now() - startTime;
 
-      steps.push({ step: 3, type: "execution", content: result, timestamp: Date.now() });
-      steps.push({ step: 4, type: "complete", content: "Task completed successfully", timestamp: Date.now() });
+      steps.push({ step: stepNum++, type: "execution", content: result.substring(0, 1000), timestamp: Date.now(), durationMs: totalDuration });
+      steps.push({ step: stepNum, type: "complete", content: "Task completed successfully", timestamp: Date.now() });
 
       await db.update(agentTasksTable).set({
         status: "completed",
@@ -945,18 +1114,72 @@ router.post("/openclaw/execute-task/:taskId", async (req, res): Promise<void> =>
       }).where(eq(agentTasksTable.id, taskId));
 
       if (agentId) {
-        await logAgentActivity(agentId, "info", `Executed task: ${task.title}`, { taskId, model: ollamaModel });
+        await db.update(agentsTable).set({
+          tasksCompleted: sql`${agentsTable.tasksCompleted} + 1`,
+          lastActive: new Date(),
+        }).where(eq(agentsTable.agentId, agentId));
+        await logAgentActivity(agentId, "info", `Executed task: ${task.title}`, {
+          taskId, model: ollamaModel, durationMs: totalDuration, toolsUsed, steps: steps.length,
+        });
       }
 
-      res.json({ success: true, steps, result: result.substring(0, 2000), model: ollamaModel });
+      res.json({ success: true, steps, result: result.substring(0, 2000), model: ollamaModel, durationMs: totalDuration, toolsUsed });
     } catch (err: any) {
-      steps.push({ step: 3, type: "error", content: `Execution failed: ${err.message}`, timestamp: Date.now() });
+      const totalDuration = Date.now() - startTime;
+      steps.push({ step: stepNum, type: "error", content: `Execution failed: ${err.message}`, timestamp: Date.now() });
       await db.update(agentTasksTable).set({ status: "failed", result: `Error: ${err.message}` }).where(eq(agentTasksTable.id, taskId));
-      res.json({ success: false, steps, error: err.message });
+      if (agentId) {
+        await logAgentActivity(agentId, "error", `Task failed: ${task.title}`, { taskId, error: err.message, durationMs: totalDuration });
+      }
+      res.json({ success: false, steps, error: err.message, durationMs: totalDuration });
     }
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
+});
+
+router.get("/openclaw/agents/:agentId/metrics", async (req, res): Promise<void> => {
+  const { agentId } = req.params;
+
+  const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.agentId, agentId));
+  if (!agent) { res.status(404).json({ error: "Agent not found" }); return; }
+
+  const tasks = await db.select().from(agentTasksTable).where(eq(agentTasksTable.assignedAgentId, agentId));
+  const completedTasks = tasks.filter(t => t.status === "completed");
+  const failedTasks = tasks.filter(t => t.status === "failed");
+  const pendingTasks = tasks.filter(t => t.status === "pending" || t.status === "in-progress");
+
+  const logs = await db.select().from(agentLogsTable)
+    .where(eq(agentLogsTable.agentId, agentId))
+    .orderBy(desc(agentLogsTable.createdAt))
+    .limit(100);
+
+  const errorLogs = logs.filter(l => l.level === "error");
+  const taskLogs = logs.filter(l => {
+    const meta = typeof l.metadata === "string" ? JSON.parse(l.metadata || "{}") : (l.metadata || {});
+    return meta.durationMs !== undefined;
+  });
+  const durations = taskLogs.map(l => {
+    const meta = typeof l.metadata === "string" ? JSON.parse(l.metadata || "{}") : (l.metadata || {});
+    return meta.durationMs as number;
+  }).filter(d => d > 0);
+
+  const avgResponseTime = durations.length > 0 ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null;
+  const successRate = tasks.length > 0 ? Math.round((completedTasks.length / (completedTasks.length + failedTasks.length || 1)) * 100) : null;
+
+  res.json({
+    agentId,
+    totalTasks: tasks.length,
+    completedTasks: completedTasks.length,
+    failedTasks: failedTasks.length,
+    pendingTasks: pendingTasks.length,
+    successRate,
+    avgResponseTimeMs: avgResponseTime,
+    totalMessages: agent.totalMessages,
+    errorCount: errorLogs.length,
+    lastActive: agent.lastActive,
+    recentLogs: logs.slice(0, 20),
+  });
 });
 
 export default router;

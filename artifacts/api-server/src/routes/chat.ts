@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { eq, asc } from "drizzle-orm";
+import { eq, asc, and } from "drizzle-orm";
 import { db, conversationsTable, chatMessagesTable } from "@workspace/db";
 import {
   ListConversationsResponse,
@@ -15,11 +15,16 @@ import {
 
 const router: IRouter = Router();
 
-router.get("/chat/conversations", async (_req, res): Promise<void> => {
-  const conversations = await db
-    .select()
-    .from(conversationsTable)
-    .orderBy(asc(conversationsTable.createdAt));
+function getUserId(req: any): string | null {
+  return req.user?.id || null;
+}
+
+router.get("/chat/conversations", async (req, res): Promise<void> => {
+  const userId = getUserId(req);
+  const conditions = userId ? [eq(conversationsTable.userId, userId)] : [];
+  const conversations = conditions.length > 0
+    ? await db.select().from(conversationsTable).where(conditions[0]!).orderBy(asc(conversationsTable.createdAt))
+    : await db.select().from(conversationsTable).orderBy(asc(conversationsTable.createdAt));
   res.json(ListConversationsResponse.parse(conversations));
 });
 
@@ -30,9 +35,10 @@ router.post("/chat/conversations", async (req, res): Promise<void> => {
     return;
   }
 
+  const userId = getUserId(req);
   const [conversation] = await db
     .insert(conversationsTable)
-    .values(parsed.data)
+    .values({ ...parsed.data, userId })
     .returning();
 
   res.status(201).json(conversation);
@@ -45,9 +51,14 @@ router.delete("/chat/conversations/:id", async (req, res): Promise<void> => {
     return;
   }
 
+  const userId = getUserId(req);
+  const conditions = userId
+    ? and(eq(conversationsTable.id, params.data.id), eq(conversationsTable.userId, userId))
+    : eq(conversationsTable.id, params.data.id);
+
   const [deleted] = await db
     .delete(conversationsTable)
-    .where(eq(conversationsTable.id, params.data.id))
+    .where(conditions!)
     .returning();
 
   if (!deleted) {

@@ -54,7 +54,7 @@ async function getOllamaUrl(): Promise<string> {
     const [config] = await db.select().from(llmConfigTable).limit(1);
     if (config?.serverUrl) return config.serverUrl;
   } catch {}
-  return "http://72.60.167.64:11434";
+  return process.env.VPS_OLLAMA_URL || "http://localhost:11434";
 }
 
 async function getVpsClient() {
