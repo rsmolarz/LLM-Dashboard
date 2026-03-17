@@ -330,7 +330,6 @@ router.post("/openclaw/agents/:agentId/chat", async (req, res): Promise<void> =>
   }
 
   const historyMessages = (body.conversationHistory || [])
-    .slice(-20)
     .map((m) => ({ role: m.role, content: m.content }));
 
   const chatMessages = [
