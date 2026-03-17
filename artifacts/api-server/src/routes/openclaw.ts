@@ -329,6 +329,16 @@ router.post("/openclaw/agents/:agentId/chat", async (req, res): Promise<void> =>
     systemContent += `\n\n## Persistent Memory\nThe following are remembered facts, summaries, and preferences:\n${memoryContext}`;
   }
 
+  const historyMessages = (body.conversationHistory || [])
+    .slice(-20)
+    .map((m) => ({ role: m.role, content: m.content }));
+
+  const chatMessages = [
+    ...(systemContent ? [{ role: "system" as const, content: systemContent }] : []),
+    ...historyMessages,
+    { role: "user" as const, content: body.message },
+  ];
+
   if (config?.httpUrl && config?.authToken) {
     try {
       const chatRes = await fetch(`${config.httpUrl}/v1/chat/completions`, {
@@ -341,12 +351,7 @@ router.post("/openclaw/agents/:agentId/chat", async (req, res): Promise<void> =>
         body: JSON.stringify({
           model: "openclaw",
           stream: false,
-          messages: [
-            ...(systemContent
-              ? [{ role: "system", content: systemContent }]
-              : []),
-            { role: "user", content: body.message },
-          ],
+          messages: chatMessages,
           user: sessionKey,
         }),
         signal: AbortSignal.timeout(120000),

@@ -91,10 +91,12 @@ export default function Chat() {
     const conv = conversations.find(c => c.id === selectedConvId);
     const modelToUse = conv?.model || selectedModel;
     
-    const formattedHistory = [...messages, { role: 'user', content: userMsgContent }].map(m => ({
-      role: m.role,
-      content: m.content
-    }));
+    const formattedHistory = [...messages, { role: 'user', content: userMsgContent }]
+      .slice(-20)
+      .map(m => ({
+        role: m.role,
+        content: m.content
+      }));
 
     setIsStreaming(true);
     setStreamingContent("");

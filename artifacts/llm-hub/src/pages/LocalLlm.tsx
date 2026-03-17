@@ -499,10 +499,12 @@ function LocalChatTester({ defaultModel, models }: { defaultModel: string; model
     setMessages(newMsgs);
     setInput("");
 
+    const recentMsgs = newMsgs.slice(-20);
+
     sendMessage.mutate({
       data: {
         model: selectedModel,
-        messages: newMsgs,
+        messages: recentMsgs,
         temperature: 0.7
       }
     }, {

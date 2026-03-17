@@ -722,6 +722,10 @@ export const ChatWithAgentParams = zod.object({
 export const ChatWithAgentBody = zod.object({
   message: zod.string(),
   sessionKey: zod.string().optional(),
+  conversationHistory: zod.array(zod.object({
+    role: zod.enum(["user", "assistant", "system"]),
+    content: zod.string(),
+  })).optional(),
 });
 
 export const ChatWithAgentResponse = zod.object({

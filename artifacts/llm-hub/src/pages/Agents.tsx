@@ -612,10 +612,14 @@ function AgentDetailView({ agentId, onBack }: { agentId: string; onBack: () => v
     setChatMessage("");
     setChatHistory((h) => [...h, { role: "user", content: msg }]);
 
+    const recentHistory = chatHistory
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .slice(-20);
+
     try {
       const res = await chatMutation.mutateAsync({
         agentId,
-        data: { message: msg },
+        data: { message: msg, conversationHistory: recentHistory },
       });
       setChatHistory((h) => [...h, { role: "assistant", content: (res as any).response }]);
       queryClient.invalidateQueries({ queryKey: ["/api/openclaw/agents"] });
