@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
 
@@ -14,18 +14,17 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/research", label: "Research", icon: Search },
     { href: "/vision", label: "Vision", icon: Eye },
     { href: "/agents", label: "Agents", icon: Bot },
+    { href: "/monitor", label: "Monitor", icon: BarChart3 },
   ];
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col font-sans overflow-hidden">
-      {/* Background Effects */}
       <div className="fixed inset-0 z-0 pointer-events-none">
         <div className="absolute top-0 left-1/4 w-96 h-96 bg-primary/10 rounded-full blur-[120px]" />
         <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-accent/10 rounded-full blur-[120px]" />
         <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=1920&q=80')] opacity-[0.02] mix-blend-overlay object-cover" />
       </div>
 
-      {/* Top Navbar */}
       <header className="relative z-10 h-16 glass-panel border-b border-white/5 flex items-center justify-between px-6">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg shadow-primary/20">
@@ -36,7 +35,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </h1>
         </div>
 
-        <nav className="flex items-center gap-2">
+        <nav className="flex items-center gap-1">
           {navItems.map((item) => {
             const isActive = location === item.href;
             return (
@@ -44,7 +43,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 key={item.href} 
                 href={item.href}
                 className={cn(
-                  "flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200",
+                  "flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-200",
                   isActive 
                     ? "bg-white/10 text-white shadow-sm" 
                     : "text-muted-foreground hover:text-white hover:bg-white/5"
@@ -70,7 +69,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
       </header>
 
-      {/* Main Content Area */}
       <main className="relative z-10 flex-1 flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
         {children}
       </main>

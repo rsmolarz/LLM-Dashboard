@@ -15,6 +15,7 @@ import deepResearchRouter from "./deep-research";
 import mediaRouter from "./media";
 import backupRouter from "./backup";
 import entTrainingRouter from "./ent-training";
+import monitorRouter from "./monitor";
 
 const router: IRouter = Router();
 
@@ -34,5 +35,6 @@ router.use(deepResearchRouter);
 router.use(mediaRouter);
 router.use(backupRouter);
 router.use(entTrainingRouter);
+router.use(monitorRouter);
 
 export default router;

@@ -9,6 +9,7 @@ import Training from "@/pages/Training";
 import Research from "@/pages/Research";
 import Vision from "@/pages/Vision";
 import Agents from "@/pages/Agents";
+import Monitor from "@/pages/Monitor";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -30,6 +31,7 @@ function Router() {
         <Route path="/research" component={Research} />
         <Route path="/vision" component={Vision} />
         <Route path="/agents" component={Agents} />
+        <Route path="/monitor" component={Monitor} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

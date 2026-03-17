@@ -81,6 +81,24 @@ let collectorInterval: ReturnType<typeof setInterval> | null = null;
 let isRunning = false;
 let runHistory: RunRecord[] = [];
 let lastRunAt: string | null = null;
+let wasExplicitlyStopped = false;
+const serverStartedAt = new Date().toISOString();
+
+function autoStartCollector() {
+  setTimeout(() => {
+    if (!collectorConfig.enabled && !wasExplicitlyStopped) {
+      collectorConfig.enabled = true;
+      if (collectorInterval) clearInterval(collectorInterval);
+      collectorInterval = setInterval(() => {
+        if (!isRunning) runCollection().catch(console.error);
+      }, collectorConfig.intervalMinutes * 60 * 1000);
+      console.log(`[auto-collector] Auto-started. Running every ${collectorConfig.intervalMinutes} minutes.`);
+      runCollection().catch(console.error);
+    }
+  }, 15000);
+}
+
+autoStartCollector();
 
 async function getVpsClient() {
   const [config] = await db.select().from(vpsDatabaseConfigTable).limit(1);
@@ -677,6 +695,7 @@ router.post("/auto-collector/start", async (_req, res): Promise<void> => {
 
 router.post("/auto-collector/stop", async (_req, res): Promise<void> => {
   collectorConfig.enabled = false;
+  wasExplicitlyStopped = true;
   if (collectorInterval) {
     clearInterval(collectorInterval);
     collectorInterval = null;
@@ -764,5 +783,27 @@ router.post("/auto-collector/process", async (req, res): Promise<void> => {
     res.status(500).json({ error: err?.message || "Processing failed" });
   }
 });
+
+export function getCollectorState() {
+  const totalCollected = runHistory.reduce((sum, r) =>
+    sum + r.results.gmail + r.results.drive + r.results.conversations + r.results.discovery + r.results.knowledgeBase, 0);
+  return {
+    enabled: collectorConfig.enabled,
+    isRunning,
+    intervalMinutes: collectorConfig.intervalMinutes,
+    lastRunAt,
+    totalRuns: runHistory.length,
+    totalCollected,
+    serverStartedAt,
+    recentRuns: runHistory.slice(0, 5),
+    sources: {
+      gmail: collectorConfig.sources.gmail.enabled,
+      drive: collectorConfig.sources.drive.enabled,
+      conversations: collectorConfig.sources.conversations.enabled,
+      discovery: collectorConfig.sources.discovery.enabled,
+      knowledgeBase: collectorConfig.sources.knowledgeBase.enabled,
+    },
+  };
+}
 
 export default router;
