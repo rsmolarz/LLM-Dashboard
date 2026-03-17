@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -20,6 +20,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/analytics", label: "Analytics", icon: LineChart },
     { href: "/automations", label: "Automations", icon: Zap },
     { href: "/monitor", label: "Monitor", icon: BarChart3 },
+    { href: "/admin", label: "Admin", icon: Shield },
   ];
 
   return (

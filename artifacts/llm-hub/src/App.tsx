@@ -12,6 +12,7 @@ import Agents from "@/pages/Agents";
 import Monitor from "@/pages/Monitor";
 import Analytics from "@/pages/Analytics";
 import Automations from "@/pages/Automations";
+import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -36,6 +37,7 @@ function Router() {
         <Route path="/analytics" component={Analytics} />
         <Route path="/automations" component={Automations} />
         <Route path="/monitor" component={Monitor} />
+        <Route path="/admin" component={Admin} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
