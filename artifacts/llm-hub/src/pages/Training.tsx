@@ -5,10 +5,13 @@ import {
   Download, Upload, Star, Play, CheckCircle2, FileText,
   Search, BarChart3, Sparkles, Rocket, ChevronRight, Globe,
   Link, Package, AlertCircle, ExternalLink, Layers, Bot,
-  Zap, Eye, XCircle, RefreshCw, ThumbsUp, ThumbsDown
+  Zap, Eye, XCircle, RefreshCw, ThumbsUp, ThumbsDown,
+  Stethoscope, Shield
 } from "lucide-react";
 import ContextScanner from "@/components/ContextScanner";
 import VpsTrainingDashboard from "@/components/VpsTrainingDashboard";
+import BackupPanel from "@/components/BackupPanel";
+import EntTrainingPanel from "@/components/EntTrainingPanel";
 import {
   useListModelProfiles,
   useCreateModelProfile,
@@ -41,7 +44,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-type Tab = "profiles" | "data" | "knowledge" | "finetune" | "vps-training";
+type Tab = "profiles" | "data" | "knowledge" | "finetune" | "vps-training" | "ent-training" | "backup";
 
 export default function Training() {
   const [activeTab, setActiveTab] = useState<Tab>("profiles");
@@ -50,8 +53,10 @@ export default function Training() {
     { id: "profiles", label: "Model Profiles", icon: <Brain className="w-4 h-4" />, desc: "Custom model configurations" },
     { id: "data", label: "Training Data", icon: <Database className="w-4 h-4" />, desc: "Collect & manage datasets" },
     { id: "knowledge", label: "Knowledge Base", icon: <BookOpen className="w-4 h-4" />, desc: "RAG document store" },
+    { id: "ent-training", label: "ENT Training", icon: <Stethoscope className="w-4 h-4" />, desc: "Otolaryngology AI training" },
     { id: "vps-training", label: "VPS Training", icon: <Layers className="w-4 h-4" />, desc: "Remote training data" },
     { id: "finetune", label: "Fine-tuning", icon: <Wand2 className="w-4 h-4" />, desc: "Train your models" },
+    { id: "backup", label: "Backup", icon: <Shield className="w-4 h-4" />, desc: "System backup & recovery" },
   ];
 
   return (
@@ -64,7 +69,7 @@ export default function Training() {
           </p>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -100,7 +105,9 @@ export default function Training() {
             {activeTab === "data" && <TrainingDataTab />}
             {activeTab === "knowledge" && <KnowledgeBaseTab />}
             {activeTab === "vps-training" && <VpsTrainingDashboard />}
+            {activeTab === "ent-training" && <EntTrainingPanel />}
             {activeTab === "finetune" && <FineTuningTab />}
+            {activeTab === "backup" && <BackupPanel />}
           </motion.div>
         </AnimatePresence>
       </div>

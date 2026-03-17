@@ -13,6 +13,8 @@ import vpsTrainingRouter from "./vps-training";
 import autoCollectorRouter from "./auto-collector";
 import deepResearchRouter from "./deep-research";
 import mediaRouter from "./media";
+import backupRouter from "./backup";
+import entTrainingRouter from "./ent-training";
 
 const router: IRouter = Router();
 
@@ -30,5 +32,7 @@ router.use(vpsTrainingRouter);
 router.use(autoCollectorRouter);
 router.use(deepResearchRouter);
 router.use(mediaRouter);
+router.use(backupRouter);
+router.use(entTrainingRouter);
 
 export default router;
