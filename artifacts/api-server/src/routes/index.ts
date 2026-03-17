@@ -18,6 +18,9 @@ import entTrainingRouter from "./ent-training";
 import monitorRouter from "./monitor";
 import modelEvolutionRouter from "./model-evolution";
 import projectBrainRouter from "./project-brain";
+import analyticsRouter from "./analytics";
+import notificationsRouter from "./notifications";
+import automationsRouter from "./automations";
 
 const router: IRouter = Router();
 
@@ -40,5 +43,8 @@ router.use(entTrainingRouter);
 router.use(monitorRouter);
 router.use(modelEvolutionRouter);
 router.use(projectBrainRouter);
+router.use(analyticsRouter);
+router.use(notificationsRouter);
+router.use(automationsRouter);
 
 export default router;

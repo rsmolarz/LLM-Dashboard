@@ -877,4 +877,86 @@ echo ""
   res.send(script);
 });
 
+router.post("/openclaw/execute-task/:taskId", async (req, res): Promise<void> => {
+  try {
+    const taskId = parseInt(req.params.taskId);
+    const [task] = await db.select().from(agentTasksTable).where(eq(agentTasksTable.id, taskId)).limit(1);
+    if (!task) { res.status(404).json({ error: "Task not found" }); return; }
+
+    const agentId = task.assignedAgentId;
+    let agent: any = null;
+    if (agentId) {
+      const [a] = await db.select().from(agentsTable).where(eq(agentsTable.agentId, agentId)).limit(1);
+      agent = a;
+    }
+
+    await db.update(agentTasksTable).set({ status: "in-progress" }).where(eq(agentTasksTable.id, taskId));
+
+    const config = await getOpenclawConfig();
+    const serverUrl = config?.gatewayUrl?.replace(/:\d+$/, ":11434") || "http://72.60.167.64:11434";
+
+    const systemPrompt = agent?.systemPrompt || "You are a helpful AI assistant. Complete the assigned task thoroughly.";
+    const taskPrompt = `Task: ${task.title}\n\nDescription: ${task.description || "No additional details."}\n\nPlease complete this task step by step. Provide a clear, actionable result.`;
+
+    const steps: Array<{ step: number; type: string; content: string; timestamp: number }> = [];
+    steps.push({ step: 1, type: "thinking", content: `Analyzing task: "${task.title}"`, timestamp: Date.now() });
+
+    let ollamaModel = "qwen2.5:7b";
+    try {
+      const modelsRes = await fetch(`${serverUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
+      if (modelsRes.ok) {
+        const modelsData = (await modelsRes.json()) as { models?: Array<{ name: string }> };
+        if (modelsData.models && modelsData.models.length > 0) {
+          const preferred = modelsData.models.find(m => m.name.includes("qwen"));
+          ollamaModel = preferred?.name || modelsData.models[0].name;
+        }
+      }
+    } catch {}
+
+    steps.push({ step: 2, type: "tool", content: `Using model: ${ollamaModel}`, timestamp: Date.now() });
+
+    try {
+      const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: ollamaModel,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: taskPrompt },
+          ],
+          stream: false,
+          options: { temperature: 0.7 },
+        }),
+        signal: AbortSignal.timeout(120000),
+      });
+
+      if (!ollamaRes.ok) throw new Error(`Ollama returned ${ollamaRes.status}`);
+      const ollamaData = (await ollamaRes.json()) as { message?: { content: string } };
+      const result = ollamaData.message?.content || "No response generated";
+
+      steps.push({ step: 3, type: "execution", content: result, timestamp: Date.now() });
+      steps.push({ step: 4, type: "complete", content: "Task completed successfully", timestamp: Date.now() });
+
+      await db.update(agentTasksTable).set({
+        status: "completed",
+        result: result.substring(0, 2000),
+        completedAt: new Date(),
+      }).where(eq(agentTasksTable.id, taskId));
+
+      if (agentId) {
+        await logAgentActivity(agentId, "info", `Executed task: ${task.title}`, { taskId, model: ollamaModel });
+      }
+
+      res.json({ success: true, steps, result: result.substring(0, 2000), model: ollamaModel });
+    } catch (err: any) {
+      steps.push({ step: 3, type: "error", content: `Execution failed: ${err.message}`, timestamp: Date.now() });
+      await db.update(agentTasksTable).set({ status: "failed", result: `Error: ${err.message}` }).where(eq(agentTasksTable.id, taskId));
+      res.json({ success: false, steps, error: err.message });
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

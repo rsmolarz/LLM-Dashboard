@@ -18,6 +18,12 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **Vision Studio**: `/vision` page with image generation (GPT-Image-1) and vision analysis (llava:13b on VPS). Domain presets for Medical/ENT, Finance, Social Media, Real Estate
 - **Agents**: `/agents` page for agent orchestration with fleet management, task routing, agent memories, tool definitions, category filtering
 - **Chat RAG**: Knowledge Base + Project Brain context injection toggles for augmented chat responses
+- **Analytics Dashboard**: `/analytics` page with usage charts, model performance, rating distributions, VPS training stats
+- **Workflow Automations**: `/automations` page for scheduling recurring tasks (research, training, backups, benchmarks) with cron-like intervals
+- **Real-time Notifications**: SSE-based notification system with bell icon in header, supports info/success/warning/error types
+- **Agent Execution**: Tasks can be executed through LLM with step-by-step execution logs (thinking, tool use, execution, completion)
+- **Smarter RAG**: TF-IDF scoring with stop word removal and term frequency-inverse document frequency for better brain context retrieval
+- **Mobile Responsive**: Hamburger menu on mobile, responsive grid layouts, touch-friendly controls across all pages
 - **System Monitor**: `/monitor` dashboard with real-time health metrics, auto-collector status, VPS model inventory, database stats, knowledge base categories
 
 ## VPS Configuration

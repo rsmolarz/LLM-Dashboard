@@ -1211,6 +1211,24 @@ function TasksView({ agents, onBack }: { agents: any[]; onBack: () => void }) {
   const [routeForm, setRouteForm] = useState({
     title: "", description: "", category: "general", priority: "medium",
   });
+  const [executingTaskId, setExecutingTaskId] = useState<number | null>(null);
+  const [executionResult, setExecutionResult] = useState<{ taskId: number; steps: any[]; result?: string; error?: string } | null>(null);
+
+  const BASE = import.meta.env.BASE_URL || "/";
+  const executeTask = async (taskId: number) => {
+    setExecutingTaskId(taskId);
+    setExecutionResult(null);
+    try {
+      const res = await fetch(`${BASE}api/openclaw/execute-task/${taskId}`, { method: "POST" });
+      const data = await res.json();
+      setExecutionResult({ taskId, steps: data.steps || [], result: data.result, error: data.error });
+      invalidateTasks();
+    } catch (err: any) {
+      setExecutionResult({ taskId, steps: [], error: err.message });
+    } finally {
+      setExecutingTaskId(null);
+    }
+  };
 
   const invalidateTasks = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/openclaw/tasks"] });
@@ -1489,6 +1507,22 @@ function TasksView({ agents, onBack }: { agents: any[]; onBack: () => void }) {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {(task.status === "pending" || task.status === "in-progress") && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => executeTask(task.id)}
+                        disabled={executingTaskId === task.id}
+                        className="h-7 text-[10px] text-cyan-400 hover:text-cyan-300"
+                      >
+                        {executingTaskId === task.id ? (
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        ) : (
+                          <Zap className="w-3 h-3 mr-1" />
+                        )}
+                        Execute
+                      </Button>
+                    )}
                     {task.status === "pending" && (
                       <Button
                         variant="ghost"
@@ -1513,7 +1547,25 @@ function TasksView({ agents, onBack }: { agents: any[]; onBack: () => void }) {
                     )}
                   </div>
                 </div>
-                {task.result && (
+                {executionResult && executionResult.taskId === task.id && (
+                  <div className="mt-3 space-y-2">
+                    {executionResult.steps.map((step: any, i: number) => (
+                      <div key={i} className={cn(
+                        "flex items-start gap-2 px-3 py-2 rounded-lg text-xs border",
+                        step.type === "thinking" ? "bg-blue-500/10 border-blue-500/20 text-blue-300" :
+                        step.type === "tool" ? "bg-purple-500/10 border-purple-500/20 text-purple-300" :
+                        step.type === "execution" ? "bg-white/5 border-white/10 text-white" :
+                        step.type === "error" ? "bg-red-500/10 border-red-500/20 text-red-300" :
+                        "bg-emerald-500/10 border-emerald-500/20 text-emerald-300"
+                      )}>
+                        <span className="font-mono text-[10px] text-muted-foreground mt-0.5">#{step.step}</span>
+                        <span className="px-1.5 py-0.5 rounded bg-white/10 text-[10px] uppercase font-medium">{step.type}</span>
+                        <p className="flex-1 whitespace-pre-wrap">{step.content}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {task.result && !executionResult?.taskId && (
                   <div className="mt-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2">
                     <p className="text-xs text-emerald-400">{task.result}</p>
                   </div>

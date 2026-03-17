@@ -339,6 +339,51 @@ async function searchRagContext(query: string, maxResults = 3): Promise<string |
     .join("\n\n---\n\n");
 }
 
+const STOP_WORDS = new Set([
+  "the","a","an","is","are","was","were","be","been","being","have","has","had",
+  "do","does","did","will","would","shall","should","may","might","must","can","could",
+  "i","you","he","she","it","we","they","me","him","her","us","them","my","your",
+  "his","its","our","their","this","that","these","those","what","which","who","whom",
+  "and","but","or","nor","not","so","yet","for","at","by","in","on","to","of","with",
+  "from","up","out","if","then","than","too","very","just","about","above","after",
+  "before","between","into","through","during","how","all","each","every","both","few",
+  "more","most","other","some","such","no","only","same","also","any","here","there",
+]);
+
+function tokenize(text: string): string[] {
+  return text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2 && !STOP_WORDS.has(w));
+}
+
+function computeTfIdf(docs: string[][], queryTokens: string[]) {
+  const N = docs.length;
+  const df: Record<string, number> = {};
+  for (const doc of docs) {
+    const unique = new Set(doc);
+    for (const term of unique) df[term] = (df[term] || 0) + 1;
+  }
+
+  return docs.map((doc) => {
+    const tf: Record<string, number> = {};
+    for (const t of doc) tf[t] = (tf[t] || 0) + 1;
+    const maxTf = Math.max(...Object.values(tf), 1);
+
+    let score = 0;
+    for (const qt of queryTokens) {
+      if (tf[qt]) {
+        const normalizedTf = 0.5 + 0.5 * (tf[qt] / maxTf);
+        const idf = Math.log((N + 1) / ((df[qt] || 0) + 1)) + 1;
+        score += normalizedTf * idf;
+      }
+    }
+
+    const matchedTerms = queryTokens.filter(qt => tf[qt]);
+    const coverageBonus = matchedTerms.length / Math.max(queryTokens.length, 1);
+    score *= (1 + coverageBonus);
+
+    return score;
+  });
+}
+
 async function searchBrainContext(query: string, maxResults = 5): Promise<string | null> {
   const { Client } = await import("pg");
   const client = new Client({
@@ -352,8 +397,8 @@ async function searchBrainContext(query: string, maxResults = 5): Promise<string
   });
   try {
     await client.connect();
-    const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-    if (queryWords.length === 0) return null;
+    const queryTokens = tokenize(query);
+    if (queryTokens.length === 0) return null;
 
     const result = await client.query(
       `SELECT bc.content, bc.summary, bs.name as source_name
@@ -365,26 +410,20 @@ async function searchBrainContext(query: string, maxResults = 5): Promise<string
 
     if (result.rows.length === 0) return null;
 
-    const scored = result.rows.map((row: any) => {
-      const lowerContent = (row.content + " " + (row.summary || "")).toLowerCase();
-      let score = 0;
-      for (const word of queryWords) {
-        const regex = new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-        const matches = lowerContent.match(regex);
-        if (matches) score += matches.length;
-      }
-      return { ...row, score };
-    });
+    const docTexts = result.rows.map((row: any) => row.content + " " + (row.summary || ""));
+    const docTokens = docTexts.map(tokenize);
+    const scores = computeTfIdf(docTokens, queryTokens);
 
+    const scored = result.rows.map((row: any, i: number) => ({ ...row, score: scores[i] }));
     const relevant = scored
-      .filter(s => s.score > 0)
+      .filter(s => s.score > 0.1)
       .sort((a, b) => b.score - a.score)
       .slice(0, maxResults);
 
     if (relevant.length === 0) return null;
 
     return relevant
-      .map(r => `[From: ${r.source_name}]\n${r.content}`)
+      .map(r => `[From: ${r.source_name} | Relevance: ${Math.round(r.score * 100) / 100}]\n${r.content}`)
       .join("\n\n---\n\n");
   } catch {
     return null;

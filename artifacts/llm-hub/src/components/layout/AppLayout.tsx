@@ -1,10 +1,13 @@
+import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3 } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
+import { NotificationBell } from "@/components/NotificationBell";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { data: status } = useGetLlmStatus({ query: { refetchInterval: 15000 } as any });
 
   const navItems = [
@@ -14,6 +17,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/research", label: "Research", icon: Search },
     { href: "/vision", label: "Vision", icon: Eye },
     { href: "/agents", label: "Agents", icon: Bot },
+    { href: "/analytics", label: "Analytics", icon: LineChart },
+    { href: "/automations", label: "Automations", icon: Zap },
     { href: "/monitor", label: "Monitor", icon: BarChart3 },
   ];
 
@@ -25,51 +30,84 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1550684848-fac1c5b4e853?w=1920&q=80')] opacity-[0.02] mix-blend-overlay object-cover" />
       </div>
 
-      <header className="relative z-10 h-16 glass-panel border-b border-white/5 flex items-center justify-between px-6">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg shadow-primary/20">
-            <Terminal className="w-5 h-5 text-white" />
+      <header className="relative z-10 h-14 md:h-16 glass-panel border-b border-white/5 flex items-center justify-between px-3 md:px-6">
+        <div className="flex items-center gap-2 md:gap-3">
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden p-2 rounded-lg hover:bg-white/5"
+          >
+            {mobileMenuOpen ? <X className="w-5 h-5 text-white" /> : <Menu className="w-5 h-5 text-white" />}
+          </button>
+          <div className="w-7 h-7 md:w-8 md:h-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg shadow-primary/20">
+            <Terminal className="w-4 h-4 md:w-5 md:h-5 text-white" />
           </div>
-          <h1 className="font-display font-bold text-xl tracking-tight text-white">
+          <h1 className="font-display font-bold text-lg md:text-xl tracking-tight text-white">
             LLM <span className="text-primary">Hub</span>
           </h1>
         </div>
 
-        <nav className="flex items-center gap-1">
+        <nav className="hidden md:flex items-center gap-1">
           {navItems.map((item) => {
             const isActive = location === item.href;
             return (
-              <Link 
-                key={item.href} 
+              <Link
+                key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-200",
-                  isActive 
-                    ? "bg-white/10 text-white shadow-sm" 
+                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium transition-all duration-200",
+                  isActive
+                    ? "bg-white/10 text-white shadow-sm"
                     : "text-muted-foreground hover:text-white hover:bg-white/5"
                 )}
               >
-                <item.icon className={cn("w-4 h-4", isActive ? "text-primary" : "")} />
+                <item.icon className={cn("w-3.5 h-3.5", isActive ? "text-primary" : "")} />
                 {item.label}
               </Link>
             );
           })}
         </nav>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-black/40 border border-white/5">
+        <div className="flex items-center gap-2 md:gap-4">
+          <NotificationBell />
+          <div className="flex items-center gap-2 text-xs font-medium px-2 md:px-3 py-1.5 rounded-full bg-black/40 border border-white/5">
             <div className={cn(
               "w-2 h-2 rounded-full animate-pulse",
               status?.online ? "bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]" : "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]"
             )} />
-            <span className={status?.online ? "text-green-400" : "text-red-400"}>
+            <span className={cn("hidden sm:inline", status?.online ? "text-green-400" : "text-red-400")}>
               {status?.online ? "Core Online" : "Core Offline"}
             </span>
           </div>
         </div>
       </header>
 
-      <main className="relative z-10 flex-1 flex flex-col h-[calc(100vh-4rem)] overflow-hidden">
+      {mobileMenuOpen && (
+        <div className="md:hidden fixed inset-0 top-14 z-20 bg-black/80 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}>
+          <nav className="bg-background border-r border-white/5 w-64 h-full p-4 space-y-1" onClick={(e) => e.stopPropagation()}>
+            {navItems.map((item) => {
+              const isActive = location === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={cn(
+                    "flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200",
+                    isActive
+                      ? "bg-white/10 text-white"
+                      : "text-muted-foreground hover:text-white hover:bg-white/5"
+                  )}
+                >
+                  <item.icon className={cn("w-5 h-5", isActive ? "text-primary" : "")} />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+      )}
+
+      <main className="relative z-10 flex-1 flex flex-col h-[calc(100vh-3.5rem)] md:h-[calc(100vh-4rem)] overflow-hidden">
         {children}
       </main>
     </div>
