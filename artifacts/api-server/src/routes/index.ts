@@ -23,6 +23,7 @@ import analyticsRouter from "./analytics";
 import notificationsRouter from "./notifications";
 import automationsRouter from "./automations";
 import entEndoscopyDatasetsRouter from "./ent-endoscopy-datasets";
+import llmTrainingPipelineRouter from "./llm-training-pipeline";
 
 const router: IRouter = Router();
 
@@ -50,5 +51,6 @@ router.use(analyticsRouter);
 router.use(notificationsRouter);
 router.use(automationsRouter);
 router.use(entEndoscopyDatasetsRouter);
+router.use(llmTrainingPipelineRouter);
 
 export default router;

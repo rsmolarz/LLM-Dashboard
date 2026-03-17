@@ -14,6 +14,7 @@ import BackupPanel from "@/components/BackupPanel";
 import EntTrainingPanel from "@/components/EntTrainingPanel";
 import ModelEvolutionPanel from "@/components/ModelEvolutionPanel";
 import ProjectBrainPanel from "@/components/ProjectBrainPanel";
+import { FineTuningPipelineTab, RlhfFeedbackTab, DistillationTab, FewShotLibrariesTab, EvalBenchmarkTab } from "@/components/TrainingPipelinePanel";
 import {
   useListModelProfiles,
   useCreateModelProfile,
@@ -46,7 +47,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-type Tab = "overview" | "profiles" | "data" | "knowledge" | "finetune" | "vps-training" | "ent-training" | "backup" | "evolution" | "brain";
+type Tab = "overview" | "profiles" | "data" | "knowledge" | "finetune" | "vps-training" | "ent-training" | "backup" | "evolution" | "brain" | "ft-pipeline" | "rlhf" | "distillation" | "few-shot" | "eval";
 
 export default function Training() {
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -58,7 +59,12 @@ export default function Training() {
     { id: "knowledge", label: "Knowledge Base", icon: <BookOpen className="w-4 h-4" />, desc: "RAG document store" },
     { id: "ent-training", label: "ENT Training", icon: <Stethoscope className="w-4 h-4" />, desc: "Otolaryngology AI training" },
     { id: "vps-training", label: "VPS Training", icon: <Layers className="w-4 h-4" />, desc: "Remote training data" },
-    { id: "finetune", label: "Fine-tuning", icon: <Wand2 className="w-4 h-4" />, desc: "Train your models" },
+    { id: "ft-pipeline", label: "Fine-Tuning", icon: <Wand2 className="w-4 h-4" />, desc: "Modelfile-based custom models" },
+    { id: "rlhf", label: "RLHF", icon: <ThumbsUp className="w-4 h-4" />, desc: "Preference feedback loop" },
+    { id: "distillation", label: "Distillation", icon: <Zap className="w-4 h-4" />, desc: "Teacher-student training" },
+    { id: "few-shot", label: "Few-Shot", icon: <BookOpen className="w-4 h-4" />, desc: "Prompt example libraries" },
+    { id: "eval", label: "Evaluation", icon: <Eye className="w-4 h-4" />, desc: "Benchmarks & leaderboard" },
+    { id: "finetune", label: "Legacy Fine-tune", icon: <Sparkles className="w-4 h-4" />, desc: "Original fine-tuning" },
     { id: "backup", label: "Backup", icon: <Shield className="w-4 h-4" />, desc: "System backup & recovery" },
     { id: "evolution", label: "Model Evolution", icon: <Rocket className="w-4 h-4" />, desc: "Continuous LLM improvement" },
     { id: "brain", label: "Project Brain", icon: <Globe className="w-4 h-4" />, desc: "Drive & Notion indexer" },
@@ -74,7 +80,7 @@ export default function Training() {
           </p>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-8 gap-3">
           {tabs.map((tab) => (
             <button
               key={tab.id}
@@ -112,6 +118,11 @@ export default function Training() {
             {activeTab === "knowledge" && <KnowledgeBaseTab />}
             {activeTab === "vps-training" && <VpsTrainingDashboard />}
             {activeTab === "ent-training" && <EntTrainingPanel />}
+            {activeTab === "ft-pipeline" && <FineTuningPipelineTab />}
+            {activeTab === "rlhf" && <RlhfFeedbackTab />}
+            {activeTab === "distillation" && <DistillationTab />}
+            {activeTab === "few-shot" && <FewShotLibrariesTab />}
+            {activeTab === "eval" && <EvalBenchmarkTab />}
             {activeTab === "finetune" && <FineTuningTab />}
             {activeTab === "backup" && <BackupPanel />}
             {activeTab === "evolution" && <ModelEvolutionPanel />}

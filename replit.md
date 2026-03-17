@@ -73,3 +73,41 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - Downloaded datasets: UW Sinus Surgery (instrument segmentation), NasalSeg (CT segmentation), HyperKvasir (GI transfer learning)
 - API endpoints: GET /ent-datasets/registry, POST /ent-datasets/ingest-all, POST /ent-datasets/generate-training-pairs, POST /ent-datasets/bulk-ingest-training
 - Route file: artifacts/api-server/src/routes/ent-endoscopy-datasets.ts
+
+## LLM Training Pipeline (NEW - 5 Features)
+Route: `artifacts/api-server/src/routes/llm-training-pipeline.ts`
+Frontend: `artifacts/llm-hub/src/components/TrainingPipelinePanel.tsx`
+DB tables: fine_tuning_jobs, rlhf_pairs, few_shot_libraries, few_shot_examples, eval_benchmarks, eval_questions, eval_runs, eval_results, distillation_jobs
+
+### 1. Fine-Tuning Pipeline
+- Create custom Ollama models via Modelfiles using training data
+- Jobs: create → review Modelfile → push to VPS Ollama → model available
+- Endpoints: GET/POST /training-pipeline/fine-tuning/jobs, POST /:id/run, DELETE /:id
+
+### 2. RLHF Feedback Loop
+- Collects preference pairs from chat message ratings (thumbs up/down)
+- Auto-generates contrasting responses for incomplete pairs
+- Exports DPO (Direct Preference Optimization) training datasets
+- Endpoints: GET /training-pipeline/rlhf/pairs, POST /rlhf/collect-from-ratings, POST /rlhf/generate-contrasts, POST /rlhf/export-dpo
+
+### 3. Knowledge Distillation
+- Teacher model (stronger, e.g. llava:13b, meditron:7b) generates detailed answers
+- Answers stored as training data for student model (e.g. llama3.2)
+- Endpoints: GET/POST /training-pipeline/distillation/jobs, POST /:id/run
+
+### 4. Few-Shot Prompt Libraries
+- Curated example libraries organized by category
+- Keyword-based matching auto-injects best examples into prompts
+- Test matching with any query to see which examples would be selected
+- Endpoints: CRUD /training-pipeline/few-shot/libraries, /examples, POST /match
+
+### 5. Evaluation & Benchmarking
+- Create benchmark test sets with AI-generated or manual questions
+- Run any model against benchmarks, auto-scored by LLM judge
+- Model leaderboard tracks accuracy and latency across runs
+- Endpoints: CRUD /training-pipeline/eval/benchmarks, /questions, POST /run, GET /leaderboard
+
+## Conversation History
+- All chatbots (Chat, Local Sandbox, OpenClaw Agents) send full conversation history
+- OpenClaw accepts `conversationHistory` array in chat body alongside single `message`
+- ChatWithAgentBody Zod schema updated in lib/api-zod with optional conversationHistory field
