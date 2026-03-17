@@ -133,7 +133,7 @@ const PROJECT_LOG: LogItem[] = [
       { title: "VPS Training Sources", status: "done", priority: "high", category: "training", details: "60 sources from auto-collector and manual input" },
       { title: "Fine-tuning interface", status: "partial", priority: "high", category: "training", details: "UI exists but actual Ollama fine-tuning (modelfile create) needs testing and polish" },
       { title: "Model Evolution Engine", status: "done", priority: "medium", category: "training", details: "Benchmarks, synthetic data gen, feedback loop, model updates" },
-      { title: "Backup system", status: "done", priority: "medium", category: "training", details: "Full snapshots of both DBs, model inventory, training data" },
+      { title: "Backup system", status: "done", priority: "medium", category: "training", details: "Metadata snapshots + full JSON data export/restore for both DBs, model inventory, training data" },
       { title: "Project Brain indexer", status: "done", priority: "high", category: "training", details: "Notion/Drive document indexing, chunking, Q&A pair generation" },
       { title: "Actual Ollama fine-tuning execution", status: "todo", priority: "high", category: "training", details: "Run modelfile-based fine-tuning on VPS from the dashboard" },
     ],

@@ -1,8 +1,11 @@
 import { Router, type IRouter } from "express";
 import { db, llmConfigTable } from "@workspace/db";
 import { vpsDatabaseConfigTable } from "@workspace/db/schema";
+import * as fs from "fs";
+import * as path from "path";
 
 const router: IRouter = Router();
+const BACKUP_DIR = path.join(process.cwd(), "backups");
 
 interface BackupRecord {
   id: string;
@@ -303,6 +306,288 @@ router.get("/backup/vps-history", async (_req, res): Promise<void> => {
     res.json(result.rows);
   } catch {
     res.json([]);
+  }
+});
+
+async function exportDatabase(client: any, label: string): Promise<Record<string, any[]>> {
+  const tablesResult = await client.query(
+    "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+  );
+  const tables: Record<string, any[]> = {};
+  for (const row of tablesResult.rows) {
+    const tableName = row.tablename;
+    try {
+      const dataResult = await client.query(`SELECT * FROM "${tableName}"`);
+      tables[tableName] = dataResult.rows;
+    } catch (err: any) {
+      tables[tableName] = [{ _export_error: err?.message }];
+    }
+  }
+  return tables;
+}
+
+router.post("/backup/export", async (req, res): Promise<void> => {
+  const { target } = req.body as { target?: "all" | "replit" | "vps" };
+  const exportTarget = target || "all";
+
+  if (!fs.existsSync(BACKUP_DIR)) {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  }
+
+  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+  const startTime = Date.now();
+
+  try {
+    const exportData: Record<string, any> = {
+      exportId: `export-${Date.now()}`,
+      exportedAt: new Date().toISOString(),
+      target: exportTarget,
+      databases: {},
+    };
+
+    if (exportTarget === "all" || exportTarget === "replit") {
+      try {
+        const { default: pg } = await import("pg");
+        const replitClient = new pg.Client({
+          connectionString: process.env.DATABASE_URL,
+          connectionTimeoutMillis: 10000,
+        });
+        await replitClient.connect();
+        exportData.databases.replit = await exportDatabase(replitClient, "replit");
+        await replitClient.end();
+      } catch (err: any) {
+        exportData.databases.replit = { _error: err?.message };
+      }
+    }
+
+    if (exportTarget === "all" || exportTarget === "vps") {
+      try {
+        const vpsClient = await getVpsClient();
+        if (vpsClient) {
+          exportData.databases.vps = await exportDatabase(vpsClient, "vps");
+          await vpsClient.end();
+        } else {
+          exportData.databases.vps = { _error: "VPS not configured" };
+        }
+      } catch (err: any) {
+        exportData.databases.vps = { _error: err?.message };
+      }
+    }
+
+    if (exportTarget === "all") {
+      try {
+        const ollamaUrl = await getOllamaUrl();
+        if (ollamaUrl) {
+          const tagsRes = await fetch(`${ollamaUrl}/api/tags`, {
+            signal: AbortSignal.timeout(10000),
+          });
+          if (tagsRes.ok) {
+            exportData.ollamaModels = await tagsRes.json();
+          }
+        }
+      } catch {}
+    }
+
+    exportData.durationMs = Date.now() - startTime;
+
+    const filename = `backup-${exportTarget}-${ts}.json`;
+    const filepath = path.join(BACKUP_DIR, filename);
+    fs.writeFileSync(filepath, JSON.stringify(exportData, null, 2));
+
+    const stats = fs.statSync(filepath);
+    const replitTables = exportData.databases.replit
+      ? Object.keys(exportData.databases.replit).filter(k => !k.startsWith("_")).length
+      : 0;
+    const replitRows = exportData.databases.replit
+      ? Object.entries(exportData.databases.replit)
+          .filter(([k]) => !k.startsWith("_"))
+          .reduce((sum, [, rows]) => sum + (Array.isArray(rows) ? rows.length : 0), 0)
+      : 0;
+    const vpsTables = exportData.databases.vps
+      ? Object.keys(exportData.databases.vps).filter(k => !k.startsWith("_")).length
+      : 0;
+    const vpsRows = exportData.databases.vps
+      ? Object.entries(exportData.databases.vps)
+          .filter(([k]) => !k.startsWith("_"))
+          .reduce((sum, [, rows]) => sum + (Array.isArray(rows) ? rows.length : 0), 0)
+      : 0;
+
+    res.json({
+      status: "complete",
+      filename,
+      filepath,
+      sizeBytes: stats.size,
+      sizeHuman: stats.size > 1024 * 1024
+        ? `${(stats.size / 1024 / 1024).toFixed(1)}MB`
+        : `${(stats.size / 1024).toFixed(1)}KB`,
+      durationMs: exportData.durationMs,
+      summary: {
+        replit: { tables: replitTables, rows: replitRows },
+        vps: { tables: vpsTables, rows: vpsRows },
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Export failed" });
+  }
+});
+
+router.get("/backup/exports", async (_req, res): Promise<void> => {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) {
+      res.json([]);
+      return;
+    }
+    const files = fs.readdirSync(BACKUP_DIR)
+      .filter(f => f.endsWith(".json"))
+      .map(f => {
+        const stats = fs.statSync(path.join(BACKUP_DIR, f));
+        return {
+          filename: f,
+          sizeBytes: stats.size,
+          sizeHuman: stats.size > 1024 * 1024
+            ? `${(stats.size / 1024 / 1024).toFixed(1)}MB`
+            : `${(stats.size / 1024).toFixed(1)}KB`,
+          createdAt: stats.mtime.toISOString(),
+        };
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    res.json(files);
+  } catch {
+    res.json([]);
+  }
+});
+
+router.get("/backup/exports/:filename", async (req, res): Promise<void> => {
+  const { filename } = req.params;
+  if (!filename || filename.includes("..") || !filename.endsWith(".json")) {
+    res.status(400).json({ error: "Invalid filename" });
+    return;
+  }
+  const filepath = path.join(BACKUP_DIR, filename);
+  if (!fs.existsSync(filepath)) {
+    res.status(404).json({ error: "Backup file not found" });
+    return;
+  }
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  const stream = fs.createReadStream(filepath);
+  stream.pipe(res);
+});
+
+router.delete("/backup/exports/:filename", async (req, res): Promise<void> => {
+  const { filename } = req.params;
+  if (!filename || filename.includes("..") || !filename.endsWith(".json")) {
+    res.status(400).json({ error: "Invalid filename" });
+    return;
+  }
+  const filepath = path.join(BACKUP_DIR, filename);
+  if (!fs.existsSync(filepath)) {
+    res.status(404).json({ error: "Backup file not found" });
+    return;
+  }
+  fs.unlinkSync(filepath);
+  res.json({ status: "deleted", filename });
+});
+
+router.post("/backup/restore", async (req, res): Promise<void> => {
+  const { filename, target, dryRun } = req.body as {
+    filename?: string;
+    target?: "replit" | "vps";
+    dryRun?: boolean;
+  };
+
+  if (!filename || !target) {
+    res.status(400).json({ error: "filename and target are required" });
+    return;
+  }
+
+  const filepath = path.join(BACKUP_DIR, filename);
+  if (!fs.existsSync(filepath)) {
+    res.status(404).json({ error: "Backup file not found" });
+    return;
+  }
+
+  try {
+    const data = JSON.parse(fs.readFileSync(filepath, "utf8"));
+    const dbData = data.databases?.[target];
+    if (!dbData || dbData._error) {
+      res.status(400).json({ error: `No ${target} data in this backup` });
+      return;
+    }
+
+    const tables = Object.entries(dbData).filter(([k]) => !k.startsWith("_"));
+    const preview = tables.map(([name, rows]) => ({
+      table: name,
+      rows: Array.isArray(rows) ? rows.length : 0,
+    }));
+
+    if (dryRun) {
+      res.json({ status: "dry_run", tables: preview, totalRows: preview.reduce((s, t) => s + t.rows, 0) });
+      return;
+    }
+
+    let client: any;
+    if (target === "replit") {
+      const { default: pg } = await import("pg");
+      client = new pg.Client({
+        connectionString: process.env.DATABASE_URL,
+        connectionTimeoutMillis: 10000,
+      });
+      await client.connect();
+    } else {
+      client = await getVpsClient();
+      if (!client) {
+        res.status(400).json({ error: "VPS not configured" });
+        return;
+      }
+    }
+
+    const results: Array<{ table: string; status: string; rowsRestored: number }> = [];
+
+    for (const [tableName, rows] of tables) {
+      if (!Array.isArray(rows) || rows.length === 0) {
+        results.push({ table: tableName, status: "skipped_empty", rowsRestored: 0 });
+        continue;
+      }
+
+      try {
+        const columns = Object.keys(rows[0]).filter(k => !k.startsWith("_"));
+        if (columns.length === 0) {
+          results.push({ table: tableName, status: "skipped_no_columns", rowsRestored: 0 });
+          continue;
+        }
+
+        await client.query(`DELETE FROM "${tableName}"`);
+
+        let restored = 0;
+        for (const row of rows) {
+          const vals = columns.map(c => row[c]);
+          const placeholders = columns.map((_, i) => `$${i + 1}`).join(", ");
+          const colNames = columns.map(c => `"${c}"`).join(", ");
+          try {
+            await client.query(
+              `INSERT INTO "${tableName}" (${colNames}) VALUES (${placeholders})`,
+              vals
+            );
+            restored++;
+          } catch {}
+        }
+        results.push({ table: tableName, status: "restored", rowsRestored: restored });
+      } catch (err: any) {
+        results.push({ table: tableName, status: `error: ${err?.message}`, rowsRestored: 0 });
+      }
+    }
+
+    await client.end();
+    res.json({
+      status: "complete",
+      target,
+      filename,
+      results,
+      totalRestored: results.reduce((s, r) => s + r.rowsRestored, 0),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message ?? "Restore failed" });
   }
 });
 
