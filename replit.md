@@ -13,7 +13,7 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 ## Key Features
 - **Local LLM Management**: Connect to VPS Ollama, pull/delete models, chat interface
 - **Chat**: Multi-conversation chat with model selection, message rating (1-5)
-- **Training & Customization** (8 tabs): Model Profiles, Training Data, Knowledge Base, ENT Training, VPS Training, Fine-tuning, Backup, Model Evolution
+- **Training & Customization** (9 tabs): Model Profiles, Training Data, Knowledge Base, ENT Training, VPS Training, Fine-tuning, Backup, Model Evolution, Project Brain
 - **Deep Research**: Multi-model research engine at `/research`. "Deep" mode fans out to all local Ollama models in parallel; "Extensive" mode adds Claude and GPT via Replit AI Integrations
 - **Vision Studio**: `/vision` page with image generation (GPT-Image-1) and vision analysis (llava:13b on VPS). Domain presets for Medical/ENT, Finance, Social Media, Real Estate
 - **Agents**: `/agents` page for agent orchestration
@@ -62,6 +62,14 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - Full backup snapshots: Replit DB, VPS DB, Ollama model inventory, training data
 - Stored in VPS `backup_snapshots` table
 
+## Project Brain
+- Deep document indexer for Google Drive files and Notion pages
+- Content chunking + LLM-powered Q&A training pair generation
+- VPS tables: brain_sources, brain_chunks, brain_training_pairs
+- Sources: Google Drive (file browser + folder import), Notion (URL/content paste), Manual text input
+- Processed content also stored in training_sources for unified training pipeline
+- Uses any Ollama model on VPS for summarization and pair generation
+
 ## Tech Stack
 - **Runtime**: Node.js, TypeScript
 - **Backend**: Express
@@ -74,3 +82,4 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **Google APIs**: googleapis (Gmail), @replit/connectors-sdk (Drive proxy)
 - **PostgreSQL Client**: pg
 - **AI Agent Framework**: OpenClaw Gateway
+

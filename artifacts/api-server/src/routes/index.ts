@@ -17,6 +17,7 @@ import backupRouter from "./backup";
 import entTrainingRouter from "./ent-training";
 import monitorRouter from "./monitor";
 import modelEvolutionRouter from "./model-evolution";
+import projectBrainRouter from "./project-brain";
 
 const router: IRouter = Router();
 
@@ -38,5 +39,6 @@ router.use(backupRouter);
 router.use(entTrainingRouter);
 router.use(monitorRouter);
 router.use(modelEvolutionRouter);
+router.use(projectBrainRouter);
 
 export default router;

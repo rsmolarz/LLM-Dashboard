@@ -13,6 +13,7 @@ import VpsTrainingDashboard from "@/components/VpsTrainingDashboard";
 import BackupPanel from "@/components/BackupPanel";
 import EntTrainingPanel from "@/components/EntTrainingPanel";
 import ModelEvolutionPanel from "@/components/ModelEvolutionPanel";
+import ProjectBrainPanel from "@/components/ProjectBrainPanel";
 import {
   useListModelProfiles,
   useCreateModelProfile,
@@ -45,7 +46,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-type Tab = "profiles" | "data" | "knowledge" | "finetune" | "vps-training" | "ent-training" | "backup" | "evolution";
+type Tab = "profiles" | "data" | "knowledge" | "finetune" | "vps-training" | "ent-training" | "backup" | "evolution" | "brain";
 
 export default function Training() {
   const [activeTab, setActiveTab] = useState<Tab>("profiles");
@@ -59,6 +60,7 @@ export default function Training() {
     { id: "finetune", label: "Fine-tuning", icon: <Wand2 className="w-4 h-4" />, desc: "Train your models" },
     { id: "backup", label: "Backup", icon: <Shield className="w-4 h-4" />, desc: "System backup & recovery" },
     { id: "evolution", label: "Model Evolution", icon: <Rocket className="w-4 h-4" />, desc: "Continuous LLM improvement" },
+    { id: "brain", label: "Project Brain", icon: <Globe className="w-4 h-4" />, desc: "Drive & Notion indexer" },
   ];
 
   return (
@@ -111,6 +113,7 @@ export default function Training() {
             {activeTab === "finetune" && <FineTuningTab />}
             {activeTab === "backup" && <BackupPanel />}
             {activeTab === "evolution" && <ModelEvolutionPanel />}
+            {activeTab === "brain" && <ProjectBrainPanel />}
           </motion.div>
         </AnimatePresence>
       </div>
