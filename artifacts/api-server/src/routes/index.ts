@@ -16,6 +16,7 @@ import mediaRouter from "./media";
 import backupRouter from "./backup";
 import entTrainingRouter from "./ent-training";
 import monitorRouter from "./monitor";
+import modelEvolutionRouter from "./model-evolution";
 
 const router: IRouter = Router();
 
@@ -36,5 +37,6 @@ router.use(mediaRouter);
 router.use(backupRouter);
 router.use(entTrainingRouter);
 router.use(monitorRouter);
+router.use(modelEvolutionRouter);
 
 export default router;
