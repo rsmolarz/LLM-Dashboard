@@ -7,3 +7,4 @@ export * from "./openclaw";
 export * from "./vps-database";
 export * from "./research";
 export * from "./auth";
+export * from "./ai-features";

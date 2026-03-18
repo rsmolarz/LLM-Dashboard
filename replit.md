@@ -26,6 +26,9 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **Mobile Responsive**: Hamburger menu on mobile, responsive grid layouts, touch-friendly controls across all pages
 - **System Monitor**: `/monitor` dashboard with real-time health metrics, auto-collector status, VPS model inventory, database stats, knowledge base categories
 - **User Authentication**: Replit Auth (OIDC PKCE) with session management, per-user data scoping
+- **ENT Clinical AI** (8 tabs): `/clinical` page — Clinical Decision Support (AI differential diagnosis), Audiogram AI Analyzer, Case Study Generator, Medical Report Writer, Drug Interaction Checker, Patient Education Generator, Image Annotation Tool, Clinical Protocol Builder
+- **Social Media AI** (5 tabs): `/social` page — Content Calendar Generator, Post Generator (multi-platform), Viral Hook Analyzer, Social Analytics Tracker, Brand Voice Trainer
+- **Hedge Fund AI** (6 tabs): `/finance` page — Stock Screener (AI signals), Portfolio Manager (risk analysis), Market Sentiment AI, Trade Journal (psychology analysis), Earnings Call Analyzer, AI Model Performance Tracker
 
 ## VPS Configuration
 - IP: 72.60.167.64, Ollama: port 11434, OpenClaw: port 18789

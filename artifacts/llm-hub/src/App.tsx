@@ -13,6 +13,9 @@ import Monitor from "@/pages/Monitor";
 import Analytics from "@/pages/Analytics";
 import Automations from "@/pages/Automations";
 import Admin from "@/pages/Admin";
+import Clinical from "@/pages/Clinical";
+import Social from "@/pages/Social";
+import Finance from "@/pages/Finance";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -38,6 +41,9 @@ function Router() {
         <Route path="/automations" component={Automations} />
         <Route path="/monitor" component={Monitor} />
         <Route path="/admin" component={Admin} />
+        <Route path="/clinical" component={Clinical} />
+        <Route path="/social" component={Social} />
+        <Route path="/finance" component={Finance} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

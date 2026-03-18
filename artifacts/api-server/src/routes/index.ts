@@ -24,6 +24,9 @@ import notificationsRouter from "./notifications";
 import automationsRouter from "./automations";
 import entEndoscopyDatasetsRouter from "./ent-endoscopy-datasets";
 import llmTrainingPipelineRouter from "./llm-training-pipeline";
+import entClinicalRouter from "./ent-clinical";
+import socialMediaRouter from "./social-media";
+import hedgeFundRouter from "./hedge-fund";
 
 const router: IRouter = Router();
 
@@ -52,5 +55,8 @@ router.use(notificationsRouter);
 router.use(automationsRouter);
 router.use(entEndoscopyDatasetsRouter);
 router.use(llmTrainingPipelineRouter);
+router.use(entClinicalRouter);
+router.use(socialMediaRouter);
+router.use(hedgeFundRouter);
 
 export default router;
