@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { Database, Plus, Play, Trash2, Loader2, RefreshCw, CheckCircle, XCircle, Clock, BarChart3 } from "lucide-react";
+import { Database, Plus, Play, Trash2, Loader2, RefreshCw, CheckCircle, XCircle, Clock, BarChart3, Zap, Settings } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "/api";
 
-type Tab = "dashboard" | "sources" | "jobs" | "datasets";
+type Tab = "dashboard" | "sources" | "jobs" | "datasets" | "continuous";
 
 export default function DataAgent() {
   const [tab, setTab] = useState<Tab>("dashboard");
@@ -20,9 +20,10 @@ export default function DataAgent() {
         </div>
       </div>
 
-      <div className="flex gap-2 mb-6">
+      <div className="overflow-x-auto pb-2 flex gap-2 mb-6">
         {([
           { id: "dashboard" as Tab, label: "Dashboard", icon: BarChart3 },
+          { id: "continuous" as Tab, label: "Continuous Training", icon: Zap },
           { id: "sources" as Tab, label: "Data Sources", icon: Database },
           { id: "jobs" as Tab, label: "Jobs", icon: Play },
           { id: "datasets" as Tab, label: "Datasets", icon: CheckCircle },
@@ -37,6 +38,7 @@ export default function DataAgent() {
 
       <div className="bg-gray-900/50 rounded-xl border border-gray-800 p-6">
         {tab === "dashboard" && <DashboardTab />}
+        {tab === "continuous" && <ContinuousTrainingTab />}
         {tab === "sources" && <SourcesTab />}
         {tab === "jobs" && <JobsTab />}
         {tab === "datasets" && <DatasetsTab />}
@@ -280,6 +282,212 @@ function DatasetsTab() {
         ))}</div>
       ) : (
         <div className="text-center text-gray-500 py-12"><Database className="w-8 h-8 mx-auto mb-2 opacity-50" /><p>No datasets created yet. Run a generation job first.</p></div>
+      )}
+    </div>
+  );
+}
+
+function ContinuousTrainingTab() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [triggering, setTriggering] = useState(false);
+  const [configForm, setConfigForm] = useState<any>(null);
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    fetch(`${API}/auto-collector/training-status`).then(r => r.json()).then(d => {
+      setData(d);
+      if (!configForm) setConfigForm({
+        enabled: d.scheduler.enabled,
+        intervalMinutes: d.scheduler.intervalMinutes,
+        samplesPerRun: d.scheduler.samplesPerRun,
+        model: d.scheduler.model,
+      });
+    }).catch(() => {}).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); const iv = setInterval(load, 15000); return () => clearInterval(iv); }, []);
+
+  const triggerRun = async () => {
+    setTriggering(true);
+    try { await fetch(`${API}/auto-collector/training-run`, { method: "POST" }); setTimeout(load, 3000); } catch {}
+    setTriggering(false);
+  };
+
+  const saveConfig = async () => {
+    if (!configForm) return;
+    setSaving(true);
+    try {
+      await fetch(`${API}/auto-collector/training-config`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(configForm),
+      });
+      load();
+    } catch {}
+    setSaving(false);
+  };
+
+  if (loading && !data) return <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-orange-400" /></div>;
+
+  const s = data?.scheduler || {};
+  const stats = data?.stats || {};
+  const domainStats = data?.domainStats || {};
+  const recentRuns = data?.recentRuns || [];
+  const datasets = data?.datasets || [];
+
+  const domainLabels: Record<string, string> = { otolaryngology: "ENT Clinical", social_media: "Social Media", hedge_fund: "Hedge Fund" };
+  const domainColors: Record<string, string> = { otolaryngology: "red", social_media: "purple", hedge_fund: "green" };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white">Continuous Training Pipeline</h2>
+          <p className="text-sm text-gray-400 mt-1">Automatically generates training data across all domains on a schedule</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={triggerRun} disabled={triggering || s.isRunning}
+            className="px-4 py-2 bg-orange-500/20 border border-orange-500/50 rounded-lg text-orange-300 text-sm hover:bg-orange-500/30 flex items-center gap-2 disabled:opacity-50">
+            {triggering || s.isRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            {s.isRunning ? "Running..." : "Run Now"}
+          </button>
+          <button onClick={load} className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-gray-300 text-sm">
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="p-4 bg-gray-800/40 rounded-xl border border-gray-700">
+          <div className="flex items-center gap-2 mb-1">
+            <div className={`w-2 h-2 rounded-full ${s.enabled ? (s.isRunning ? "bg-orange-400 animate-pulse" : "bg-green-400") : "bg-gray-500"}`} />
+            <span className="text-sm text-gray-400">Status</span>
+          </div>
+          <div className="text-lg font-bold">{s.isRunning ? "Running" : s.enabled ? "Active" : "Paused"}</div>
+        </div>
+        <div className="p-4 bg-gray-800/40 rounded-xl border border-gray-700">
+          <span className="text-sm text-gray-400 block">Total Samples</span>
+          <div className="text-2xl font-bold text-orange-400">{stats.totalSamplesGenerated || 0}</div>
+        </div>
+        <div className="p-4 bg-gray-800/40 rounded-xl border border-gray-700">
+          <span className="text-sm text-gray-400 block">Completed Jobs</span>
+          <div className="text-2xl font-bold text-green-400">{stats.completedJobs || 0}</div>
+        </div>
+        <div className="p-4 bg-gray-800/40 rounded-xl border border-gray-700">
+          <span className="text-sm text-gray-400 block">Every</span>
+          <div className="text-lg font-bold">{s.intervalMinutes || 60} min</div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {Object.entries(domainStats).map(([domain, d]: any) => (
+          <div key={domain} className="p-4 bg-gray-800/30 rounded-xl border border-gray-700">
+            <div className={`text-sm font-bold text-${domainColors[domain] || "gray"}-400 mb-3`}>{domainLabels[domain] || domain}</div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div><span className="text-xs text-gray-500 block">Jobs</span><span className="text-white font-medium">{d.jobs}</span></div>
+              <div><span className="text-xs text-gray-500 block">Samples</span><span className="text-white font-medium">{d.samples}</span></div>
+              <div><span className="text-xs text-gray-500 block">Dataset</span><span className="text-white font-medium">{d.datasetSize}</span></div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {datasets.length > 0 && (
+        <div>
+          <h3 className="font-semibold mb-3 text-gray-300">Growing Datasets</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {datasets.map((d: any) => (
+              <div key={d.id} className="p-3 bg-gray-800/30 rounded-lg border border-gray-700">
+                <div className="text-sm font-medium text-white">{d.name}</div>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className={`text-xs px-2 py-0.5 rounded bg-${domainColors[d.domain] || "gray"}-500/20 text-${domainColors[d.domain] || "gray"}-400`}>{domainLabels[d.domain] || d.domain}</span>
+                  <span className="text-xs text-gray-500">{d.totalSamples} samples</span>
+                  <span className="text-xs text-gray-600">{d.format}</span>
+                </div>
+                {d.qualityScore != null && (
+                  <div className="mt-1 text-xs"><span className="text-gray-500">Quality: </span><span className={d.qualityScore >= 0.8 ? "text-green-400" : "text-yellow-400"}>{(d.qualityScore * 100).toFixed(0)}%</span></div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {configForm && (
+        <div className="p-4 bg-gray-800/30 rounded-xl border border-gray-700">
+          <h3 className="font-semibold mb-3 flex items-center gap-2"><Settings className="w-4 h-4 text-gray-400" /> Scheduler Settings</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Enabled</label>
+              <select value={String(configForm.enabled)} onChange={e => setConfigForm({ ...configForm, enabled: e.target.value === "true" })}
+                className="w-full p-2 bg-gray-800 border border-gray-600 rounded text-sm">
+                <option value="true">Yes</option>
+                <option value="false">No</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Interval (min)</label>
+              <input type="number" value={configForm.intervalMinutes} onChange={e => setConfigForm({ ...configForm, intervalMinutes: parseInt(e.target.value) || 60 })}
+                className="w-full p-2 bg-gray-800 border border-gray-600 rounded text-sm" min="15" max="1440" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Samples/Run</label>
+              <input type="number" value={configForm.samplesPerRun} onChange={e => setConfigForm({ ...configForm, samplesPerRun: parseInt(e.target.value) || 10 })}
+                className="w-full p-2 bg-gray-800 border border-gray-600 rounded text-sm" min="1" max="50" />
+            </div>
+            <div>
+              <label className="text-xs text-gray-500 block mb-1">Model</label>
+              <select value={configForm.model} onChange={e => setConfigForm({ ...configForm, model: e.target.value })}
+                className="w-full p-2 bg-gray-800 border border-gray-600 rounded text-sm">
+                {["qwen2.5:7b", "deepseek-r1:8b", "meditron:7b", "mistral:latest", "llama3.2:latest"].map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
+          </div>
+          <button onClick={saveConfig} disabled={saving}
+            className="mt-3 px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 rounded-lg text-white text-sm flex items-center gap-2">
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />} Save Settings
+          </button>
+        </div>
+      )}
+
+      {recentRuns.length > 0 && (
+        <div>
+          <h3 className="font-semibold mb-3 text-gray-300">Recent Runs</h3>
+          <div className="space-y-2">
+            {recentRuns.map((r: any) => (
+              <div key={r.id} className="p-3 bg-gray-800/30 rounded-lg border border-gray-700">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    {r.status === "completed" ? <CheckCircle className="w-4 h-4 text-green-400" /> : r.status === "running" ? <Loader2 className="w-4 h-4 text-orange-400 animate-spin" /> : <XCircle className="w-4 h-4 text-red-400" />}
+                    <span className="text-sm text-white">{r.status}</span>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    {new Date(r.startedAt).toLocaleString()}
+                    {r.completedAt && ` — ${Math.round((new Date(r.completedAt).getTime() - new Date(r.startedAt).getTime()) / 1000)}s`}
+                  </div>
+                </div>
+                {Object.keys(r.results || {}).length > 0 && (
+                  <div className="flex gap-3">
+                    {Object.entries(r.results).map(([domain, res]: any) => (
+                      <div key={domain} className="text-xs">
+                        <span className="text-gray-500">{domainLabels[domain] || domain}: </span>
+                        <span className={res.error ? "text-red-400" : "text-green-400"}>{res.samples} samples</span>
+                        {res.error && <span className="text-red-400 ml-1">({res.error})</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {s.lastRunAt && (
+        <div className="text-xs text-gray-500 text-center">
+          Last run: {new Date(s.lastRunAt).toLocaleString()} · Next run in ~{s.intervalMinutes} minutes · Model: {s.model}
+        </div>
       )}
     </div>
   );

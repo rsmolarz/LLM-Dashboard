@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
-import { vpsDatabaseConfigTable, trainingDataTable, chatMessagesTable, conversationsTable, documentsTable, discoveredSourcesTable } from "@workspace/db/schema";
-import { eq, desc, asc } from "drizzle-orm";
+import { vpsDatabaseConfigTable, trainingDataTable, chatMessagesTable, conversationsTable, documentsTable, discoveredSourcesTable, trainingDataJobsTable, trainingDatasetsTable } from "@workspace/db/schema";
+import { eq, desc, asc, sql } from "drizzle-orm";
 import { getUncachableGmailClient, driveProxyJson, driveProxyText } from "./google-clients";
 
 const router: IRouter = Router();
@@ -84,6 +84,43 @@ let lastRunAt: string | null = null;
 let wasExplicitlyStopped = false;
 const serverStartedAt = new Date().toISOString();
 
+interface TrainingSchedulerConfig {
+  enabled: boolean;
+  intervalMinutes: number;
+  domains: string[];
+  samplesPerRun: number;
+  model: string;
+  autoDataset: boolean;
+}
+
+let trainingSchedulerConfig: TrainingSchedulerConfig = {
+  enabled: true,
+  intervalMinutes: 60,
+  domains: ["otolaryngology", "social_media", "hedge_fund"],
+  samplesPerRun: 10,
+  model: "qwen2.5:7b",
+  autoDataset: true,
+};
+
+let trainingSchedulerInterval: ReturnType<typeof setInterval> | null = null;
+let isTrainingRunning = false;
+let trainingRunHistory: Array<{
+  id: string;
+  startedAt: string;
+  completedAt: string | null;
+  status: string;
+  results: Record<string, { samples: number; jobId: number | null; error?: string }>;
+}> = [];
+let lastTrainingRunAt: string | null = null;
+
+function startTrainingScheduler() {
+  if (trainingSchedulerInterval) clearInterval(trainingSchedulerInterval);
+  trainingSchedulerInterval = setInterval(() => {
+    if (!isTrainingRunning) runTrainingGeneration().catch(console.error);
+  }, trainingSchedulerConfig.intervalMinutes * 60 * 1000);
+  console.log(`[training-scheduler] Started. Generating training data every ${trainingSchedulerConfig.intervalMinutes} minutes for domains: ${trainingSchedulerConfig.domains.join(", ")}`);
+}
+
 function autoStartCollector() {
   setTimeout(() => {
     if (!collectorConfig.enabled && !wasExplicitlyStopped) {
@@ -94,6 +131,10 @@ function autoStartCollector() {
       }, collectorConfig.intervalMinutes * 60 * 1000);
       console.log(`[auto-collector] Auto-started. Running every ${collectorConfig.intervalMinutes} minutes.`);
       runCollection().catch(console.error);
+    }
+    if (trainingSchedulerConfig.enabled) {
+      startTrainingScheduler();
+      runTrainingGeneration().catch(console.error);
     }
   }, 15000);
 }
@@ -805,5 +846,214 @@ export function getCollectorState() {
     },
   };
 }
+
+const DOMAIN_PROMPTS: Record<string, string> = {
+  otolaryngology: `Generate {count} high-quality training data samples for fine-tuning an ENT medical AI model.
+Each sample should be a question-answer pair covering:
+- Common ENT conditions (otitis media, sinusitis, tonsillitis, hearing loss, vertigo, vocal cord disorders)
+- Diagnostic approaches, treatment protocols, surgical techniques
+- Patient education scenarios
+Format: JSON array of {"instruction": "...", "input": "...", "output": "..."} objects.
+Make responses detailed, clinically accurate, and suitable for medical AI training.`,
+
+  social_media: `Generate {count} high-quality training data samples for fine-tuning a social media content AI model.
+Each sample should be a question-answer pair covering:
+- Content creation for medical professionals on social media
+- Engagement optimization, hashtag strategies, content calendars
+- Brand voice consistency, viral content patterns
+- Platform-specific best practices (Instagram, TikTok, YouTube, LinkedIn)
+Format: JSON array of {"instruction": "...", "input": "...", "output": "..."} objects.
+Make responses actionable and based on real social media marketing strategies.`,
+
+  hedge_fund: `Generate {count} high-quality training data samples for fine-tuning a financial analysis AI model.
+Each sample should be a question-answer pair covering:
+- Stock analysis (fundamental + technical), portfolio management
+- Options strategies, risk assessment, market sentiment
+- Healthcare/biotech sector focus, earnings analysis
+- Trading psychology, macro economics
+Format: JSON array of {"instruction": "...", "input": "...", "output": "..."} objects.
+Make responses quantitative and based on real financial analysis frameworks.`,
+};
+
+async function generateDomainTrainingData(domain: string, model: string, count: number): Promise<{ samples: number; jobId: number | null; error?: string }> {
+  try {
+    const vpsIp = process.env.VPS_IP || "72.60.167.64";
+    const serverUrl = process.env.OLLAMA_BASE_URL || process.env.VPS_OLLAMA_URL || `http://${vpsIp}:11434`;
+    const promptTemplate = DOMAIN_PROMPTS[domain] || DOMAIN_PROMPTS.otolaryngology;
+    const prompt = promptTemplate.replace("{count}", String(count));
+
+    const [job] = await db.insert(trainingDataJobsTable).values({
+      domain,
+      jobType: "generate",
+      status: "running",
+      model,
+      startedAt: new Date(),
+    }).returning();
+
+    const resp = await fetch(`${serverUrl}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, prompt, stream: false }),
+    });
+    if (!resp.ok) throw new Error(`Ollama returned ${resp.status}`);
+    const data = await resp.json() as any;
+    const response = data.response || "";
+
+    let samples: any[] = [];
+    try {
+      const m = response.match(/\[[\s\S]*\]/);
+      if (m) samples = JSON.parse(m[0]);
+    } catch {
+      samples = [{ instruction: "training sample", input: "", output: response }];
+    }
+
+    await db.update(trainingDataJobsTable).set({
+      status: "completed",
+      recordsCollected: samples.length,
+      recordsProcessed: samples.length,
+      outputPath: `/training-data/${domain}/${job.id}.jsonl`,
+      aiSummary: `[Auto] Generated ${samples.length} training samples for ${domain}`,
+      completedAt: new Date(),
+    }).where(eq(trainingDataJobsTable.id, job.id));
+
+    if (samples.length > 0) {
+      const existingDatasets = await db.select().from(trainingDatasetsTable)
+        .where(eq(trainingDatasetsTable.domain, domain));
+
+      if (existingDatasets.length > 0) {
+        const ds = existingDatasets[0];
+        const currentSamples = ds.totalSamples || 0;
+        await db.update(trainingDatasetsTable).set({
+          totalSamples: currentSamples + samples.length,
+          status: "building",
+        }).where(eq(trainingDatasetsTable.id, ds.id));
+      } else {
+        await db.insert(trainingDatasetsTable).values({
+          name: `${domain} Training Dataset`,
+          domain,
+          format: "jsonl",
+          totalSamples: samples.length,
+          status: "building",
+          sampleData: JSON.stringify(samples.slice(0, 3)),
+        });
+      }
+    }
+
+    return { samples: samples.length, jobId: job.id };
+  } catch (e: any) {
+    console.error(`[training-scheduler] Error generating ${domain}:`, e.message);
+    return { samples: 0, jobId: null, error: e.message };
+  }
+}
+
+async function runTrainingGeneration() {
+  if (isTrainingRunning) return;
+  isTrainingRunning = true;
+
+  const runId = `train-${Date.now()}`;
+  const record = {
+    id: runId,
+    startedAt: new Date().toISOString(),
+    completedAt: null as string | null,
+    status: "running",
+    results: {} as Record<string, { samples: number; jobId: number | null; error?: string }>,
+  };
+
+  trainingRunHistory.unshift(record);
+  if (trainingRunHistory.length > 50) trainingRunHistory = trainingRunHistory.slice(0, 50);
+
+  console.log(`[training-scheduler] Starting training data generation for domains: ${trainingSchedulerConfig.domains.join(", ")}`);
+
+  try {
+    for (const domain of trainingSchedulerConfig.domains) {
+      const result = await generateDomainTrainingData(
+        domain, trainingSchedulerConfig.model, trainingSchedulerConfig.samplesPerRun
+      );
+      record.results[domain] = result;
+      console.log(`[training-scheduler] ${domain}: generated ${result.samples} samples${result.error ? ` (error: ${result.error})` : ""}`);
+    }
+    record.status = "completed";
+  } catch (e: any) {
+    record.status = "failed";
+    console.error(`[training-scheduler] Run failed:`, e.message);
+  } finally {
+    isTrainingRunning = false;
+    record.completedAt = new Date().toISOString();
+    lastTrainingRunAt = record.completedAt;
+  }
+}
+
+router.get("/auto-collector/training-status", async (_req, res): Promise<void> => {
+  const jobs = await db.select().from(trainingDataJobsTable).orderBy(desc(trainingDataJobsTable.createdAt)).limit(20);
+  const datasets = await db.select().from(trainingDatasetsTable);
+
+  const totalSamplesGenerated = jobs
+    .filter(j => j.status === "completed")
+    .reduce((sum, j) => sum + (j.recordsCollected || 0), 0);
+
+  const domainStats: Record<string, { jobs: number; samples: number; datasetSize: number }> = {};
+  for (const domain of trainingSchedulerConfig.domains) {
+    const domainJobs = jobs.filter(j => j.domain === domain);
+    const domainDataset = datasets.find(d => d.domain === domain);
+    domainStats[domain] = {
+      jobs: domainJobs.length,
+      samples: domainJobs.filter(j => j.status === "completed").reduce((s, j) => s + (j.recordsCollected || 0), 0),
+      datasetSize: domainDataset?.totalSamples || 0,
+    };
+  }
+
+  res.json({
+    scheduler: {
+      enabled: trainingSchedulerConfig.enabled,
+      isRunning: isTrainingRunning,
+      intervalMinutes: trainingSchedulerConfig.intervalMinutes,
+      lastRunAt: lastTrainingRunAt,
+      totalRuns: trainingRunHistory.length,
+      model: trainingSchedulerConfig.model,
+      samplesPerRun: trainingSchedulerConfig.samplesPerRun,
+      domains: trainingSchedulerConfig.domains,
+    },
+    stats: {
+      totalJobs: jobs.length,
+      completedJobs: jobs.filter(j => j.status === "completed").length,
+      failedJobs: jobs.filter(j => j.status === "failed").length,
+      totalSamplesGenerated,
+      totalDatasets: datasets.length,
+    },
+    domainStats,
+    recentJobs: jobs.slice(0, 10),
+    recentRuns: trainingRunHistory.slice(0, 10),
+    datasets,
+  });
+});
+
+router.post("/auto-collector/training-config", async (req, res): Promise<void> => {
+  const { enabled, intervalMinutes, domains, samplesPerRun, model } = req.body;
+
+  if (enabled !== undefined) trainingSchedulerConfig.enabled = enabled;
+  if (intervalMinutes !== undefined) trainingSchedulerConfig.intervalMinutes = Math.max(15, Math.min(1440, intervalMinutes));
+  if (domains !== undefined) trainingSchedulerConfig.domains = domains;
+  if (samplesPerRun !== undefined) trainingSchedulerConfig.samplesPerRun = Math.max(1, Math.min(50, samplesPerRun));
+  if (model !== undefined) trainingSchedulerConfig.model = model;
+
+  if (trainingSchedulerConfig.enabled) {
+    startTrainingScheduler();
+  } else if (trainingSchedulerInterval) {
+    clearInterval(trainingSchedulerInterval);
+    trainingSchedulerInterval = null;
+    console.log("[training-scheduler] Stopped.");
+  }
+
+  res.json({ config: trainingSchedulerConfig });
+});
+
+router.post("/auto-collector/training-run", async (_req, res): Promise<void> => {
+  if (isTrainingRunning) {
+    res.status(409).json({ error: "Training generation already running" });
+    return;
+  }
+  runTrainingGeneration().catch(console.error);
+  res.json({ message: "Training generation started", domains: trainingSchedulerConfig.domains });
+});
 
 export default router;

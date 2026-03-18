@@ -29,7 +29,7 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **ENT Clinical AI** (15 tabs): `/clinical` page — Clinical Decision Support, Audiogram AI, Case Studies, Report Writer, Drug Interactions, Patient Education, Image Annotation, Protocols, Surgical Planning, Treatment Outcomes, Literature Search, Symptom Timeline, Referral Letters, Dosage Calculator, Voice Disorders
 - **Social Media AI** (11 tabs): `/social` page — Content Calendar, Post Generator, Viral Hooks, Analytics, Brand Voice, Hashtag Strategy, Competitor Analysis, Engagement Predictor, Caption Writer, Reel Scripts, Audience Personas
 - **Hedge Fund AI** (13 tabs): `/finance` page — Stock Screener, Portfolio, Sentiment, Trade Journal, Earnings, AI Tracker, Options Strategy, Sector Rotation, Dividends, Technical Patterns, Macro Dashboard, Insider Activity, Crypto Analysis
-- **Database Training Agent** (4 tabs): `/data-agent` page — Dashboard (domain stats for ENT/Social/Finance), Data Sources (CRUD), Jobs (run generation jobs per domain), Datasets (quality scoring)
+- **Database Training Agent** (5 tabs): `/data-agent` page — Dashboard (domain stats for ENT/Social/Finance), Continuous Training (auto-scheduler status, config, run history), Data Sources (CRUD), Jobs (run generation jobs per domain), Datasets (quality scoring)
 - **Voice Agent Hub** (8 tabs): `/voice-agent` page — Dashboard, All Providers, Cloud Services, Local Engines, Voice Chat, History, Benchmark, Dialog Flows. Compares 12 voice AI providers: Cloud (Amazon Lex, ElevenLabs, OpenAI Voice, Google Dialogflow, Azure Speech, IBM Watson) and Local (Rasa, DeepPavlov, OpenVoice/OVO, Mycroft, Local LLM/Ollama, Coqui TTS). Integrated with local Ollama for real conversational responses. Provider benchmarking with rankings, dialog flow generation via LLM.
 
 ## VPS Configuration
@@ -54,11 +54,12 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - Anthropic (claude-sonnet-4-6) via `@workspace/integrations-anthropic-ai`, uses `AI_INTEGRATIONS_ANTHROPIC_BASE_URL` + `_API_KEY`
 - Both use Replit AI Integrations proxy (no user API keys needed)
 
-## Auto-Collector
+## Auto-Collector & Continuous Training
 - Auto-starts 15 seconds after server boot, runs every 30 minutes
 - Sources: Gmail, Google Drive, Chat Conversations, Discovery, Knowledge Base
 - Collected data stored in VPS `training_sources` table
 - LLM processing: auto-enriches collected items with summaries, Q&A pairs, categories via Ollama
+- **Continuous Training Scheduler**: Runs every 60 minutes (configurable 15-1440 min), generates domain-specific training data for ENT, Social Media, and Hedge Fund using qwen2.5:7b. Auto-creates/updates datasets. Status visible in Data Agent → Continuous Training tab. Endpoints: `/auto-collector/training-status`, `/auto-collector/training-config`, `/auto-collector/training-run`
 
 ## ENT Training Pipeline
 - 10 built-in otolaryngology knowledge modules (137 RAG chunks)
