@@ -1,3 +1,21 @@
 <svg width="180" height="180" viewBox="0 0 180 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<rect width="180" height="180" rx="36" fill="#FF3C00"/>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="180" y2="180" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#2563EB"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="40" y1="30" x2="140" y2="150" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#A78BFA"/>
+      <stop offset="100%" stop-color="#60A5FA"/>
+    </linearGradient>
+  </defs>
+  <rect width="180" height="180" rx="36" fill="url(#bg)"/>
+  <rect x="6" y="6" width="168" height="168" rx="30" fill="none" stroke="url(#glow)" stroke-width="2" opacity="0.3"/>
+  <path d="M50 65 L65 65 L72 55 L80 75 L88 50 L96 70 L103 60 L110 65 L130 65" stroke="white" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.9"/>
+  <circle cx="90" cy="105" r="28" fill="none" stroke="white" stroke-width="5" opacity="0.9"/>
+  <circle cx="90" cy="105" r="10" fill="white" opacity="0.85"/>
+  <line x1="90" y1="77" x2="90" y2="85" stroke="white" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+  <line x1="90" y1="125" x2="90" y2="133" stroke="white" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+  <line x1="62" y1="105" x2="70" y2="105" stroke="white" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
+  <line x1="110" y1="105" x2="118" y2="105" stroke="white" stroke-width="4" stroke-linecap="round" opacity="0.7"/>
 </svg>
