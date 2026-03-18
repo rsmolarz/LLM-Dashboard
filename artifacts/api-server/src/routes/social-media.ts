@@ -4,6 +4,8 @@ import { db } from "@workspace/db";
 import {
   socialContentCalendarTable, socialPostsTable, viralHooksTable,
   socialAnalyticsTable, brandVoiceTable,
+  hashtagStrategyTable, competitorAnalysisTable, engagementPredictorTable,
+  captionWriterTable, reelScriptsTable, audiencePersonasTable,
 } from "@workspace/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { llmConfigTable } from "@workspace/db/schema";
@@ -254,6 +256,254 @@ Respond in JSON: { "score": 0.0-1.0, "feedback": "...", "suggestions": ["..."] }
 router.delete("/social/brand-voice/:id", requireAuth, async (req, res): Promise<void> => {
   await db.delete(brandVoiceTable).where(eq(brandVoiceTable.id, parseInt(req.params.id)));
   res.json({ success: true });
+});
+
+router.get("/social/hashtag-strategy", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(hashtagStrategyTable).orderBy(desc(hashtagStrategyTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/social/hashtag-strategy/generate", requireAuth, async (req, res): Promise<void> => {
+  const { niche, platform, model } = req.body;
+  if (!niche) { res.status(400).json({ error: "niche required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "llama3.2:latest";
+  const prompt = `You are a social media hashtag strategist. Create an optimal hashtag strategy for:
+
+Niche: ${niche}
+Platform: ${platform || "Instagram"}
+
+Provide 3 tiers of hashtags:
+1. Primary (5 high-volume, niche-specific)
+2. Secondary (8 medium-volume, targeted)
+3. Trending (5 currently trending, relevant)
+
+Also estimate reach potential for each tier.
+Respond in JSON: { "primary": ["..."], "secondary": ["..."], "trending": ["..."], "reachEstimate": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(hashtagStrategyTable).values({
+      niche, platform: platform || "Instagram",
+      primaryHashtags: JSON.stringify(parsed.primary || []),
+      secondaryHashtags: JSON.stringify(parsed.secondary || []),
+      trendingHashtags: JSON.stringify(parsed.trending || []),
+      reachEstimate: parsed.reachEstimate || null,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/social/competitor-analysis", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(competitorAnalysisTable).orderBy(desc(competitorAnalysisTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/social/competitor-analysis/analyze", requireAuth, async (req, res): Promise<void> => {
+  const { competitorHandle, platform, model } = req.body;
+  if (!competitorHandle) { res.status(400).json({ error: "competitorHandle required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "llama3.2:latest";
+  const prompt = `Analyze this social media competitor for a medical influencer:
+
+Competitor: ${competitorHandle}
+Platform: ${platform || "Instagram"}
+
+Provide:
+1. Content strategy analysis (what type of content they post, frequency, themes)
+2. Top performing content categories
+3. Weaknesses and gaps in their strategy
+4. Opportunities to differentiate from them
+5. What to learn from them
+
+Respond in JSON: { "contentStrategy": "...", "topPerforming": ["..."], "weaknesses": ["..."], "opportunities": ["..."], "lessonsToLearn": ["..."] }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(competitorAnalysisTable).values({
+      competitorHandle, platform: platform || "Instagram",
+      contentStrategy: parsed.contentStrategy || response,
+      topPerforming: JSON.stringify(parsed.topPerforming || []),
+      weaknesses: JSON.stringify(parsed.weaknesses || []),
+      opportunities: JSON.stringify(parsed.opportunities || []),
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/social/engagement-predictor", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(engagementPredictorTable).orderBy(desc(engagementPredictorTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/social/engagement-predictor/predict", requireAuth, async (req, res): Promise<void> => {
+  const { content, platform, postType, model } = req.body;
+  if (!content) { res.status(400).json({ error: "content required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "llama3.2:latest";
+  const prompt = `Predict social media engagement for this content:
+
+Content: "${content}"
+Platform: ${platform || "Instagram"}
+Post Type: ${postType || "image"}
+
+Predict:
+1. Estimated likes, comments, shares (for a medical influencer with 10k-50k followers)
+2. Viral probability (0.0-1.0)
+3. Suggestions to improve engagement
+
+Respond in JSON: { "predictedLikes": 0, "predictedComments": 0, "predictedShares": 0, "viralProbability": 0.0-1.0, "suggestions": ["..."] }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(engagementPredictorTable).values({
+      content, platform: platform || "Instagram", postType: postType || "image",
+      predictedLikes: parsed.predictedLikes || null,
+      predictedComments: parsed.predictedComments || null,
+      predictedShares: parsed.predictedShares || null,
+      viralProbability: parsed.viralProbability || null,
+      suggestions: JSON.stringify(parsed.suggestions || []),
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/social/captions", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(captionWriterTable).orderBy(desc(captionWriterTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/social/captions/generate", requireAuth, async (req, res): Promise<void> => {
+  const { imageDescription, platform, tone, model } = req.body;
+  if (!imageDescription) { res.status(400).json({ error: "imageDescription required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "llama3.2:latest";
+  const prompt = `Write social media captions for this image/post:
+
+Image Description: ${imageDescription}
+Platform: ${platform || "Instagram"}
+Tone: ${tone || "professional yet approachable"}
+
+Provide:
+1. Primary caption (platform-optimized length)
+2. 3 alternative caption variations
+3. Relevant hashtags
+4. Call to action
+
+Respond in JSON: { "caption": "...", "altCaptions": ["..."], "hashtags": ["..."], "cta": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { caption: response }; }
+    const [row] = await db.insert(captionWriterTable).values({
+      imageDescription, platform: platform || "Instagram", tone: tone || "professional",
+      caption: parsed.caption || response,
+      altCaptions: JSON.stringify(parsed.altCaptions || []),
+      hashtags: JSON.stringify(parsed.hashtags || []),
+      cta: parsed.cta || null,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/social/reel-scripts", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(reelScriptsTable).orderBy(desc(reelScriptsTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/social/reel-scripts/generate", requireAuth, async (req, res): Promise<void> => {
+  const { topic, platform, duration, model } = req.body;
+  if (!topic) { res.status(400).json({ error: "topic required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "llama3.2:latest";
+  const prompt = `Write a short-form video script for a medical influencer:
+
+Topic: ${topic}
+Platform: ${platform || "Instagram Reels"}
+Duration: ${duration || "30 seconds"}
+
+Include:
+1. Hook (first 3 seconds - must stop scrolling)
+2. Script with timing cues
+3. Visual direction cues (text overlays, b-roll, transitions)
+4. Call to action
+5. Trending audio suggestion
+
+Respond in JSON: { "hook": "...", "script": "...", "visualCues": [{"timestamp": "0:00", "visual": "...", "text": "..."}], "callToAction": "...", "trendingAudio": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { script: response }; }
+    const [row] = await db.insert(reelScriptsTable).values({
+      topic, platform: platform || "Instagram Reels", duration: duration || "30s",
+      hook: parsed.hook || null,
+      script: parsed.script || response,
+      visualCues: JSON.stringify(parsed.visualCues || []),
+      callToAction: parsed.callToAction || null,
+      trendingAudio: parsed.trendingAudio || null,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/social/audience-personas", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(audiencePersonasTable).orderBy(desc(audiencePersonasTable.createdAt)).limit(20);
+  res.json(rows);
+});
+
+router.post("/social/audience-personas/generate", requireAuth, async (req, res): Promise<void> => {
+  const { niche, model } = req.body;
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "llama3.2:latest";
+  const prompt = `Create a detailed audience persona for a medical influencer/ENT doctor content creator.
+
+Niche focus: ${niche || "medical education + lifestyle + finance"}
+
+Build a detailed persona including:
+1. Demographics (age, gender, location, income)
+2. Interests and hobbies
+3. Pain points and challenges
+4. Content preferences (format, length, topics)
+5. Preferred platforms and usage patterns
+6. Engagement behavior patterns
+
+Respond in JSON: { "name": "...", "demographics": "...", "interests": ["..."], "painPoints": ["..."], "contentPreferences": "...", "platforms": ["..."], "engagementPatterns": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { name: "Persona", demographics: response }; }
+    const [row] = await db.insert(audiencePersonasTable).values({
+      name: parsed.name || "Audience Persona",
+      demographics: parsed.demographics || null,
+      interests: JSON.stringify(parsed.interests || []),
+      painPoints: JSON.stringify(parsed.painPoints || []),
+      contentPreferences: parsed.contentPreferences || null,
+      platforms: JSON.stringify(parsed.platforms || []),
+      engagementPatterns: parsed.engagementPatterns || null,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 export default router;

@@ -16,6 +16,7 @@ import Admin from "@/pages/Admin";
 import Clinical from "@/pages/Clinical";
 import Social from "@/pages/Social";
 import Finance from "@/pages/Finance";
+import DataAgent from "@/pages/DataAgent";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -44,6 +45,7 @@ function Router() {
         <Route path="/clinical" component={Clinical} />
         <Route path="/social" component={Social} />
         <Route path="/finance" component={Finance} />
+        <Route path="/data-agent" component={DataAgent} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

@@ -5,6 +5,8 @@ import {
   stockScreenerTable, portfolioTable, portfolioAnalysisTable,
   marketSentimentTable, tradeJournalTable, earningsAnalysisTable,
   aiPerformanceTrackingTable,
+  optionsStrategyTable, sectorRotationTable, dividendAnalysisTable,
+  technicalPatternsTable, macroDashboardTable, insiderActivityTable, cryptoAnalysisTable,
 } from "@workspace/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { llmConfigTable } from "@workspace/db/schema";
@@ -336,6 +338,287 @@ router.get("/finance/dashboard", async (_req, res): Promise<void> => {
     recentScreener: screener,
     aiPerformance: performance,
   });
+});
+
+router.get("/finance/options", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(optionsStrategyTable).orderBy(desc(optionsStrategyTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/finance/options/analyze", requireAuth, async (req, res): Promise<void> => {
+  const { ticker, strategyType, model } = req.body;
+  if (!ticker || !strategyType) { res.status(400).json({ error: "ticker and strategyType required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "deepseek-r1:8b";
+  const prompt = `You are a derivatives strategist. Analyze an options strategy:
+
+Ticker: ${ticker.toUpperCase()}
+Strategy: ${strategyType} (e.g. covered call, bull call spread, iron condor, straddle, protective put)
+
+Provide:
+1. Strategy legs with strike prices and premiums
+2. Max profit and max loss scenarios
+3. Breakeven points
+4. Greeks exposure (delta, gamma, theta, vega)
+5. When this strategy is optimal
+6. Risk/reward assessment
+
+Respond in JSON: { "legs": [{"type": "call/put", "action": "buy/sell", "strike": 0, "premium": 0, "expiry": "..."}], "maxProfit": 0, "maxLoss": 0, "breakeven": "...", "greeks": {"delta": 0, "gamma": 0, "theta": 0, "vega": 0}, "analysis": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(optionsStrategyTable).values({
+      ticker: ticker.toUpperCase(), strategyType,
+      legs: JSON.stringify(parsed.legs || []),
+      maxProfit: parsed.maxProfit || null, maxLoss: parsed.maxLoss || null,
+      breakeven: parsed.breakeven || null,
+      greeks: JSON.stringify(parsed.greeks || {}),
+      aiAnalysis: parsed.analysis || response,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/finance/sector-rotation", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(sectorRotationTable).orderBy(desc(sectorRotationTable.createdAt)).limit(20);
+  res.json(rows);
+});
+
+router.post("/finance/sector-rotation/analyze", requireAuth, async (req, res): Promise<void> => {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const prompt = `As a macro strategist, analyze current sector rotation:
+
+Analyze all 11 GICS sectors for:
+1. Current phase in business cycle (early/mid/late/recession)
+2. Leading sectors (outperforming)
+3. Lagging sectors (underperforming)
+4. Rotation signals and recommendations
+5. Healthcare sector specific outlook
+
+Respond in JSON: { "sectors": [{"name": "...", "performance": "leading/neutral/lagging", "outlook": "..."}], "currentPhase": "...", "leadingSectors": ["..."], "laggingSectors": ["..."], "recommendations": ["..."], "economicCycle": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, "deepseek-r1:8b", prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(sectorRotationTable).values({
+      sectors: JSON.stringify(parsed.sectors || []),
+      currentPhase: parsed.currentPhase || null,
+      leadingSectors: JSON.stringify(parsed.leadingSectors || []),
+      laggingSectors: JSON.stringify(parsed.laggingSectors || []),
+      recommendations: JSON.stringify(parsed.recommendations || []),
+      economicCycle: parsed.economicCycle || null,
+      model: "deepseek-r1:8b",
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/finance/dividends", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(dividendAnalysisTable).orderBy(desc(dividendAnalysisTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/finance/dividends/analyze", requireAuth, async (req, res): Promise<void> => {
+  const { ticker, model } = req.body;
+  if (!ticker) { res.status(400).json({ error: "ticker required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "deepseek-r1:8b";
+  const prompt = `Analyze dividend profile for ${ticker.toUpperCase()}:
+
+Provide:
+1. Current dividend yield
+2. Payout ratio and sustainability
+3. Dividend growth rate (5-year CAGR)
+4. Dividend safety score (0-1)
+5. Ex-dividend date and next payment
+6. Comparison to sector average
+
+Respond in JSON: { "dividendYield": 0, "payoutRatio": 0, "growthRate": 0, "safetyScore": 0.0-1.0, "exDivDate": "...", "analysis": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(dividendAnalysisTable).values({
+      ticker: ticker.toUpperCase(),
+      dividendYield: parsed.dividendYield || null,
+      payoutRatio: parsed.payoutRatio || null,
+      growthRate: parsed.growthRate || null,
+      exDivDate: parsed.exDivDate || null,
+      safetyScore: parsed.safetyScore || null,
+      aiAnalysis: parsed.analysis || response,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/finance/technical-patterns", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(technicalPatternsTable).orderBy(desc(technicalPatternsTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/finance/technical-patterns/analyze", requireAuth, async (req, res): Promise<void> => {
+  const { ticker, timeframe, model } = req.body;
+  if (!ticker) { res.status(400).json({ error: "ticker required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "deepseek-r1:8b";
+  const prompt = `Analyze technical chart patterns for ${ticker.toUpperCase()} on ${timeframe || "daily"} timeframe:
+
+Identify:
+1. Active chart patterns (head & shoulders, double top/bottom, flags, wedges, triangles)
+2. Key support and resistance levels
+3. Trend direction and strength
+4. Volume analysis
+5. Price prediction with confidence
+
+Respond in JSON: { "patterns": [{"name": "...", "type": "bullish/bearish", "reliability": 0.0-1.0}], "supportLevels": ["..."], "resistanceLevels": ["..."], "trendDirection": "up/down/sideways", "prediction": "...", "confidence": 0.0-1.0 }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(technicalPatternsTable).values({
+      ticker: ticker.toUpperCase(), timeframe: timeframe || "daily",
+      patterns: JSON.stringify(parsed.patterns || []),
+      supportLevels: JSON.stringify(parsed.supportLevels || []),
+      resistanceLevels: JSON.stringify(parsed.resistanceLevels || []),
+      trendDirection: parsed.trendDirection || null,
+      aiPrediction: parsed.prediction || response,
+      confidence: parsed.confidence || null,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/finance/macro", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(macroDashboardTable).orderBy(desc(macroDashboardTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/finance/macro/analyze", requireAuth, async (req, res): Promise<void> => {
+  const { indicator, model } = req.body;
+  if (!indicator) { res.status(400).json({ error: "indicator required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "deepseek-r1:8b";
+  const prompt = `Analyze this macroeconomic indicator: ${indicator}
+
+Provide:
+1. Current estimated value and recent trend
+2. Impact on equity markets
+3. Specific impact on healthcare sector
+4. Historical context
+5. Forward outlook
+
+Respond in JSON: { "currentValue": "...", "previousValue": "...", "trend": "rising/falling/stable", "impact": "...", "healthcareImpact": "...", "commentary": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(macroDashboardTable).values({
+      indicator, currentValue: parsed.currentValue || null,
+      previousValue: parsed.previousValue || null,
+      trend: parsed.trend || null,
+      impact: parsed.impact || response,
+      healthcareImpact: parsed.healthcareImpact || null,
+      aiCommentary: parsed.commentary || null,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/finance/insider-activity", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(insiderActivityTable).orderBy(desc(insiderActivityTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/finance/insider-activity/analyze", requireAuth, async (req, res): Promise<void> => {
+  const { ticker, insiderName, title, transactionType, shares, price, model } = req.body;
+  if (!ticker || !transactionType) { res.status(400).json({ error: "ticker and transactionType required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "deepseek-r1:8b";
+  const totalValue = (shares || 0) * (price || 0);
+  const prompt = `Analyze this insider transaction for investment significance:
+
+Ticker: ${ticker.toUpperCase()}
+Insider: ${insiderName || "Unknown"} (${title || "Executive"})
+Transaction: ${transactionType} (buy/sell)
+Shares: ${shares || "N/A"}, Price: $${price || "N/A"}, Total: $${totalValue || "N/A"}
+
+Assess:
+1. Significance of this transaction
+2. Historical insider trading patterns for this company
+3. Signal strength (bullish/bearish/neutral)
+4. Recommended action based on insider activity
+
+Respond in JSON: { "significance": "high/medium/low", "signal": "bullish/bearish/neutral", "analysis": "...", "recommendation": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(insiderActivityTable).values({
+      ticker: ticker.toUpperCase(), insiderName, title,
+      transactionType, shares, price, totalValue,
+      aiSignificance: parsed.analysis || response,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/finance/crypto", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(cryptoAnalysisTable).orderBy(desc(cryptoAnalysisTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/finance/crypto/analyze", requireAuth, async (req, res): Promise<void> => {
+  const { symbol, model } = req.body;
+  if (!symbol) { res.status(400).json({ error: "symbol required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "deepseek-r1:8b";
+  const prompt = `Analyze cryptocurrency ${symbol.toUpperCase()} as a hedge fund analyst:
+
+Provide:
+1. Fundamental analysis (use case, adoption, team, tokenomics)
+2. Technical analysis (trend, key levels, momentum)
+3. On-chain metrics assessment
+4. Market sentiment
+5. Risk level (low/medium/high/extreme)
+6. Signal (buy/hold/sell)
+
+Respond in JSON: { "analysis": "...", "sentiment": "bullish/bearish/neutral", "technicals": "...", "onChainMetrics": "...", "riskLevel": "...", "signal": "buy/hold/sell" }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(cryptoAnalysisTable).values({
+      symbol: symbol.toUpperCase(),
+      analysis: parsed.analysis || response,
+      sentiment: parsed.sentiment || null,
+      technicals: parsed.technicals || null,
+      onChainMetrics: parsed.onChainMetrics || null,
+      riskLevel: parsed.riskLevel || null,
+      aiSignal: parsed.signal || null,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 export default router;

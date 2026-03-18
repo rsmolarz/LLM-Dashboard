@@ -26,9 +26,10 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **Mobile Responsive**: Hamburger menu on mobile, responsive grid layouts, touch-friendly controls across all pages
 - **System Monitor**: `/monitor` dashboard with real-time health metrics, auto-collector status, VPS model inventory, database stats, knowledge base categories
 - **User Authentication**: Replit Auth (OIDC PKCE) with session management, per-user data scoping
-- **ENT Clinical AI** (8 tabs): `/clinical` page — Clinical Decision Support (AI differential diagnosis), Audiogram AI Analyzer, Case Study Generator, Medical Report Writer, Drug Interaction Checker, Patient Education Generator, Image Annotation Tool, Clinical Protocol Builder
-- **Social Media AI** (5 tabs): `/social` page — Content Calendar Generator, Post Generator (multi-platform), Viral Hook Analyzer, Social Analytics Tracker, Brand Voice Trainer
-- **Hedge Fund AI** (6 tabs): `/finance` page — Stock Screener (AI signals), Portfolio Manager (risk analysis), Market Sentiment AI, Trade Journal (psychology analysis), Earnings Call Analyzer, AI Model Performance Tracker
+- **ENT Clinical AI** (15 tabs): `/clinical` page — Clinical Decision Support, Audiogram AI, Case Studies, Report Writer, Drug Interactions, Patient Education, Image Annotation, Protocols, Surgical Planning, Treatment Outcomes, Literature Search, Symptom Timeline, Referral Letters, Dosage Calculator, Voice Disorders
+- **Social Media AI** (11 tabs): `/social` page — Content Calendar, Post Generator, Viral Hooks, Analytics, Brand Voice, Hashtag Strategy, Competitor Analysis, Engagement Predictor, Caption Writer, Reel Scripts, Audience Personas
+- **Hedge Fund AI** (13 tabs): `/finance` page — Stock Screener, Portfolio, Sentiment, Trade Journal, Earnings, AI Tracker, Options Strategy, Sector Rotation, Dividends, Technical Patterns, Macro Dashboard, Insider Activity, Crypto Analysis
+- **Database Training Agent** (4 tabs): `/data-agent` page — Dashboard (domain stats for ENT/Social/Finance), Data Sources (CRUD), Jobs (run generation jobs per domain), Datasets (quality scoring)
 
 ## VPS Configuration
 - IP: 72.60.167.64, Ollama: port 11434, OpenClaw: port 18789

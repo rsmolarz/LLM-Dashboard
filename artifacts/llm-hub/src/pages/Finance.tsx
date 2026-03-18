@@ -1,17 +1,24 @@
 import { useState, useEffect } from "react";
-import { TrendingUp, Briefcase, BarChart3, Brain, BookOpen, DollarSign, Loader2, Plus, Trash2 } from "lucide-react";
+import { TrendingUp, Briefcase, BarChart3, Brain, BookOpen, DollarSign, Loader2, Plus, Trash2, Target, PieChart, Coins, Activity, Globe, UserCheck, Bitcoin } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "/api";
 
-type Tab = "screener" | "portfolio" | "sentiment" | "journal" | "earnings" | "performance";
+type Tab = "screener" | "portfolio" | "sentiment" | "journal" | "earnings" | "performance" | "options" | "sectors" | "dividends" | "patterns" | "macro" | "insider" | "crypto";
 
-const TABS: { id: Tab; label: string; icon: any; desc: string }[] = [
-  { id: "screener", label: "Stock Screener", icon: TrendingUp, desc: "AI stock analysis" },
-  { id: "portfolio", label: "Portfolio", icon: Briefcase, desc: "Holdings & risk" },
-  { id: "sentiment", label: "Sentiment", icon: Brain, desc: "Market sentiment" },
-  { id: "journal", label: "Trade Journal", icon: BookOpen, desc: "Log trades" },
-  { id: "earnings", label: "Earnings", icon: DollarSign, desc: "Earnings analysis" },
-  { id: "performance", label: "AI Tracker", icon: BarChart3, desc: "Model accuracy" },
+const TABS: { id: Tab; label: string; icon: any }[] = [
+  { id: "screener", label: "Stock Screener", icon: TrendingUp },
+  { id: "portfolio", label: "Portfolio", icon: Briefcase },
+  { id: "sentiment", label: "Sentiment", icon: Brain },
+  { id: "journal", label: "Trade Journal", icon: BookOpen },
+  { id: "earnings", label: "Earnings", icon: DollarSign },
+  { id: "performance", label: "AI Tracker", icon: BarChart3 },
+  { id: "options", label: "Options", icon: Target },
+  { id: "sectors", label: "Sector Rotation", icon: PieChart },
+  { id: "dividends", label: "Dividends", icon: Coins },
+  { id: "patterns", label: "Tech Patterns", icon: Activity },
+  { id: "macro", label: "Macro Dashboard", icon: Globe },
+  { id: "insider", label: "Insider Activity", icon: UserCheck },
+  { id: "crypto", label: "Crypto Analysis", icon: Bitcoin },
 ];
 
 function StockScreenerTab() {
@@ -61,7 +68,6 @@ function StockScreenerTab() {
         </button>
         <button onClick={loadHistory} className="px-3 py-2 rounded bg-gray-700 text-gray-300 text-sm">History</button>
       </div>
-
       {result?.parsed && (
         <div className="bg-gray-800/50 rounded-lg p-5 border border-gray-700 space-y-4">
           <div className="flex items-center justify-between">
@@ -97,7 +103,6 @@ function StockScreenerTab() {
           )}
         </div>
       )}
-
       {history.length > 0 && (
         <div className="space-y-2">{history.slice(0, 8).map((h: any) => (
           <div key={h.id} className="p-3 bg-gray-800/50 rounded border border-gray-700 flex justify-between items-center">
@@ -119,11 +124,7 @@ function PortfolioTab() {
   const [analysis, setAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(false);
 
-  const load = async () => {
-    const r = await fetch(`${API}/finance/portfolio`);
-    setHoldings(await r.json());
-  };
-
+  const load = async () => { const r = await fetch(`${API}/finance/portfolio`); setHoldings(await r.json()); };
   const add = async () => {
     if (!form.ticker || !form.shares) return;
     await fetch(`${API}/finance/portfolio`, {
@@ -133,21 +134,12 @@ function PortfolioTab() {
     setForm({ ticker: "", shares: "", avgCost: "", currentPrice: "", sector: "healthcare" });
     load();
   };
-
-  const remove = async (id: number) => {
-    await fetch(`${API}/finance/portfolio/${id}`, { method: "DELETE" });
-    load();
-  };
-
+  const remove = async (id: number) => { await fetch(`${API}/finance/portfolio/${id}`, { method: "DELETE" }); load(); };
   const analyze = async () => {
     setLoading(true);
-    try {
-      const r = await fetch(`${API}/finance/portfolio/analyze`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      setAnalysis(await r.json());
-    } catch (e) { console.error(e); }
+    try { const r = await fetch(`${API}/finance/portfolio/analyze`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); setAnalysis(await r.json()); } catch (e) { console.error(e); }
     setLoading(false);
   };
-
   useEffect(() => { load(); }, []);
 
   const totalValue = holdings.reduce((s, h) => s + (h.currentPrice || h.avgCost) * h.shares, 0);
@@ -156,13 +148,12 @@ function PortfolioTab() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div><h2 className="text-xl font-bold text-white">Portfolio Manager</h2><p className="text-gray-400 text-sm">Track holdings and get AI risk analysis</p></div>
+        <div><h2 className="text-xl font-bold text-white">Portfolio Manager</h2></div>
         <button onClick={analyze} disabled={loading || !holdings.length}
           className="px-4 py-2 rounded bg-gradient-to-r from-green-500 to-emerald-600 text-white text-sm disabled:opacity-50 flex items-center gap-2">
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />} AI Analysis
         </button>
       </div>
-
       <div className="grid grid-cols-3 gap-3">
         <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700 text-center">
           <span className="text-xs text-gray-400 block">Total Value</span>
@@ -177,47 +168,35 @@ function PortfolioTab() {
           <span className="text-2xl font-bold text-white">{holdings.length}</span>
         </div>
       </div>
-
       <div className="grid grid-cols-6 gap-2">
-        <input value={form.ticker} onChange={e => setForm(p => ({ ...p, ticker: e.target.value.toUpperCase() }))} placeholder="TICKER"
-          className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm uppercase" />
-        <input value={form.shares} onChange={e => setForm(p => ({ ...p, shares: e.target.value }))} placeholder="Shares" type="number"
-          className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
-        <input value={form.avgCost} onChange={e => setForm(p => ({ ...p, avgCost: e.target.value }))} placeholder="Avg Cost" type="number"
-          className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
-        <input value={form.currentPrice} onChange={e => setForm(p => ({ ...p, currentPrice: e.target.value }))} placeholder="Current $" type="number"
-          className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
+        <input value={form.ticker} onChange={e => setForm(p => ({ ...p, ticker: e.target.value.toUpperCase() }))} placeholder="TICKER" className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm uppercase" />
+        <input value={form.shares} onChange={e => setForm(p => ({ ...p, shares: e.target.value }))} placeholder="Shares" type="number" className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
+        <input value={form.avgCost} onChange={e => setForm(p => ({ ...p, avgCost: e.target.value }))} placeholder="Avg Cost" type="number" className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
+        <input value={form.currentPrice} onChange={e => setForm(p => ({ ...p, currentPrice: e.target.value }))} placeholder="Current $" type="number" className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
         <select value={form.sector} onChange={e => setForm(p => ({ ...p, sector: e.target.value }))} className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
           {["healthcare", "biotech", "pharma", "tech", "fintech", "energy"].map(s => <option key={s}>{s}</option>)}
         </select>
         <button onClick={add} className="px-3 py-2 rounded bg-green-600 text-white text-sm"><Plus className="w-4 h-4" /></button>
       </div>
-
       {holdings.length > 0 && (
-        <div className="space-y-1">
-          {holdings.map((h: any) => {
-            const pnl = h.currentPrice ? (h.currentPrice - h.avgCost) * h.shares : 0;
-            const pnlPct = h.avgCost > 0 && h.currentPrice ? ((h.currentPrice - h.avgCost) / h.avgCost * 100) : 0;
-            return (
-              <div key={h.id} className="p-3 bg-gray-800/50 rounded border border-gray-700 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <span className="text-white font-medium w-16">{h.ticker}</span>
-                  <span className="text-gray-400 text-xs">{h.shares} shares</span>
-                  <span className="text-gray-400 text-xs">@ ${h.avgCost}</span>
-                  {h.currentPrice && <span className="text-white text-xs">${h.currentPrice}</span>}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className={`text-sm font-medium ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>
-                    {pnl >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%
-                  </span>
-                  <button onClick={() => remove(h.id)} className="text-gray-500 hover:text-red-400"><Trash2 className="w-4 h-4" /></button>
-                </div>
+        <div className="space-y-1">{holdings.map((h: any) => {
+          const pnl = h.currentPrice ? (h.currentPrice - h.avgCost) * h.shares : 0;
+          const pnlPct = h.avgCost > 0 && h.currentPrice ? ((h.currentPrice - h.avgCost) / h.avgCost * 100) : 0;
+          return (
+            <div key={h.id} className="p-3 bg-gray-800/50 rounded border border-gray-700 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <span className="text-white font-medium w-16">{h.ticker}</span>
+                <span className="text-gray-400 text-xs">{h.shares} shares @ ${h.avgCost}</span>
+                {h.currentPrice && <span className="text-white text-xs">${h.currentPrice}</span>}
               </div>
-            );
-          })}
-        </div>
+              <div className="flex items-center gap-3">
+                <span className={`text-sm font-medium ${pnl >= 0 ? "text-green-400" : "text-red-400"}`}>{pnl >= 0 ? "+" : ""}{pnlPct.toFixed(1)}%</span>
+                <button onClick={() => remove(h.id)} className="text-gray-500 hover:text-red-400"><Trash2 className="w-4 h-4" /></button>
+              </div>
+            </div>
+          );
+        })}</div>
       )}
-
       {analysis?.parsed && (
         <div className="bg-gray-800/50 rounded-lg p-5 border border-green-500/30 space-y-3">
           <h3 className="text-white font-semibold">AI Portfolio Analysis</h3>
@@ -240,7 +219,6 @@ function SentimentTab() {
   const [source, setSource] = useState("general market news");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
-  const [history, setHistory] = useState<any[]>([]);
 
   const analyze = async () => {
     setLoading(true);
@@ -258,7 +236,7 @@ function SentimentTab() {
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-white">Market Sentiment AI</h2>
       <div className="flex gap-3">
-        <input value={topic} onChange={e => setTopic(e.target.value)} placeholder="Topic (e.g., healthcare earnings, FDA approvals)"
+        <input value={topic} onChange={e => setTopic(e.target.value)} placeholder="Topic (e.g., healthcare earnings)"
           className="flex-1 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
         <input value={source} onChange={e => setSource(e.target.value)} placeholder="Source context"
           className="w-48 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
@@ -329,7 +307,6 @@ function TradeJournalTab() {
       </div>
       <textarea value={form.reasoning} onChange={e => setForm(p => ({ ...p, reasoning: e.target.value }))} rows={2} placeholder="Why did you make this trade?"
         className="w-full p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
-
       {trades.length > 0 && (
         <div className="space-y-2">{trades.map((t: any) => (
           <div key={t.id} className="p-3 bg-gray-800/50 rounded border border-gray-700">
@@ -338,7 +315,6 @@ function TradeJournalTab() {
                 <span className={`text-sm font-medium px-2 py-0.5 rounded ${t.action === "BUY" ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400"}`}>{t.action}</span>
                 <span className="text-white font-medium">{t.ticker}</span>
                 <span className="text-gray-400 text-xs">{t.shares} @ ${t.price}</span>
-                {t.emotionalState && <span className="text-xs text-gray-500">{t.emotionalState}</span>}
               </div>
               <button onClick={() => analyzeTrade(t.id)} disabled={loading} className="px-3 py-1 rounded bg-gray-700 text-gray-300 text-xs hover:bg-green-600/50">
                 <Brain className="w-3 h-3 inline mr-1" />Analyze
@@ -393,7 +369,6 @@ function EarningsTab() {
           </div>
           <p className="text-gray-300 text-sm">{result.aiSummary}</p>
           {result.guidanceAnalysis && <p className="text-cyan-400 text-sm">Guidance: {result.guidanceAnalysis}</p>}
-          {result.healthcareInsights && <p className="text-green-400 text-sm">Healthcare: {result.healthcareInsights}</p>}
         </div>
       )}
     </div>
@@ -408,7 +383,7 @@ function PerformanceTab() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div><h2 className="text-xl font-bold text-white">AI Model Performance Tracker</h2><p className="text-gray-400 text-sm">Track accuracy of AI predictions across all domains</p></div>
+        <h2 className="text-xl font-bold text-white">AI Model Performance Tracker</h2>
         <button onClick={load} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-sm">Refresh</button>
       </div>
       {tracking.length > 0 ? (
@@ -422,14 +397,66 @@ function PerformanceTab() {
             <div className="flex items-center gap-3">
               <span className="text-cyan-400 text-sm">{t.prediction}</span>
               {t.accuracy !== null && <span className="text-green-400 text-xs">{(t.accuracy * 100).toFixed(0)}% accurate</span>}
-              <span className="text-gray-500 text-xs">{new Date(t.createdAt).toLocaleDateString()}</span>
             </div>
           </div>
         ))}</div>
       ) : (
         <div className="text-center text-gray-500 py-12">
           <BarChart3 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-          <p>No AI predictions tracked yet. Use Stock Screener, Sentiment, or Clinical tools to generate predictions.</p>
+          <p>No AI predictions tracked yet.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SimpleGenTab({ title, desc, endpoint, fields, resultKey }: { title: string; desc: string; endpoint: string; fields: { key: string; label: string; type?: string; options?: string[] }[]; resultKey: string }) {
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  const generate = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}${endpoint}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
+      });
+      setResult(await r.json());
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-xl font-bold text-white">{title}</h2>
+      <p className="text-gray-400 text-sm">{desc}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {fields.map(f => (
+          <div key={f.key}>
+            <label className="text-sm text-gray-400">{f.label}</label>
+            {f.options ? (
+              <select value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                className="w-full mt-1 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
+                <option value="">Select...</option>
+                {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            ) : f.type === "textarea" ? (
+              <textarea value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} rows={3}
+                className="w-full mt-1 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
+            ) : (
+              <input value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                className="w-full mt-1 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
+            )}
+          </div>
+        ))}
+      </div>
+      <button onClick={generate} disabled={loading}
+        className="px-6 py-2 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white font-medium disabled:opacity-50 flex items-center gap-2">
+        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Generate
+      </button>
+      {result && (
+        <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+          <pre className="text-gray-300 text-sm whitespace-pre-wrap">{result[resultKey] || result.strategy || result.aiAnalysis || JSON.stringify(result.parsed || result, null, 2)}</pre>
         </div>
       )}
     </div>
@@ -462,12 +489,12 @@ export default function Finance() {
         )}
       </div>
 
-      <div className="grid grid-cols-6 gap-2 mb-6">
+      <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`p-3 rounded-lg text-center transition-all ${tab === t.id ? "bg-green-500/20 border border-green-500/50" : "bg-gray-800/50 border border-gray-700 hover:border-gray-600"}`}>
-            <t.icon className={`w-5 h-5 mx-auto mb-1 ${tab === t.id ? "text-green-400" : "text-gray-400"}`} />
-            <span className={`text-xs block ${tab === t.id ? "text-green-300" : "text-gray-400"}`}>{t.label}</span>
+            className={`px-3 py-2 rounded-lg flex items-center gap-1.5 whitespace-nowrap transition-all ${tab === t.id ? "bg-green-500/20 border border-green-500/50 text-green-300" : "bg-gray-800/50 border border-gray-700 hover:border-gray-600 text-gray-400"}`}>
+            <t.icon className="w-4 h-4" />
+            <span className="text-xs">{t.label}</span>
           </button>
         ))}
       </div>
@@ -479,6 +506,51 @@ export default function Finance() {
         {tab === "journal" && <TradeJournalTab />}
         {tab === "earnings" && <EarningsTab />}
         {tab === "performance" && <PerformanceTab />}
+        {tab === "options" && <SimpleGenTab title="Options Strategy Builder" desc="AI-generated options strategies for any market condition"
+          endpoint="/finance/options/analyze"
+          fields={[
+            { key: "ticker", label: "Ticker Symbol" },
+            { key: "outlook", label: "Market Outlook", options: ["bullish", "bearish", "neutral", "volatile"] },
+            { key: "riskTolerance", label: "Risk Tolerance", options: ["conservative", "moderate", "aggressive"] },
+            { key: "capitalAvailable", label: "Capital Available ($)" },
+          ]} resultKey="strategy" />}
+        {tab === "sectors" && <SimpleGenTab title="Sector Rotation Analyzer" desc="AI-powered sector momentum and rotation signals"
+          endpoint="/finance/sector-rotation/analyze"
+          fields={[
+            { key: "sector", label: "Sector", options: ["healthcare", "technology", "financials", "energy", "consumer discretionary", "industrials", "materials", "utilities", "real estate"] },
+            { key: "timeframe", label: "Timeframe", options: ["1 month", "3 months", "6 months", "1 year"] },
+          ]} resultKey="aiAnalysis" />}
+        {tab === "dividends" && <SimpleGenTab title="Dividend Analysis" desc="AI-analyzed dividend stocks for income portfolios"
+          endpoint="/finance/dividends/analyze"
+          fields={[
+            { key: "ticker", label: "Ticker Symbol" },
+            { key: "investmentGoal", label: "Goal", options: ["income", "growth + income", "DRIP compounding", "retirement income"] },
+          ]} resultKey="aiAnalysis" />}
+        {tab === "patterns" && <SimpleGenTab title="Technical Pattern Recognition" desc="AI-detected chart patterns and trade setups"
+          endpoint="/finance/technical-patterns/analyze"
+          fields={[
+            { key: "ticker", label: "Ticker Symbol" },
+            { key: "timeframe", label: "Timeframe", options: ["1D", "4H", "1H", "15m", "weekly"] },
+            { key: "priceData", label: "Recent Price Action Notes", type: "textarea" },
+          ]} resultKey="aiAnalysis" />}
+        {tab === "macro" && <SimpleGenTab title="Macro Economic Dashboard" desc="AI analysis of macroeconomic indicators and their market impact"
+          endpoint="/finance/macro/analyze"
+          fields={[
+            { key: "indicator", label: "Indicator", options: ["GDP", "CPI/Inflation", "Interest Rates", "Employment", "PMI", "Consumer Confidence", "Housing", "Trade Balance"] },
+            { key: "region", label: "Region", options: ["US", "EU", "China", "Japan", "Global"] },
+          ]} resultKey="aiAnalysis" />}
+        {tab === "insider" && <SimpleGenTab title="Insider Activity Monitor" desc="AI analysis of SEC insider trading filings"
+          endpoint="/finance/insider-activity/analyze"
+          fields={[
+            { key: "ticker", label: "Ticker Symbol" },
+            { key: "transactionType", label: "Transaction Type", options: ["purchase", "sale", "option exercise", "all"] },
+          ]} resultKey="aiAnalysis" />}
+        {tab === "crypto" && <SimpleGenTab title="Crypto Analysis" desc="AI-powered cryptocurrency analysis and on-chain metrics"
+          endpoint="/finance/crypto/analyze"
+          fields={[
+            { key: "symbol", label: "Crypto Symbol (e.g., BTC, ETH)" },
+            { key: "analysisType", label: "Analysis Type", options: ["fundamental", "technical", "on-chain", "sentiment", "defi"] },
+          ]} resultKey="aiAnalysis" />}
       </div>
     </div>
   );

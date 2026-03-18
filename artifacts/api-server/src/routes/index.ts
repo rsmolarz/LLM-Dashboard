@@ -27,6 +27,7 @@ import llmTrainingPipelineRouter from "./llm-training-pipeline";
 import entClinicalRouter from "./ent-clinical";
 import socialMediaRouter from "./social-media";
 import hedgeFundRouter from "./hedge-fund";
+import dataAgentRouter from "./data-agent";
 
 const router: IRouter = Router();
 
@@ -58,5 +59,6 @@ router.use(llmTrainingPipelineRouter);
 router.use(entClinicalRouter);
 router.use(socialMediaRouter);
 router.use(hedgeFundRouter);
+router.use(dataAgentRouter);
 
 export default router;

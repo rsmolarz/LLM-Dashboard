@@ -1,19 +1,26 @@
 import { useState } from "react";
-import { Stethoscope, Ear, BookOpen, FileText, Pill, Heart, ImageIcon, ClipboardList, Loader2, Plus, Trash2, ChevronDown, ChevronUp } from "lucide-react";
+import { Stethoscope, Ear, BookOpen, FileText, Pill, Heart, ImageIcon, ClipboardList, Loader2, Plus, Scissors, Activity, Search, Clock, Mail, Calculator, Mic } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "/api";
 
-type Tab = "decisions" | "audiogram" | "cases" | "reports" | "drugs" | "education" | "annotations" | "protocols";
+type Tab = "decisions" | "audiogram" | "cases" | "reports" | "drugs" | "education" | "annotations" | "protocols" | "surgical" | "outcomes" | "literature" | "timeline" | "referrals" | "dosage" | "voice";
 
-const TABS: { id: Tab; label: string; icon: any; desc: string }[] = [
-  { id: "decisions", label: "Clinical Decisions", icon: Stethoscope, desc: "AI-assisted diagnosis" },
-  { id: "audiogram", label: "Audiogram AI", icon: Ear, desc: "Hearing test analysis" },
-  { id: "cases", label: "Case Studies", icon: BookOpen, desc: "Generate ENT cases" },
-  { id: "reports", label: "Report Writer", icon: FileText, desc: "Draft clinical reports" },
-  { id: "drugs", label: "Drug Interactions", icon: Pill, desc: "Medication safety" },
-  { id: "education", label: "Patient Education", icon: Heart, desc: "Education materials" },
-  { id: "annotations", label: "Image Annotation", icon: ImageIcon, desc: "AI image analysis" },
-  { id: "protocols", label: "Protocols", icon: ClipboardList, desc: "Clinical pathways" },
+const TABS: { id: Tab; label: string; icon: any }[] = [
+  { id: "decisions", label: "Clinical Decisions", icon: Stethoscope },
+  { id: "audiogram", label: "Audiogram AI", icon: Ear },
+  { id: "cases", label: "Case Studies", icon: BookOpen },
+  { id: "reports", label: "Report Writer", icon: FileText },
+  { id: "drugs", label: "Drug Interactions", icon: Pill },
+  { id: "education", label: "Patient Education", icon: Heart },
+  { id: "annotations", label: "Image Annotation", icon: ImageIcon },
+  { id: "protocols", label: "Protocols", icon: ClipboardList },
+  { id: "surgical", label: "Surgical Planning", icon: Scissors },
+  { id: "outcomes", label: "Outcomes", icon: Activity },
+  { id: "literature", label: "Literature", icon: Search },
+  { id: "timeline", label: "Symptom Timeline", icon: Clock },
+  { id: "referrals", label: "Referral Letters", icon: Mail },
+  { id: "dosage", label: "Dosage Calc", icon: Calculator },
+  { id: "voice", label: "Voice Disorders", icon: Mic },
 ];
 
 function ClinicalDecisionsTab() {
@@ -31,8 +38,7 @@ function ClinicalDecisionsTab() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ symptoms, history, findings }),
       });
-      const data = await r.json();
-      setResult(data);
+      setResult(await r.json());
     } catch (e) { console.error(e); }
     setLoading(false);
   };
@@ -51,7 +57,6 @@ function ClinicalDecisionsTab() {
         </div>
         <button onClick={loadPast} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-sm hover:bg-gray-600">History</button>
       </div>
-
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="space-y-3">
           <div>
@@ -77,7 +82,6 @@ function ClinicalDecisionsTab() {
             {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Analyzing...</> : <><Stethoscope className="w-4 h-4" /> Analyze Symptoms</>}
           </button>
         </div>
-
         <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
           {result ? (
             <div className="space-y-3">
@@ -105,7 +109,6 @@ function ClinicalDecisionsTab() {
           )}
         </div>
       </div>
-
       {pastDecisions.length > 0 && (
         <div className="space-y-2">
           <h3 className="text-white font-semibold">Recent Analyses</h3>
@@ -150,7 +153,6 @@ function AudiogramTab() {
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-white">Audiogram AI Analyzer</h2>
       <p className="text-gray-400 text-sm">Input audiogram thresholds for AI interpretation</p>
-
       <div className="grid grid-cols-6 gap-2">
         {Object.entries(frequencies).map(([freq, vals]) => (
           <div key={freq} className="text-center">
@@ -166,7 +168,6 @@ function AudiogramTab() {
           </div>
         ))}
       </div>
-
       <div className="flex gap-3 items-end">
         <div className="flex-1">
           <label className="text-sm text-gray-400">Patient Age</label>
@@ -178,17 +179,16 @@ function AudiogramTab() {
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ear className="w-4 h-4" />} Analyze
         </button>
       </div>
-
       {result?.parsed && (
         <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700 space-y-3">
           <div className="grid grid-cols-2 gap-4">
             <div className="p-3 bg-gray-700/50 rounded">
               <span className="text-xs text-gray-400">Hearing Loss Type</span>
-              <p className="text-white font-medium">{result.parsed.hearingLossType || "—"}</p>
+              <p className="text-white font-medium">{result.parsed.hearingLossType || "---"}</p>
             </div>
             <div className="p-3 bg-gray-700/50 rounded">
               <span className="text-xs text-gray-400">Severity</span>
-              <p className="text-white font-medium">{result.parsed.severity || "—"}</p>
+              <p className="text-white font-medium">{result.parsed.severity || "---"}</p>
             </div>
           </div>
           <div>
@@ -255,7 +255,6 @@ function CaseStudiesTab() {
         </button>
         <button onClick={loadCases} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-sm">View All</button>
       </div>
-
       {currentCase && (
         <div className="bg-gray-800/50 rounded-lg p-5 border border-gray-700 space-y-4">
           <h3 className="text-white font-bold text-lg">{currentCase.title}</h3>
@@ -267,7 +266,6 @@ function CaseStudiesTab() {
           </div>
         </div>
       )}
-
       {cases.length > 0 && (
         <div className="space-y-2">{cases.slice(0, 10).map((c: any) => (
           <div key={c.id} className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 cursor-pointer hover:border-cyan-500/50" onClick={() => setCurrentCase(c)}>
@@ -283,7 +281,6 @@ function SimpleGenTab({ title, desc, endpoint, fields, resultKey }: { title: str
   const [form, setForm] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
-  const [items, setItems] = useState<any[]>([]);
 
   const generate = async () => {
     setLoading(true);
@@ -315,6 +312,7 @@ function SimpleGenTab({ title, desc, endpoint, fields, resultKey }: { title: str
                 className="w-full mt-1 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
             ) : (
               <input value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                type={f.type || "text"}
                 className="w-full mt-1 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
             )}
           </div>
@@ -326,7 +324,7 @@ function SimpleGenTab({ title, desc, endpoint, fields, resultKey }: { title: str
       </button>
       {result && (
         <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
-          <pre className="text-gray-300 text-sm whitespace-pre-wrap">{result[resultKey] || result.generatedReport || result.content || JSON.stringify(result.parsed || result, null, 2)}</pre>
+          <pre className="text-gray-300 text-sm whitespace-pre-wrap">{result[resultKey] || result.generatedReport || result.content || result.letterContent || result.calculatedDose || JSON.stringify(result.parsed || result, null, 2)}</pre>
         </div>
       )}
     </div>
@@ -348,12 +346,12 @@ export default function Clinical() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 lg:grid-cols-8 gap-2 mb-6">
+      <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`p-3 rounded-lg text-center transition-all ${tab === t.id ? "bg-red-500/20 border border-red-500/50" : "bg-gray-800/50 border border-gray-700 hover:border-gray-600"}`}>
-            <t.icon className={`w-5 h-5 mx-auto mb-1 ${tab === t.id ? "text-red-400" : "text-gray-400"}`} />
-            <span className={`text-xs block ${tab === t.id ? "text-red-300" : "text-gray-400"}`}>{t.label}</span>
+            className={`px-3 py-2 rounded-lg text-center transition-all flex items-center gap-1.5 whitespace-nowrap ${tab === t.id ? "bg-red-500/20 border border-red-500/50 text-red-300" : "bg-gray-800/50 border border-gray-700 hover:border-gray-600 text-gray-400"}`}>
+            <t.icon className="w-4 h-4" />
+            <span className="text-xs">{t.label}</span>
           </button>
         ))}
       </div>
@@ -390,6 +388,61 @@ export default function Clinical() {
             { key: "condition", label: "Condition" },
             { key: "category", label: "Category", options: ["diagnostic", "therapeutic", "surgical", "follow-up"] },
           ]} resultKey="steps" />}
+        {tab === "surgical" && <SimpleGenTab title="Surgical Planning AI" desc="AI-generated pre-operative surgical plans using Meditron"
+          endpoint="/clinical/surgical-planning/generate"
+          fields={[
+            { key: "procedureName", label: "Procedure Name" },
+            { key: "diagnosis", label: "Diagnosis" },
+            { key: "patientAge", label: "Patient Age", type: "number" },
+            { key: "comorbidities", label: "Comorbidities", type: "textarea" },
+          ]} resultKey="surgicalSteps" />}
+        {tab === "outcomes" && <SimpleGenTab title="Treatment Outcomes Tracker" desc="Track and analyze ENT treatment outcomes"
+          endpoint="/clinical/treatment-outcomes/analyze"
+          fields={[
+            { key: "condition", label: "Condition" },
+            { key: "treatment", label: "Treatment Applied" },
+            { key: "outcome", label: "Observed Outcome", type: "textarea" },
+            { key: "followUpWeeks", label: "Follow-up Weeks", type: "number" },
+            { key: "complications", label: "Complications (if any)" },
+          ]} resultKey="aiAnalysis" />}
+        {tab === "literature" && <SimpleGenTab title="Medical Literature Search" desc="AI-powered literature review for ENT research"
+          endpoint="/clinical/literature/search"
+          fields={[
+            { key: "query", label: "Research Query", type: "textarea" },
+            { key: "specialty", label: "Specialty", options: ["otolaryngology", "otology", "rhinology", "laryngology", "head-neck surgery", "audiology"] },
+          ]} resultKey="summary" />}
+        {tab === "timeline" && <SimpleGenTab title="Symptom Timeline Analyzer" desc="Track and project symptom progression patterns"
+          endpoint="/clinical/symptom-timeline/analyze"
+          fields={[
+            { key: "symptoms", label: "Symptom History (with dates/durations)", type: "textarea" },
+            { key: "patientId", label: "Patient ID (optional)" },
+          ]} resultKey="progression" />}
+        {tab === "referrals" && <SimpleGenTab title="Referral Letter Generator" desc="AI-generated professional referral letters"
+          endpoint="/clinical/referral-letters/generate"
+          fields={[
+            { key: "referTo", label: "Referring To (Specialist/Department)" },
+            { key: "diagnosis", label: "Diagnosis" },
+            { key: "clinicalHistory", label: "Clinical History", type: "textarea" },
+            { key: "findings", label: "Examination Findings", type: "textarea" },
+            { key: "urgency", label: "Urgency", options: ["routine", "urgent", "emergency"] },
+          ]} resultKey="letterContent" />}
+        {tab === "dosage" && <SimpleGenTab title="ENT Dosage Calculator" desc="AI-assisted medication dosing for ENT conditions"
+          endpoint="/clinical/dosage/calculate"
+          fields={[
+            { key: "medication", label: "Medication Name" },
+            { key: "indication", label: "Indication" },
+            { key: "patientWeight", label: "Patient Weight (kg)", type: "number" },
+            { key: "patientAge", label: "Patient Age", type: "number" },
+            { key: "renalFunction", label: "Renal Function", options: ["normal", "mild impairment", "moderate impairment", "severe impairment"] },
+          ]} resultKey="calculatedDose" />}
+        {tab === "voice" && <SimpleGenTab title="Voice Disorder Analyzer" desc="AI-assisted voice disorder diagnosis and treatment planning"
+          endpoint="/clinical/voice-disorders/analyze"
+          fields={[
+            { key: "symptoms", label: "Voice Symptoms", type: "textarea" },
+            { key: "voiceQuality", label: "Voice Quality", options: ["hoarse", "breathy", "strained", "weak", "rough", "tremorous"] },
+            { key: "onsetDuration", label: "Onset / Duration" },
+            { key: "occupation", label: "Occupation (voice demands)" },
+          ]} resultKey="diagnosis" />}
       </div>
     </div>
   );

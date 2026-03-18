@@ -5,6 +5,8 @@ import {
   clinicalDecisionsTable, audiogramAnalysesTable, clinicalCasesTable,
   medicalReportsTable, drugInteractionsTable, patientEducationTable,
   imageAnnotationsTable, clinicalProtocolsTable,
+  surgicalPlanningTable, treatmentOutcomesTable, literatureSearchTable,
+  symptomTimelineTable, referralLettersTable, dosageCalculatorTable, voiceDisorderTable,
 } from "@workspace/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { llmConfigTable } from "@workspace/db/schema";
@@ -333,6 +335,279 @@ Respond in JSON: { "title": "...", "steps": [{"step": 1, "action": "...", "crite
       model: useModel, status: "draft",
     }).returning();
     res.json(row);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/clinical/surgical-planning", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(surgicalPlanningTable).orderBy(desc(surgicalPlanningTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/clinical/surgical-planning/generate", requireAuth, async (req, res): Promise<void> => {
+  const { procedureName, diagnosis, patientAge, comorbidities, model } = req.body;
+  if (!procedureName || !diagnosis) { res.status(400).json({ error: "procedureName and diagnosis required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "meditron:7b";
+  const prompt = `You are an expert ENT surgeon. Create a detailed pre-operative surgical plan.
+
+Procedure: ${procedureName}
+Diagnosis: ${diagnosis}
+${patientAge ? `Patient Age: ${patientAge}` : ""}
+${comorbidities ? `Comorbidities: ${comorbidities}` : ""}
+
+Provide:
+1. Pre-operative checklist (labs, imaging, consents)
+2. Step-by-step surgical approach
+3. Risk assessment with mitigation strategies
+4. Post-operative care plan
+5. Expected recovery timeline
+
+Respond in JSON: { "preOpChecklist": ["..."], "surgicalSteps": [{"step": 1, "description": "...", "keyPoints": "..."}], "riskAssessment": {"level": "low/moderate/high", "risks": ["..."], "mitigation": ["..."]}, "postOpPlan": {"instructions": ["..."], "followUp": "...", "recovery": "..."} }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(surgicalPlanningTable).values({
+      procedureName, diagnosis, patientAge, comorbidities,
+      preOpChecklist: JSON.stringify(parsed.preOpChecklist || []),
+      surgicalSteps: JSON.stringify(parsed.surgicalSteps || []),
+      riskAssessment: JSON.stringify(parsed.riskAssessment || {}),
+      postOpPlan: JSON.stringify(parsed.postOpPlan || {}),
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/clinical/treatment-outcomes", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(treatmentOutcomesTable).orderBy(desc(treatmentOutcomesTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/clinical/treatment-outcomes/analyze", requireAuth, async (req, res): Promise<void> => {
+  const { condition, treatment, outcome, followUpWeeks, complications, model } = req.body;
+  if (!condition || !treatment || !outcome) { res.status(400).json({ error: "condition, treatment, and outcome required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "meditron:7b";
+  const prompt = `Analyze this ENT treatment outcome:
+Condition: ${condition}
+Treatment: ${treatment}
+Outcome: ${outcome}
+${followUpWeeks ? `Follow-up period: ${followUpWeeks} weeks` : ""}
+${complications ? `Complications: ${complications}` : ""}
+
+Provide analysis of treatment effectiveness, comparison to expected outcomes, and recommendations for future similar cases.
+Respond in JSON: { "effectiveness": "...", "comparedToLiterature": "...", "recommendations": ["..."], "satisfactionScore": 0.0-1.0 }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(treatmentOutcomesTable).values({
+      condition, treatment, outcome, followUpWeeks, complications,
+      patientSatisfaction: parsed.satisfactionScore || null,
+      aiAnalysis: parsed.effectiveness || response,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/clinical/literature", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(literatureSearchTable).orderBy(desc(literatureSearchTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/clinical/literature/search", requireAuth, async (req, res): Promise<void> => {
+  const { query, specialty, model } = req.body;
+  if (!query) { res.status(400).json({ error: "query required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "meditron:7b";
+  const prompt = `You are a medical research assistant specializing in ${specialty || "otolaryngology"}.
+
+Research query: ${query}
+
+Provide a comprehensive literature review summary including:
+1. Key findings from recent studies
+2. Clinical relevance and evidence levels
+3. Current guidelines and consensus
+4. Areas of ongoing research
+5. Practical clinical implications
+
+Respond in JSON: { "results": [{"title": "...", "findings": "...", "evidenceLevel": "I-IV", "year": "..."}], "summary": "...", "clinicalRelevance": "...", "evidenceLevel": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(literatureSearchTable).values({
+      query, specialty: specialty || "otolaryngology",
+      results: JSON.stringify(parsed.results || []),
+      summary: parsed.summary || response,
+      clinicalRelevance: parsed.clinicalRelevance || null,
+      evidenceLevel: parsed.evidenceLevel || null,
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/clinical/symptom-timeline", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(symptomTimelineTable).orderBy(desc(symptomTimelineTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/clinical/symptom-timeline/analyze", requireAuth, async (req, res): Promise<void> => {
+  const { symptoms, patientId, model } = req.body;
+  if (!symptoms) { res.status(400).json({ error: "symptoms required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "meditron:7b";
+  const prompt = `Analyze this symptom progression timeline for an ENT patient:
+
+Symptoms: ${symptoms}
+
+Provide:
+1. Symptom timeline reconstruction
+2. Progression pattern analysis
+3. Projected trajectory if untreated
+4. Alert flags requiring immediate attention
+
+Respond in JSON: { "timeline": [{"timepoint": "...", "symptoms": "...", "severity": 1-10}], "progression": "...", "projection": "...", "alerts": ["..."] }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(symptomTimelineTable).values({
+      patientId, symptoms,
+      timeline: JSON.stringify(parsed.timeline || []),
+      progression: parsed.progression || response,
+      aiProjection: parsed.projection || null,
+      alerts: JSON.stringify(parsed.alerts || []),
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/clinical/referral-letters", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(referralLettersTable).orderBy(desc(referralLettersTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/clinical/referral-letters/generate", requireAuth, async (req, res): Promise<void> => {
+  const { referTo, diagnosis, clinicalHistory, findings, urgency, model } = req.body;
+  if (!referTo || !diagnosis) { res.status(400).json({ error: "referTo and diagnosis required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "meditron:7b";
+  const prompt = `Write a professional ENT referral letter.
+
+Referring to: ${referTo}
+Diagnosis: ${diagnosis}
+Urgency: ${urgency || "routine"}
+${clinicalHistory ? `Clinical History: ${clinicalHistory}` : ""}
+${findings ? `Examination Findings: ${findings}` : ""}
+
+Write a formal, professional referral letter with proper medical formatting, including reason for referral, clinical summary, and specific questions for the specialist.`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    const [row] = await db.insert(referralLettersTable).values({
+      referTo, diagnosis, clinicalHistory, findings,
+      urgency: urgency || "routine",
+      letterContent: response, model: useModel,
+    }).returning();
+    res.json(row);
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/clinical/dosage", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(dosageCalculatorTable).orderBy(desc(dosageCalculatorTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/clinical/dosage/calculate", requireAuth, async (req, res): Promise<void> => {
+  const { medication, indication, patientWeight, patientAge, renalFunction, model } = req.body;
+  if (!medication || !indication) { res.status(400).json({ error: "medication and indication required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "meditron:7b";
+  const prompt = `You are a clinical pharmacist specializing in ENT medications. Calculate appropriate dosing:
+
+Medication: ${medication}
+Indication: ${indication}
+${patientWeight ? `Patient Weight: ${patientWeight} kg` : ""}
+${patientAge ? `Patient Age: ${patientAge} years` : ""}
+${renalFunction ? `Renal Function: ${renalFunction}` : ""}
+
+Provide:
+1. Recommended dose with frequency
+2. Maximum daily dose
+3. Duration of treatment
+4. Key warnings and contraindications
+5. Alternative medications
+
+Respond in JSON: { "dose": "...", "frequency": "...", "maxDaily": "...", "duration": "...", "warnings": ["..."], "alternatives": ["..."] }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(dosageCalculatorTable).values({
+      medication, indication, patientWeight, patientAge, renalFunction,
+      calculatedDose: parsed.dose ? `${parsed.dose} ${parsed.frequency || ""}`.trim() : response,
+      warnings: JSON.stringify(parsed.warnings || []),
+      alternatives: JSON.stringify(parsed.alternatives || []),
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+router.get("/clinical/voice-disorders", async (_req, res): Promise<void> => {
+  const rows = await db.select().from(voiceDisorderTable).orderBy(desc(voiceDisorderTable.createdAt)).limit(50);
+  res.json(rows);
+});
+
+router.post("/clinical/voice-disorders/analyze", requireAuth, async (req, res): Promise<void> => {
+  const { symptoms, voiceQuality, onsetDuration, occupation, model } = req.body;
+  if (!symptoms) { res.status(400).json({ error: "symptoms required" }); return; }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "Ollama not configured" }); return; }
+  const useModel = model || "meditron:7b";
+  const prompt = `You are a laryngologist specializing in voice disorders. Analyze this presentation:
+
+Symptoms: ${symptoms}
+${voiceQuality ? `Voice Quality: ${voiceQuality}` : ""}
+${onsetDuration ? `Onset/Duration: ${onsetDuration}` : ""}
+${occupation ? `Occupation: ${occupation}` : ""}
+
+Provide:
+1. Likely diagnosis
+2. Vocal hygiene recommendations
+3. Treatment plan (behavioral, medical, surgical options)
+4. Prognosis
+
+Respond in JSON: { "diagnosis": "...", "vocalHygiene": ["..."], "treatmentPlan": {"behavioral": ["..."], "medical": ["..."], "surgical": "..."}, "prognosis": "..." }`;
+
+  try {
+    const response = await queryOllama(serverUrl, useModel, prompt);
+    let parsed: any = {};
+    try { const m = response.match(/\{[\s\S]*\}/); if (m) parsed = JSON.parse(m[0]); } catch { parsed = { raw: response }; }
+    const [row] = await db.insert(voiceDisorderTable).values({
+      symptoms, voiceQuality, onsetDuration, occupation,
+      diagnosis: parsed.diagnosis || null,
+      vocalHygiene: JSON.stringify(parsed.vocalHygiene || []),
+      treatmentPlan: JSON.stringify(parsed.treatmentPlan || {}),
+      model: useModel,
+    }).returning();
+    res.json({ ...row, parsed });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 

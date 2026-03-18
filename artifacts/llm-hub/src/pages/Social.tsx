@@ -1,16 +1,22 @@
 import { useState } from "react";
-import { Calendar, Edit3, Zap, BarChart3, Mic2, Loader2, Plus, Trash2 } from "lucide-react";
+import { Calendar, Edit3, Zap, BarChart3, Mic2, Loader2, Plus, Trash2, Hash, Eye, TrendingUp, Type, Film, Users } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "/api";
 
-type Tab = "calendar" | "posts" | "hooks" | "analytics" | "voice";
+type Tab = "calendar" | "posts" | "hooks" | "analytics" | "voice" | "hashtags" | "competitors" | "engagement" | "captions" | "reels" | "personas";
 
-const TABS: { id: Tab; label: string; icon: any; desc: string }[] = [
-  { id: "calendar", label: "Content Calendar", icon: Calendar, desc: "Plan your content" },
-  { id: "posts", label: "Post Generator", icon: Edit3, desc: "Write viral posts" },
-  { id: "hooks", label: "Viral Hooks", icon: Zap, desc: "Hook analyzer" },
-  { id: "analytics", label: "Analytics", icon: BarChart3, desc: "Track performance" },
-  { id: "voice", label: "Brand Voice", icon: Mic2, desc: "Define your voice" },
+const TABS: { id: Tab; label: string; icon: any }[] = [
+  { id: "calendar", label: "Content Calendar", icon: Calendar },
+  { id: "posts", label: "Post Generator", icon: Edit3 },
+  { id: "hooks", label: "Viral Hooks", icon: Zap },
+  { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "voice", label: "Brand Voice", icon: Mic2 },
+  { id: "hashtags", label: "Hashtag Strategy", icon: Hash },
+  { id: "competitors", label: "Competitor Analysis", icon: Eye },
+  { id: "engagement", label: "Engagement Predictor", icon: TrendingUp },
+  { id: "captions", label: "Caption Writer", icon: Type },
+  { id: "reels", label: "Reel Scripts", icon: Film },
+  { id: "personas", label: "Audience Personas", icon: Users },
 ];
 
 function ContentCalendarTab() {
@@ -34,9 +40,7 @@ function ContentCalendarTab() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div><h2 className="text-xl font-bold text-white">Content Calendar</h2><p className="text-gray-400 text-sm">AI-generated weekly content plan</p></div>
-      </div>
+      <div><h2 className="text-xl font-bold text-white">Content Calendar</h2><p className="text-gray-400 text-sm">AI-generated weekly content plan</p></div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div>
           <label className="text-sm text-gray-400">Platform</label>
@@ -63,7 +67,6 @@ function ContentCalendarTab() {
               </div>
               <h4 className="text-white text-sm font-medium">{item.topic}</h4>
               <p className="text-gray-400 text-xs mt-1">{item.content?.substring(0, 120)}...</p>
-              {item.hashtags && <p className="text-cyan-400 text-[10px] mt-2">{typeof item.hashtags === "string" ? item.hashtags : JSON.parse(item.hashtags || "[]").join(" ")}</p>}
             </div>
           ))}
         </div>
@@ -78,7 +81,6 @@ function PostGeneratorTab() {
   const [contentType, setContentType] = useState("post");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
-  const [posts, setPosts] = useState<any[]>([]);
 
   const generate = async () => {
     setLoading(true);
@@ -92,22 +94,16 @@ function PostGeneratorTab() {
     setLoading(false);
   };
 
-  const loadPosts = async () => {
-    const r = await fetch(`${API}/social/posts`);
-    setPosts(await r.json());
-  };
-
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-white">Social Media Post Generator</h2>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <select value={platform} onChange={e => setPlatform(e.target.value)} className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
           {["Instagram", "TikTok", "YouTube", "Twitter/X", "LinkedIn"].map(p => <option key={p}>{p}</option>)}
         </select>
         <select value={contentType} onChange={e => setContentType(e.target.value)} className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
           {["post", "reel script", "carousel", "story", "thread"].map(t => <option key={t}>{t}</option>)}
         </select>
-        <button onClick={loadPosts} className="px-3 py-2 rounded bg-gray-700 text-gray-300 text-sm">View All Posts</button>
       </div>
       <textarea value={topic} onChange={e => setTopic(e.target.value)} rows={2} placeholder="What should this post be about?"
         className="w-full p-3 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm" />
@@ -115,31 +111,18 @@ function PostGeneratorTab() {
         className="px-6 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-600 text-white font-medium disabled:opacity-50 flex items-center gap-2">
         {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Edit3 className="w-4 h-4" />} Generate Post
       </button>
-
       {result && (
         <div className="bg-gray-800/50 rounded-lg p-5 border border-gray-700 space-y-3">
           {result.hooks && <p className="text-purple-400 font-medium text-sm">Hook: {result.hooks}</p>}
           <p className="text-gray-300 text-sm whitespace-pre-wrap">{result.content}</p>
-          {result.hashtags && (
-            <p className="text-cyan-400 text-xs">{typeof result.hashtags === "string" ? JSON.parse(result.hashtags).join(" ") : result.hashtags}</p>
-          )}
           {result.engagementScore && (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-400">Engagement Potential:</span>
+              <span className="text-xs text-gray-400">Engagement:</span>
               <div className="flex-1 h-2 bg-gray-700 rounded-full"><div className="h-2 rounded-full bg-gradient-to-r from-purple-500 to-pink-500" style={{ width: `${(result.engagementScore || 0) * 100}%` }} /></div>
               <span className="text-xs text-purple-400">{((result.engagementScore || 0) * 100).toFixed(0)}%</span>
             </div>
           )}
         </div>
-      )}
-
-      {posts.length > 0 && (
-        <div className="space-y-2">{posts.slice(0, 8).map((p: any) => (
-          <div key={p.id} className="p-3 bg-gray-800/50 rounded border border-gray-700">
-            <div className="flex justify-between"><span className="text-white text-sm">{p.topic}</span><span className="text-xs text-purple-400">{p.platform}</span></div>
-            <p className="text-gray-400 text-xs mt-1 truncate">{p.content?.substring(0, 100)}</p>
-          </div>
-        ))}</div>
       )}
     </div>
   );
@@ -166,7 +149,6 @@ function ViralHooksTab() {
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-white">Viral Hook Analyzer</h2>
-      <p className="text-gray-400 text-sm">AI analyzes trending topics and generates scroll-stopping hooks</p>
       <div className="flex gap-3">
         <input value={topic} onChange={e => setTopic(e.target.value)} placeholder="Enter topic or trend..."
           className="flex-1 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
@@ -178,22 +160,15 @@ function ViralHooksTab() {
           {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Analyze"}
         </button>
       </div>
-
       {result?.parsed && (
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
-            <div className="p-3 bg-gray-800/50 rounded border border-gray-700 text-center">
-              <span className="text-xs text-gray-400 block">Trending</span>
-              <span className="text-xl font-bold text-purple-400">{((result.parsed.trendingScore || 0) * 100).toFixed(0)}%</span>
-            </div>
-            <div className="p-3 bg-gray-800/50 rounded border border-gray-700 text-center">
-              <span className="text-xs text-gray-400 block">Med. Accuracy</span>
-              <span className="text-xl font-bold text-green-400">{((result.parsed.medicalAccuracy || 0) * 100).toFixed(0)}%</span>
-            </div>
-            <div className="p-3 bg-gray-800/50 rounded border border-gray-700 text-center">
-              <span className="text-xs text-gray-400 block">Engagement</span>
-              <span className="text-xl font-bold text-pink-400">{((result.parsed.engagementPotential || 0) * 100).toFixed(0)}%</span>
-            </div>
+            {[["Trending", result.parsed.trendingScore, "text-purple-400"], ["Med. Accuracy", result.parsed.medicalAccuracy, "text-green-400"], ["Engagement", result.parsed.engagementPotential, "text-pink-400"]].map(([label, val, color]) => (
+              <div key={label as string} className="p-3 bg-gray-800/50 rounded border border-gray-700 text-center">
+                <span className="text-xs text-gray-400 block">{label as string}</span>
+                <span className={`text-xl font-bold ${color}`}>{(((val as number) || 0) * 100).toFixed(0)}%</span>
+              </div>
+            ))}
           </div>
           <div className="space-y-2">
             {(result.parsed.hooks || []).map((h: any, i: number) => (
@@ -212,7 +187,6 @@ function ViralHooksTab() {
 function AnalyticsTab() {
   const [form, setForm] = useState({ platform: "Instagram", metric: "followers", value: "", period: "daily" });
   const [metrics, setMetrics] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
 
   const track = async () => {
     if (!form.value) return;
@@ -228,33 +202,18 @@ function AnalyticsTab() {
     setMetrics(await r.json());
   };
 
-  const getInsights = async () => {
-    setLoading(true);
-    try {
-      const r = await fetch(`${API}/social/analytics/insights`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-      const data = await r.json();
-      alert(data.insights || "No insights available yet.");
-    } catch (e) { console.error(e); }
-    setLoading(false);
-  };
-
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div><h2 className="text-xl font-bold text-white">Social Media Analytics</h2><p className="text-gray-400 text-sm">Track and analyze engagement metrics</p></div>
-        <div className="flex gap-2">
-          <button onClick={loadMetrics} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-sm">Refresh</button>
-          <button onClick={getInsights} disabled={loading} className="px-3 py-1.5 rounded bg-purple-600 text-white text-sm flex items-center gap-1">
-            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />} AI Insights
-          </button>
-        </div>
+        <div><h2 className="text-xl font-bold text-white">Social Media Analytics</h2></div>
+        <button onClick={loadMetrics} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-sm">Refresh</button>
       </div>
       <div className="grid grid-cols-5 gap-2">
         <select value={form.platform} onChange={e => setForm(p => ({ ...p, platform: e.target.value }))} className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
           {["Instagram", "TikTok", "YouTube", "Twitter/X"].map(p => <option key={p}>{p}</option>)}
         </select>
         <select value={form.metric} onChange={e => setForm(p => ({ ...p, metric: e.target.value }))} className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
-          {["followers", "likes", "comments", "shares", "views", "impressions", "engagement_rate"].map(m => <option key={m}>{m}</option>)}
+          {["followers", "likes", "comments", "shares", "views", "engagement_rate"].map(m => <option key={m}>{m}</option>)}
         </select>
         <input value={form.value} onChange={e => setForm(p => ({ ...p, value: e.target.value }))} type="number" placeholder="Value"
           className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
@@ -264,7 +223,7 @@ function AnalyticsTab() {
         <button onClick={track} className="px-3 py-2 rounded bg-purple-600 text-white text-sm"><Plus className="w-4 h-4" /></button>
       </div>
       {metrics.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           {metrics.slice(0, 12).map((m: any) => (
             <div key={m.id} className="p-3 bg-gray-800/50 rounded border border-gray-700">
               <div className="flex justify-between"><span className="text-gray-400 text-xs">{m.platform}</span><span className="text-gray-500 text-xs">{m.period}</span></div>
@@ -280,9 +239,7 @@ function AnalyticsTab() {
 function BrandVoiceTab() {
   const [name, setName] = useState("");
   const [guidelines, setGuidelines] = useState("");
-  const [testContent, setTestContent] = useState("");
   const [voices, setVoices] = useState<any[]>([]);
-  const [scoreResult, setScoreResult] = useState<any>(null);
 
   const create = async () => {
     if (!name) return;
@@ -299,15 +256,6 @@ function BrandVoiceTab() {
     setVoices(await r.json());
   };
 
-  const scoreContent = async (voiceId: number) => {
-    if (!testContent) return;
-    const r = await fetch(`${API}/social/brand-voice/${voiceId}/score`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: testContent }),
-    });
-    setScoreResult(await r.json());
-  };
-
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-bold text-white">Brand Voice Trainer</h2>
@@ -317,36 +265,72 @@ function BrandVoiceTab() {
             className="w-full p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
           <textarea value={guidelines} onChange={e => setGuidelines(e.target.value)} rows={4} placeholder="Describe your brand voice guidelines..."
             className="w-full p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
-          <button onClick={create} className="px-4 py-2 rounded bg-purple-600 text-white text-sm"><Plus className="w-4 h-4 inline mr-1" />Create Voice</button>
-          <button onClick={loadVoices} className="ml-2 px-4 py-2 rounded bg-gray-700 text-gray-300 text-sm">Load Voices</button>
+          <div className="flex gap-2">
+            <button onClick={create} className="px-4 py-2 rounded bg-purple-600 text-white text-sm"><Plus className="w-4 h-4 inline mr-1" />Create</button>
+            <button onClick={loadVoices} className="px-4 py-2 rounded bg-gray-700 text-gray-300 text-sm">Load</button>
+          </div>
         </div>
-        <div className="space-y-3">
-          <textarea value={testContent} onChange={e => setTestContent(e.target.value)} rows={3} placeholder="Paste content to score for brand consistency..."
-            className="w-full p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
-          {voices.length > 0 && (
-            <div className="flex gap-2 flex-wrap">{voices.map((v: any) => (
-              <button key={v.id} onClick={() => scoreContent(v.id)} className="px-3 py-1.5 rounded bg-gray-700 text-gray-300 text-sm hover:bg-purple-600/50">
-                Score vs "{v.name}"
-              </button>
-            ))}</div>
-          )}
-          {scoreResult && (
-            <div className="p-3 bg-gray-800/50 rounded border border-gray-700">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm text-gray-400">Consistency:</span>
-                <span className="text-lg font-bold text-purple-400">{((scoreResult.score || 0) * 100).toFixed(0)}%</span>
-              </div>
-              <p className="text-gray-300 text-sm">{scoreResult.feedback}</p>
+        <div className="space-y-2">
+          {voices.map((v: any) => (
+            <div key={v.id} className="p-3 bg-gray-800/50 rounded border border-gray-700">
+              <span className="text-white font-medium">{v.name}</span>
+              <p className="text-gray-400 text-xs mt-0.5">{v.guidelines?.substring(0, 80)}</p>
             </div>
-          )}
+          ))}
         </div>
       </div>
-      {voices.length > 0 && (
-        <div className="space-y-2">{voices.map((v: any) => (
-          <div key={v.id} className="p-3 bg-gray-800/50 rounded border border-gray-700 flex justify-between items-center">
-            <div><span className="text-white font-medium">{v.name}</span><p className="text-gray-400 text-xs mt-0.5">{v.guidelines?.substring(0, 80)}</p></div>
+    </div>
+  );
+}
+
+function SimpleGenTab({ title, desc, endpoint, fields, resultKey }: { title: string; desc: string; endpoint: string; fields: { key: string; label: string; type?: string; options?: string[] }[]; resultKey: string }) {
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+
+  const generate = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}${endpoint}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
+      });
+      setResult(await r.json());
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-6">
+      <h2 className="text-xl font-bold text-white">{title}</h2>
+      <p className="text-gray-400 text-sm">{desc}</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {fields.map(f => (
+          <div key={f.key}>
+            <label className="text-sm text-gray-400">{f.label}</label>
+            {f.options ? (
+              <select value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                className="w-full mt-1 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
+                <option value="">Select...</option>
+                {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            ) : f.type === "textarea" ? (
+              <textarea value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} rows={3}
+                className="w-full mt-1 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
+            ) : (
+              <input value={form[f.key] || ""} onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))}
+                className="w-full mt-1 p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm" />
+            )}
           </div>
-        ))}</div>
+        ))}
+      </div>
+      <button onClick={generate} disabled={loading}
+        className="px-6 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-600 text-white font-medium disabled:opacity-50 flex items-center gap-2">
+        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null} Generate
+      </button>
+      {result && (
+        <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+          <pre className="text-gray-300 text-sm whitespace-pre-wrap">{result[resultKey] || result.caption || result.script || result.contentStrategy || JSON.stringify(result.parsed || result, null, 2)}</pre>
+        </div>
       )}
     </div>
   );
@@ -367,12 +351,12 @@ export default function Social() {
         </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-2 mb-6">
+      <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`p-3 rounded-lg text-center transition-all ${tab === t.id ? "bg-purple-500/20 border border-purple-500/50" : "bg-gray-800/50 border border-gray-700 hover:border-gray-600"}`}>
-            <t.icon className={`w-5 h-5 mx-auto mb-1 ${tab === t.id ? "text-purple-400" : "text-gray-400"}`} />
-            <span className={`text-xs block ${tab === t.id ? "text-purple-300" : "text-gray-400"}`}>{t.label}</span>
+            className={`px-3 py-2 rounded-lg flex items-center gap-1.5 whitespace-nowrap transition-all ${tab === t.id ? "bg-purple-500/20 border border-purple-500/50 text-purple-300" : "bg-gray-800/50 border border-gray-700 hover:border-gray-600 text-gray-400"}`}>
+            <t.icon className="w-4 h-4" />
+            <span className="text-xs">{t.label}</span>
           </button>
         ))}
       </div>
@@ -383,6 +367,44 @@ export default function Social() {
         {tab === "hooks" && <ViralHooksTab />}
         {tab === "analytics" && <AnalyticsTab />}
         {tab === "voice" && <BrandVoiceTab />}
+        {tab === "hashtags" && <SimpleGenTab title="Hashtag Strategy Generator" desc="AI-optimized hashtag tiers for maximum reach"
+          endpoint="/social/hashtag-strategy/generate"
+          fields={[
+            { key: "niche", label: "Niche / Topic" },
+            { key: "platform", label: "Platform", options: ["Instagram", "TikTok", "YouTube", "Twitter/X", "LinkedIn"] },
+          ]} resultKey="reachEstimate" />}
+        {tab === "competitors" && <SimpleGenTab title="Competitor Analysis" desc="AI-powered competitor content strategy analysis"
+          endpoint="/social/competitor-analysis/analyze"
+          fields={[
+            { key: "competitorHandle", label: "Competitor Handle (@username)" },
+            { key: "platform", label: "Platform", options: ["Instagram", "TikTok", "YouTube", "Twitter/X", "LinkedIn"] },
+          ]} resultKey="contentStrategy" />}
+        {tab === "engagement" && <SimpleGenTab title="Engagement Predictor" desc="Predict likes, comments, shares, and viral probability"
+          endpoint="/social/engagement-predictor/predict"
+          fields={[
+            { key: "content", label: "Post Content", type: "textarea" },
+            { key: "platform", label: "Platform", options: ["Instagram", "TikTok", "YouTube", "Twitter/X", "LinkedIn"] },
+            { key: "postType", label: "Post Type", options: ["image", "video", "carousel", "text", "reel", "story"] },
+          ]} resultKey="suggestions" />}
+        {tab === "captions" && <SimpleGenTab title="Caption Writer" desc="AI-generated captions with hashtags and CTAs"
+          endpoint="/social/captions/generate"
+          fields={[
+            { key: "imageDescription", label: "Image/Content Description", type: "textarea" },
+            { key: "platform", label: "Platform", options: ["Instagram", "TikTok", "YouTube", "Twitter/X", "LinkedIn"] },
+            { key: "tone", label: "Tone", options: ["professional", "casual", "educational", "humorous", "inspirational", "storytelling"] },
+          ]} resultKey="caption" />}
+        {tab === "reels" && <SimpleGenTab title="Reel / Short-form Script Generator" desc="AI-written scripts with visual cues and hooks"
+          endpoint="/social/reel-scripts/generate"
+          fields={[
+            { key: "topic", label: "Video Topic" },
+            { key: "platform", label: "Platform", options: ["Instagram Reels", "TikTok", "YouTube Shorts"] },
+            { key: "duration", label: "Duration", options: ["15s", "30s", "60s", "90s"] },
+          ]} resultKey="script" />}
+        {tab === "personas" && <SimpleGenTab title="Audience Persona Builder" desc="AI-generated detailed audience personas"
+          endpoint="/social/audience-personas/generate"
+          fields={[
+            { key: "niche", label: "Niche Focus (e.g., medical education + lifestyle)" },
+          ]} resultKey="demographics" />}
       </div>
     </div>
   );
