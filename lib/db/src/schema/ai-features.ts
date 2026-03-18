@@ -546,6 +546,59 @@ export const trainingDataJobsTable = pgTable("training_data_jobs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const voiceAgentProvidersTable = pgTable("voice_agent_providers", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  provider: text("provider").notNull(),
+  category: text("category").notNull().default("cloud"),
+  status: text("status").notNull().default("configured"),
+  endpoint: text("endpoint"),
+  apiKey: text("api_key"),
+  model: text("model"),
+  config: text("config").default("{}"),
+  capabilities: text("capabilities").default("[]"),
+  latencyMs: integer("latency_ms"),
+  qualityScore: real("quality_score"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const voiceConversationsTable = pgTable("voice_conversations", {
+  id: serial("id").primaryKey(),
+  providerId: integer("provider_id"),
+  providerName: text("provider_name").notNull(),
+  userMessage: text("user_message").notNull(),
+  agentResponse: text("agent_response"),
+  responseTimeMs: integer("response_time_ms"),
+  audioUrl: text("audio_url"),
+  sentiment: text("sentiment"),
+  intentDetected: text("intent_detected"),
+  confidence: real("confidence"),
+  metadata: text("metadata"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const voiceBenchmarksTable = pgTable("voice_benchmarks", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  testPrompts: text("test_prompts").notNull().default("[]"),
+  results: text("results").default("{}"),
+  winners: text("winners"),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const voiceFlowsTable = pgTable("voice_flows", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  providerId: integer("provider_id"),
+  flowType: text("flow_type").notNull().default("linear"),
+  nodes: text("nodes").notNull().default("[]"),
+  edges: text("edges").notNull().default("[]"),
+  status: text("status").notNull().default("draft"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const trainingDatasetsTable = pgTable("training_datasets", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),

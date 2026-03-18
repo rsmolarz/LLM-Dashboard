@@ -30,6 +30,7 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **Social Media AI** (11 tabs): `/social` page — Content Calendar, Post Generator, Viral Hooks, Analytics, Brand Voice, Hashtag Strategy, Competitor Analysis, Engagement Predictor, Caption Writer, Reel Scripts, Audience Personas
 - **Hedge Fund AI** (13 tabs): `/finance` page — Stock Screener, Portfolio, Sentiment, Trade Journal, Earnings, AI Tracker, Options Strategy, Sector Rotation, Dividends, Technical Patterns, Macro Dashboard, Insider Activity, Crypto Analysis
 - **Database Training Agent** (4 tabs): `/data-agent` page — Dashboard (domain stats for ENT/Social/Finance), Data Sources (CRUD), Jobs (run generation jobs per domain), Datasets (quality scoring)
+- **Voice Agent Hub** (8 tabs): `/voice-agent` page — Dashboard, All Providers, Cloud Services, Local Engines, Voice Chat, History, Benchmark, Dialog Flows. Compares 12 voice AI providers: Cloud (Amazon Lex, ElevenLabs, OpenAI Voice, Google Dialogflow, Azure Speech, IBM Watson) and Local (Rasa, DeepPavlov, OpenVoice/OVO, Mycroft, Local LLM/Ollama, Coqui TTS). Integrated with local Ollama for real conversational responses. Provider benchmarking with rankings, dialog flow generation via LLM.
 
 ## VPS Configuration
 - IP: 72.60.167.64, Ollama: port 11434, OpenClaw: port 18789

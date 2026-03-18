@@ -28,6 +28,7 @@ import entClinicalRouter from "./ent-clinical";
 import socialMediaRouter from "./social-media";
 import hedgeFundRouter from "./hedge-fund";
 import dataAgentRouter from "./data-agent";
+import voiceAgentRouter from "./voice-agent";
 
 const router: IRouter = Router();
 
@@ -60,5 +61,6 @@ router.use(entClinicalRouter);
 router.use(socialMediaRouter);
 router.use(hedgeFundRouter);
 router.use(dataAgentRouter);
+router.use(voiceAgentRouter);
 
 export default router;
