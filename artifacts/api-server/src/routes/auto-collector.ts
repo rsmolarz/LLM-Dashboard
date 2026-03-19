@@ -97,7 +97,7 @@ let trainingSchedulerConfig: TrainingSchedulerConfig = {
   enabled: true,
   intervalMinutes: 60,
   domains: ["otolaryngology", "social_media", "hedge_fund"],
-  samplesPerRun: 10,
+  samplesPerRun: 3,
   model: "qwen2.5:7b",
   autoDataset: true,
 };
@@ -112,6 +112,25 @@ let trainingRunHistory: Array<{
   results: Record<string, { samples: number; jobId: number | null; error?: string }>;
 }> = [];
 let lastTrainingRunAt: string | null = null;
+
+async function cleanupOrphanedJobs() {
+  try {
+    const orphaned = await db.select().from(trainingDataJobsTable)
+      .where(eq(trainingDataJobsTable.status, "running"));
+    if (orphaned.length > 0) {
+      for (const job of orphaned) {
+        await db.update(trainingDataJobsTable).set({
+          status: "failed",
+          errorLog: "Orphaned: server restarted before job completed",
+          completedAt: new Date(),
+        }).where(eq(trainingDataJobsTable.id, job.id));
+      }
+      console.log(`[training-scheduler] Cleaned up ${orphaned.length} orphaned jobs from previous run`);
+    }
+  } catch (e: any) {
+    console.error(`[training-scheduler] Cleanup error:`, e.message);
+  }
+}
 
 function startTrainingScheduler() {
   if (trainingSchedulerInterval) clearInterval(trainingSchedulerInterval);
@@ -132,10 +151,12 @@ function autoStartCollector() {
       console.log(`[auto-collector] Auto-started. Running every ${collectorConfig.intervalMinutes} minutes.`);
       runCollection().catch(console.error);
     }
-    if (trainingSchedulerConfig.enabled) {
-      startTrainingScheduler();
-      runTrainingGeneration().catch(console.error);
-    }
+    cleanupOrphanedJobs().then(() => {
+      if (trainingSchedulerConfig.enabled) {
+        startTrainingScheduler();
+        runTrainingGeneration().catch(console.error);
+      }
+    });
   }, 15000);
 }
 
@@ -890,14 +911,35 @@ async function generateDomainTrainingData(domain: string, model: string, count: 
       startedAt: new Date(),
     }).returning();
 
-    const resp = await fetch(`${serverUrl}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, prompt, stream: false }),
-    });
-    if (!resp.ok) throw new Error(`Ollama returned ${resp.status}`);
-    const data = await resp.json() as any;
-    const response = data.response || "";
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 600000);
+    let response = "";
+    try {
+      const resp = await fetch(`${serverUrl}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, prompt, stream: true }),
+        signal: controller.signal,
+      });
+      if (!resp.ok) throw new Error(`Ollama returned ${resp.status}`);
+      const reader = resp.body?.getReader();
+      if (!reader) throw new Error("No response body");
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        for (const line of chunk.split("\n").filter(l => l.trim())) {
+          try {
+            const obj = JSON.parse(line);
+            if (obj.response) response += obj.response;
+            if (obj.done) break;
+          } catch {}
+        }
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     let samples: any[] = [];
     try {
@@ -941,8 +983,18 @@ async function generateDomainTrainingData(domain: string, model: string, count: 
 
     return { samples: samples.length, jobId: job.id };
   } catch (e: any) {
-    console.error(`[training-scheduler] Error generating ${domain}:`, e.message);
-    return { samples: 0, jobId: null, error: e.message };
+    const errMsg = e.name === "AbortError" ? "Timeout after 10 minutes" : `${e.message} | ${e.cause ? JSON.stringify(e.cause) : 'no cause'}`;
+    console.error(`[training-scheduler] Error generating ${domain}:`, errMsg);
+    try {
+      const runningJobs = await db.select().from(trainingDataJobsTable)
+        .where(eq(trainingDataJobsTable.status, "running"));
+      for (const j of runningJobs.filter(j => j.domain === domain)) {
+        await db.update(trainingDataJobsTable).set({
+          status: "failed", errorLog: errMsg, completedAt: new Date(),
+        }).where(eq(trainingDataJobsTable.id, j.id));
+      }
+    } catch {}
+    return { samples: 0, jobId: null, error: errMsg };
   }
 }
 
@@ -965,12 +1017,38 @@ async function runTrainingGeneration() {
   console.log(`[training-scheduler] Starting training data generation for domains: ${trainingSchedulerConfig.domains.join(", ")}`);
 
   try {
+    const vpsIp = process.env.VPS_IP || "72.60.167.64";
+    const serverUrl = process.env.OLLAMA_BASE_URL || process.env.VPS_OLLAMA_URL || `http://${vpsIp}:11434`;
+    try {
+      const warmResp = await fetch(`${serverUrl}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: trainingSchedulerConfig.model, prompt: "hi", stream: true }),
+        signal: AbortSignal.timeout(120000),
+      });
+      const warmReader = warmResp.body?.getReader();
+      if (warmReader) { while (!(await warmReader.read()).done) {} }
+      console.log(`[training-scheduler] Model warmed up`);
+    } catch (e: any) {
+      console.log(`[training-scheduler] Warmup ping: ${e.message}`);
+    }
+
     for (const domain of trainingSchedulerConfig.domains) {
-      const result = await generateDomainTrainingData(
+      let result = await generateDomainTrainingData(
         domain, trainingSchedulerConfig.model, trainingSchedulerConfig.samplesPerRun
       );
+      if (result.error) {
+        console.log(`[training-scheduler] ${domain}: retrying after 30s...`);
+        await new Promise(r => setTimeout(r, 30000));
+        result = await generateDomainTrainingData(
+          domain, trainingSchedulerConfig.model, trainingSchedulerConfig.samplesPerRun
+        );
+      }
       record.results[domain] = result;
       console.log(`[training-scheduler] ${domain}: generated ${result.samples} samples${result.error ? ` (error: ${result.error})` : ""}`);
+      if (trainingSchedulerConfig.domains.indexOf(domain) < trainingSchedulerConfig.domains.length - 1) {
+        await new Promise(r => setTimeout(r, 10000));
+      }
     }
     record.status = "completed";
   } catch (e: any) {
