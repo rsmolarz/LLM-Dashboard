@@ -35,8 +35,16 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 ## VPS Configuration
 - IP: 72.60.167.64, Ollama: port 11434, OpenClaw: port 18789
 - PostgreSQL: port 5432, db=llmhub, user=llmhub
-- Models: qwen2.5:7b, deepseek-r1:8b, meditron:7b, mistral:latest, llama3.2:latest, llava:13b (vision)
-- Total: 5 models, ~20.1 GB
+- Models (9 total, ~45.8 GB):
+  - qwen2.5:7b (7.6B, 4.7GB) — primary training model
+  - qwen2.5:14b (14.8B, 9.0GB) — higher quality generation
+  - deepseek-r1:8b (8.2B, 5.2GB) — reasoning/analysis
+  - meditron:7b (7B, 3.8GB) — medical/clinical specialization
+  - mistral:latest (7.2B, 4.4GB) — general purpose
+  - llama3.2:latest (3.2B, 2.0GB) — lightweight general purpose
+  - codellama:7b (7B, 3.8GB) — code generation
+  - deepseek-coder:6.7b (7B, 3.8GB) — code generation
+  - llava:13b (13B, 8.0GB) — vision/image analysis
 
 ## Important Technical Notes
 - Express body limit: 20MB (set in app.ts) for image uploads
@@ -54,66 +62,47 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - Anthropic (claude-sonnet-4-6) via `@workspace/integrations-anthropic-ai`, uses `AI_INTEGRATIONS_ANTHROPIC_BASE_URL` + `_API_KEY`
 - Both use Replit AI Integrations proxy (no user API keys needed)
 
-## Auto-Collector & Continuous Training
-- Auto-starts 15 seconds after server boot, runs every 30 minutes
-- Sources: Gmail, Google Drive, Chat Conversations, Discovery, Knowledge Base
-- Collected data stored in VPS `training_sources` table
-- LLM processing: auto-enriches collected items with summaries, Q&A pairs, categories via Ollama
-- **Continuous Training Scheduler**: Runs every 60 minutes (configurable 15-1440 min), generates domain-specific training data for ENT, Social Media, and Hedge Fund using qwen2.5:7b. Auto-creates/updates datasets. Status visible in Data Agent → Continuous Training tab. Endpoints: `/auto-collector/training-status`, `/auto-collector/training-config`, `/auto-collector/training-run`
+## Auto-Collector & Continuous Training Pipeline
+- Auto-starts 15 seconds after server boot
+- **Auto-Collector**: Runs every 30 minutes. Sources: Gmail, Google Drive, Chat Conversations, Discovery, Knowledge Base. Collected data stored in VPS `training_sources` table. LLM processing: auto-enriches collected items with summaries, Q&A pairs, categories via Ollama.
+- **Continuous Training Scheduler**: Runs every 30 minutes (configurable 15-1440 min). Generates domain-specific training data across 3 domains using model rotation (qwen2.5:7b → mistral → deepseek-r1). Rotates 2 domains per cycle to avoid VPS overload (pattern: ENT+Social, HedgeFund+ENT, Social+HedgeFund). Sub-topic rotation for diverse content (15 ENT, 11 social, 13 hedge fund sub-topics). Auto-creates/updates datasets. Every sample stored in `training_data` table with full content. 20-minute AbortController timeout per generation. Carry-buffer streaming parser handles partial JSON lines.
+- **Orphan cleanup**: On startup, marks any "running" jobs as failed to prevent stale data
+- **Streaming fetch**: Uses Ollama streaming API with carry-buffer NDJSON parser to avoid Node.js headers timeout and handle split chunks
+- **Fallback parser**: Multi-strategy JSON extraction (array regex → individual object regex → raw text fallback) handles malformed model outputs
+- **Google Drive ENT Book Import**: POST `/auto-collector/drive-import` scans Drive for ENT/medical books, extracts text in 2000-char chunks, generates training Q&A pairs via Ollama, stores with quality=5 and source=`drive-import:filename`. Frontend UI in Continuous Training tab.
+- **VPS Model Management**: GET `/auto-collector/vps-models`, POST `/auto-collector/vps-pull-model` (uses streaming to prevent timeout)
+- **Training samples API**: GET `/auto-collector/training-samples` with domain filtering and pagination. Browsable in Continuous Training tab with domain filter dropdown.
+- Endpoints: `/auto-collector/training-status`, `/auto-collector/training-config`, `/auto-collector/training-run`, `/auto-collector/training-samples`, `/auto-collector/drive-import`, `/auto-collector/vps-models`, `/auto-collector/vps-pull-model`
 
 ## ENT Training Pipeline
 - 10 built-in otolaryngology knowledge modules (137 RAG chunks)
 - Topics: Pure Tone Audiometry, Tympanometry, FNL, Otoscopy, Vestibular Testing, Nasal Endoscopy, ENT Surgical Procedures, Hearing Aids/CI, Pediatric ENT, Head & Neck Oncology
 - Fine-tuning Q&A pair generation via Meditron model
 
-## ENT Endoscopy Datasets (NEW)
+## ENT Endoscopy Datasets
 - 10 datasets registered (7 publicly available, 3 restricted access)
-- 8 AI knowledge topics ingested (85 chunks) covering:
-  - Flexible Laryngoscopy AI-Assisted Diagnosis
-  - Nasal Endoscopy Pathology Recognition
-  - Endoscopic Sinus Surgery Instrument/Anatomy Recognition
-  - Clinical Training Scenarios (laryngoscopy + nasal endoscopy)
-  - CT Sinus Segmentation for AI
-  - Image Quality/Preprocessing for AI
-  - Transfer Learning Strategies for ENT
-- Downloaded datasets: UW Sinus Surgery (instrument segmentation), NasalSeg (CT segmentation), HyperKvasir (GI transfer learning)
-- API endpoints: GET /ent-datasets/registry, POST /ent-datasets/ingest-all, POST /ent-datasets/generate-training-pairs, POST /ent-datasets/bulk-ingest-training
+- 8 AI knowledge topics ingested (85 chunks)
 - Route file: artifacts/api-server/src/routes/ent-endoscopy-datasets.ts
 
-## LLM Training Pipeline (NEW - 5 Features)
+## LLM Training Pipeline (5 Features)
 Route: `artifacts/api-server/src/routes/llm-training-pipeline.ts`
 Frontend: `artifacts/llm-hub/src/components/TrainingPipelinePanel.tsx`
-DB tables: fine_tuning_jobs, rlhf_pairs, few_shot_libraries, few_shot_examples, eval_benchmarks, eval_questions, eval_runs, eval_results, distillation_jobs
 
 ### 1. Fine-Tuning Pipeline
 - Create custom Ollama models via Modelfiles using training data
-- Jobs: create → review Modelfile → push to VPS Ollama → model available
-- Endpoints: GET/POST /training-pipeline/fine-tuning/jobs, POST /:id/run, DELETE /:id
 
 ### 2. RLHF Feedback Loop
-- Collects preference pairs from chat message ratings (thumbs up/down)
-- Auto-generates contrasting responses for incomplete pairs
-- Exports DPO (Direct Preference Optimization) training datasets
-- Endpoints: GET /training-pipeline/rlhf/pairs, POST /rlhf/collect-from-ratings, POST /rlhf/generate-contrasts, POST /rlhf/export-dpo
+- Collects preference pairs from chat message ratings
 
 ### 3. Knowledge Distillation
-- Teacher model (stronger, e.g. llava:13b, meditron:7b) generates detailed answers
-- Answers stored as training data for student model (e.g. llama3.2)
-- Endpoints: GET/POST /training-pipeline/distillation/jobs, POST /:id/run
+- Teacher model generates detailed answers for student model training
 
 ### 4. Few-Shot Prompt Libraries
-- Curated example libraries organized by category
-- Keyword-based matching auto-injects best examples into prompts
-- Test matching with any query to see which examples would be selected
-- Endpoints: CRUD /training-pipeline/few-shot/libraries, /examples, POST /match
+- Curated example libraries organized by category with keyword matching
 
 ### 5. Evaluation & Benchmarking
-- Create benchmark test sets with AI-generated or manual questions
-- Run any model against benchmarks, auto-scored by LLM judge
-- Model leaderboard tracks accuracy and latency across runs
-- Endpoints: CRUD /training-pipeline/eval/benchmarks, /questions, POST /run, GET /leaderboard
+- Create benchmark test sets, run models against them, auto-scored by LLM judge
 
 ## Conversation History
-- All chatbots (Chat, Local Sandbox, OpenClaw Agents) send full conversation history
+- All chatbots send full conversation history
 - OpenClaw accepts `conversationHistory` array in chat body alongside single `message`
-- ChatWithAgentBody Zod schema updated in lib/api-zod with optional conversationHistory field

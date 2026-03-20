@@ -95,13 +95,84 @@ interface TrainingSchedulerConfig {
 
 let trainingSchedulerConfig: TrainingSchedulerConfig = {
   enabled: true,
-  intervalMinutes: 60,
+  intervalMinutes: 30,
   domains: ["otolaryngology", "social_media", "hedge_fund"],
   samplesPerRun: 3,
   model: "qwen2.5:7b",
   autoDataset: true,
 };
 
+const MODEL_ROTATION = ["qwen2.5:7b", "mistral:latest", "deepseek-r1:8b"];
+let modelRotationIndex = 0;
+
+function getNextModel(): string {
+  const model = MODEL_ROTATION[modelRotationIndex % MODEL_ROTATION.length];
+  modelRotationIndex++;
+  return model;
+}
+
+const SUBTOPIC_ROTATION: Record<string, string[]> = {
+  otolaryngology: [
+    "otitis media diagnosis, treatment, tympanoplasty surgical techniques, complications management",
+    "chronic sinusitis evaluation, endoscopic sinus surgery (FESS), polyp management, medical therapy protocols",
+    "tonsillectomy and adenoidectomy indications, surgical techniques, post-operative care, sleep apnea in children",
+    "sensorineural hearing loss workup, cochlear implant candidacy, hearing aid fitting, presbycusis management",
+    "BPPV diagnosis (Dix-Hallpike), Epley maneuver, vestibular neuritis, Meniere disease treatment",
+    "vocal cord paralysis, laryngeal cancer staging, microlaryngoscopy, voice therapy techniques",
+    "pediatric airway management, stridor evaluation, subglottic stenosis, foreign body aspiration",
+    "head and neck cancer (SCC) staging, neck dissection types, radiation therapy protocols, reconstruction",
+    "allergic rhinitis pharmacotherapy, immunotherapy protocols, turbinate reduction, septoplasty indications",
+    "salivary gland disorders, parotidectomy, sialolithiasis, submandibular gland excision",
+    "thyroid nodule evaluation, FNA biopsy, thyroidectomy, parathyroid surgery",
+    "facial plastic surgery, rhinoplasty techniques, otoplasty, facial nerve repair",
+    "skull base surgery, acoustic neuroma management, CSF leak repair, pituitary approaches",
+    "tracheostomy care, decannulation protocols, laryngotracheal reconstruction",
+    "epistaxis management, nasal fracture reduction, septal hematoma drainage",
+  ],
+  social_media: [
+    "Instagram Reels strategy for medical practices, content calendars, hashtag research for healthcare",
+    "TikTok medical education content, short-form video best practices, trending audio strategies",
+    "LinkedIn thought leadership for physicians, professional networking, article writing",
+    "YouTube medical channel growth, SEO optimization, thumbnail design, subscriber retention",
+    "patient testimonial content guidelines, HIPAA compliance in social media, consent forms",
+    "paid advertising for medical practices, Facebook Ads targeting, Google Ads for healthcare",
+    "influencer marketing in healthcare, KOL partnerships, brand ambassador programs",
+    "crisis management on social media, handling negative reviews, reputation management",
+    "email marketing funnels for medical practices, newsletter content, patient engagement",
+    "analytics dashboards, engagement metrics, ROI tracking, A/B testing social content",
+    "community building strategies, Facebook Groups, Discord for patient support",
+  ],
+  hedge_fund: [
+    "fundamental equity analysis (DCF, comparable analysis), earnings quality, balance sheet deep-dive",
+    "options strategies (iron condor, butterfly spread, straddle), Greeks management, volatility trading",
+    "quantitative trading strategies, factor investing, statistical arbitrage, momentum signals",
+    "healthcare/biotech sector analysis, FDA approval catalysts, clinical trial investing, patent cliffs",
+    "macro economic analysis, interest rate impact, inflation hedging, currency risk management",
+    "risk management frameworks, VaR calculation, portfolio stress testing, drawdown analysis",
+    "alternative data sources for alpha generation, satellite imagery, web scraping, sentiment analysis",
+    "fixed income analysis, yield curve strategies, credit spreads, duration management",
+    "ESG investing criteria, impact measurement, sustainable finance frameworks",
+    "merger arbitrage, event-driven strategies, special situations, activist investing",
+    "cryptocurrency and digital assets analysis, DeFi yield strategies, on-chain analytics",
+    "commodities trading, energy sector analysis, agricultural futures, precious metals",
+    "real estate investment analysis, REITs, cap rates, property market cycles",
+  ],
+};
+
+let subtopicIndices: Record<string, number> = {
+  otolaryngology: 0,
+  social_media: 0,
+  hedge_fund: 0,
+};
+
+function getNextSubtopic(domain: string): string {
+  const topics = SUBTOPIC_ROTATION[domain] || SUBTOPIC_ROTATION.otolaryngology;
+  const idx = (subtopicIndices[domain] || 0) % topics.length;
+  subtopicIndices[domain] = idx + 1;
+  return topics[idx];
+}
+
+let domainRotationCounter = 0;
 let trainingSchedulerInterval: ReturnType<typeof setInterval> | null = null;
 let isTrainingRunning = false;
 let trainingRunHistory: Array<{
@@ -868,40 +939,33 @@ export function getCollectorState() {
   };
 }
 
-const DOMAIN_PROMPTS: Record<string, string> = {
-  otolaryngology: `Generate {count} high-quality training data samples for fine-tuning an ENT medical AI model.
-Each sample should be a question-answer pair covering:
-- Common ENT conditions (otitis media, sinusitis, tonsillitis, hearing loss, vertigo, vocal cord disorders)
-- Diagnostic approaches, treatment protocols, surgical techniques
-- Patient education scenarios
-Format: JSON array of {"instruction": "...", "input": "...", "output": "..."} objects.
-Make responses detailed, clinically accurate, and suitable for medical AI training.`,
-
-  social_media: `Generate {count} high-quality training data samples for fine-tuning a social media content AI model.
-Each sample should be a question-answer pair covering:
-- Content creation for medical professionals on social media
-- Engagement optimization, hashtag strategies, content calendars
-- Brand voice consistency, viral content patterns
-- Platform-specific best practices (Instagram, TikTok, YouTube, LinkedIn)
-Format: JSON array of {"instruction": "...", "input": "...", "output": "..."} objects.
-Make responses actionable and based on real social media marketing strategies.`,
-
-  hedge_fund: `Generate {count} high-quality training data samples for fine-tuning a financial analysis AI model.
-Each sample should be a question-answer pair covering:
-- Stock analysis (fundamental + technical), portfolio management
-- Options strategies, risk assessment, market sentiment
-- Healthcare/biotech sector focus, earnings analysis
-- Trading psychology, macro economics
-Format: JSON array of {"instruction": "...", "input": "...", "output": "..."} objects.
-Make responses quantitative and based on real financial analysis frameworks.`,
+const DOMAIN_SYSTEM_PROMPTS: Record<string, string> = {
+  otolaryngology: "You are a board-certified otolaryngologist and medical education specialist. Generate precise, evidence-based training data for ENT clinical AI. Use current medical terminology, cite guidelines (AAO-HNS, ACR) where relevant, and include differential diagnoses.",
+  social_media: "You are a healthcare marketing strategist with expertise in digital media. Generate actionable, data-driven training data for social media AI. Include specific metrics, platform algorithms, and real-world strategy patterns.",
+  hedge_fund: "You are a senior quantitative analyst at a multi-strategy hedge fund. Generate rigorous, quantitative training data for financial AI. Use real financial frameworks, formulas, and analytical methods.",
 };
+
+function buildTrainingPrompt(domain: string, count: number): string {
+  const subtopic = getNextSubtopic(domain);
+  return `Generate exactly ${count} training data samples as a JSON array. Each sample must follow this exact format:
+[{"instruction":"<specific question or task>","input":"<optional context or patient data>","output":"<detailed expert response>"}]
+
+FOCUS AREA: ${subtopic}
+
+Requirements:
+- Each "output" must be 150-400 words with specific, actionable detail
+- Each "instruction" must be a unique, specific question (not generic)
+- Include clinical/technical specifics: numbers, dosages, percentages, timelines where applicable
+- Vary question types: diagnostic, treatment, procedural, educational, case-based
+- Return ONLY the JSON array, no other text or markdown`;
+}
 
 async function generateDomainTrainingData(domain: string, model: string, count: number): Promise<{ samples: number; jobId: number | null; error?: string }> {
   try {
     const vpsIp = process.env.VPS_IP || "72.60.167.64";
     const serverUrl = process.env.OLLAMA_BASE_URL || process.env.VPS_OLLAMA_URL || `http://${vpsIp}:11434`;
-    const promptTemplate = DOMAIN_PROMPTS[domain] || DOMAIN_PROMPTS.otolaryngology;
-    const prompt = promptTemplate.replace("{count}", String(count));
+    const prompt = buildTrainingPrompt(domain, count);
+    const systemPrompt = DOMAIN_SYSTEM_PROMPTS[domain] || DOMAIN_SYSTEM_PROMPTS.otolaryngology;
 
     const [job] = await db.insert(trainingDataJobsTable).values({
       domain,
@@ -912,30 +976,41 @@ async function generateDomainTrainingData(domain: string, model: string, count: 
     }).returning();
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 600000);
+    const timeoutId = setTimeout(() => controller.abort(), 1200000);
     let response = "";
+    const fullPrompt = `${systemPrompt}\n\n${prompt}`;
     try {
       const resp = await fetch(`${serverUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt, stream: true }),
+        body: JSON.stringify({
+          model,
+          prompt: fullPrompt,
+          stream: true,
+          options: { temperature: 0.8, num_predict: 2048 },
+        }),
         signal: controller.signal,
       });
       if (!resp.ok) throw new Error(`Ollama returned ${resp.status}`);
       const reader = resp.body?.getReader();
       if (!reader) throw new Error("No response body");
       const decoder = new TextDecoder();
+      let carry = "";
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        for (const line of chunk.split("\n").filter(l => l.trim())) {
+        const chunk = carry + decoder.decode(value, { stream: true });
+        const lines = chunk.split("\n");
+        carry = lines.pop() || "";
+        for (const line of lines.filter(l => l.trim())) {
           try {
             const obj = JSON.parse(line);
             if (obj.response) response += obj.response;
-            if (obj.done) break;
           } catch {}
         }
+      }
+      if (carry.trim()) {
+        try { const obj = JSON.parse(carry); if (obj.response) response += obj.response; } catch {}
       }
     } finally {
       clearTimeout(timeoutId);
@@ -943,10 +1018,43 @@ async function generateDomainTrainingData(domain: string, model: string, count: 
 
     let samples: any[] = [];
     try {
-      const m = response.match(/\[[\s\S]*\]/);
-      if (m) samples = JSON.parse(m[0]);
-    } catch {
-      samples = [{ instruction: "training sample", input: "", output: response }];
+      const cleaned = response.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+      const m = cleaned.match(/\[[\s\S]*\]/);
+      if (m) {
+        const parsed = JSON.parse(m[0]);
+        if (Array.isArray(parsed)) {
+          samples = parsed.filter((s: any) => {
+            if (!s.instruction) return false;
+            const output = typeof s.output === "string" ? s.output : JSON.stringify(s.output);
+            if (output.length < 30) return false;
+            s.output = output;
+            return true;
+          });
+        }
+      }
+    } catch (parseErr: any) {
+      console.log(`[training-scheduler] JSON parse issue for ${domain}: ${parseErr.message?.substring(0, 100)}`);
+      const objMatches = response.matchAll(/"instruction"\s*:\s*"([^"]+)"[\s\S]*?"output"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/g);
+      for (const match of objMatches) {
+        if (match[1] && match[2] && match[2].length > 30) {
+          samples.push({ instruction: match[1], input: "", output: match[2] });
+        }
+      }
+      if (samples.length === 0 && response.length > 200) {
+        samples = [{ instruction: "training sample", input: "", output: response.substring(0, 2000) }];
+      }
+    }
+    console.log(`[training-scheduler] ${domain}: parsed ${samples.length} samples from ${response.length} chars`);
+
+    for (const sample of samples) {
+      await db.insert(trainingDataTable).values({
+        inputText: sample.instruction + (sample.input ? `\n\nContext: ${sample.input}` : ""),
+        outputText: sample.output,
+        systemPrompt: systemPrompt,
+        category: domain,
+        quality: 4,
+        source: `auto-${model}`,
+      });
     }
 
     await db.update(trainingDataJobsTable).set({
@@ -954,7 +1062,7 @@ async function generateDomainTrainingData(domain: string, model: string, count: 
       recordsCollected: samples.length,
       recordsProcessed: samples.length,
       outputPath: `/training-data/${domain}/${job.id}.jsonl`,
-      aiSummary: `[Auto] Generated ${samples.length} training samples for ${domain}`,
+      aiSummary: `[Auto] Generated ${samples.length} training samples for ${domain} using ${model}`,
       completedAt: new Date(),
     }).where(eq(trainingDataJobsTable.id, job.id));
 
@@ -968,6 +1076,7 @@ async function generateDomainTrainingData(domain: string, model: string, count: 
         await db.update(trainingDatasetsTable).set({
           totalSamples: currentSamples + samples.length,
           status: "building",
+          sampleData: JSON.stringify(samples.slice(0, 3)),
         }).where(eq(trainingDatasetsTable.id, ds.id));
       } else {
         await db.insert(trainingDatasetsTable).values({
@@ -983,7 +1092,7 @@ async function generateDomainTrainingData(domain: string, model: string, count: 
 
     return { samples: samples.length, jobId: job.id };
   } catch (e: any) {
-    const errMsg = e.name === "AbortError" ? "Timeout after 10 minutes" : `${e.message} | ${e.cause ? JSON.stringify(e.cause) : 'no cause'}`;
+    const errMsg = e.name === "AbortError" ? "Timeout after 20 minutes" : `${e.message} | ${e.cause ? JSON.stringify(e.cause) : 'no cause'}`;
     console.error(`[training-scheduler] Error generating ${domain}:`, errMsg);
     try {
       const runningJobs = await db.select().from(trainingDataJobsTable)
@@ -1019,35 +1128,46 @@ async function runTrainingGeneration() {
   try {
     const vpsIp = process.env.VPS_IP || "72.60.167.64";
     const serverUrl = process.env.OLLAMA_BASE_URL || process.env.VPS_OLLAMA_URL || `http://${vpsIp}:11434`;
+    const cycleModel = getNextModel();
+
     try {
       const warmResp = await fetch(`${serverUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: trainingSchedulerConfig.model, prompt: "hi", stream: true }),
-        signal: AbortSignal.timeout(120000),
+        body: JSON.stringify({ model: cycleModel, prompt: "Ready", stream: true }),
+        signal: AbortSignal.timeout(180000),
       });
       const warmReader = warmResp.body?.getReader();
       if (warmReader) { while (!(await warmReader.read()).done) {} }
-      console.log(`[training-scheduler] Model warmed up`);
+      console.log(`[training-scheduler] Model ${cycleModel} warmed up`);
     } catch (e: any) {
-      console.log(`[training-scheduler] Warmup ping: ${e.message}`);
+      console.log(`[training-scheduler] Warmup ${cycleModel}: ${e.message}`);
     }
+    console.log(`[training-scheduler] Cycle model: ${cycleModel}`);
 
-    for (const domain of trainingSchedulerConfig.domains) {
+    const allDomains = trainingSchedulerConfig.domains;
+    const domainsPerCycle = 2;
+    const cycleDomains: string[] = [];
+    for (let i = 0; i < domainsPerCycle && i < allDomains.length; i++) {
+      cycleDomains.push(allDomains[(domainRotationCounter + i) % allDomains.length]);
+    }
+    domainRotationCounter += domainsPerCycle;
+    console.log(`[training-scheduler] Domains this cycle: ${cycleDomains.join(", ")} (rotating ${domainsPerCycle} of ${allDomains.length})`);
+    for (const domain of cycleDomains) {
       let result = await generateDomainTrainingData(
-        domain, trainingSchedulerConfig.model, trainingSchedulerConfig.samplesPerRun
+        domain, cycleModel, trainingSchedulerConfig.samplesPerRun
       );
       if (result.error) {
-        console.log(`[training-scheduler] ${domain}: retrying after 30s...`);
-        await new Promise(r => setTimeout(r, 30000));
+        console.log(`[training-scheduler] ${domain}: retrying after 10s...`);
+        await new Promise(r => setTimeout(r, 10000));
         result = await generateDomainTrainingData(
-          domain, trainingSchedulerConfig.model, trainingSchedulerConfig.samplesPerRun
+          domain, cycleModel, trainingSchedulerConfig.samplesPerRun
         );
       }
       record.results[domain] = result;
       console.log(`[training-scheduler] ${domain}: generated ${result.samples} samples${result.error ? ` (error: ${result.error})` : ""}`);
-      if (trainingSchedulerConfig.domains.indexOf(domain) < trainingSchedulerConfig.domains.length - 1) {
-        await new Promise(r => setTimeout(r, 10000));
+      if (cycleDomains.indexOf(domain) < cycleDomains.length - 1) {
+        await new Promise(r => setTimeout(r, 5000));
       }
     }
     record.status = "completed";
@@ -1069,7 +1189,17 @@ router.get("/auto-collector/training-status", async (_req, res): Promise<void> =
     .filter(j => j.status === "completed")
     .reduce((sum, j) => sum + (j.recordsCollected || 0), 0);
 
-  const domainStats: Record<string, { jobs: number; samples: number; datasetSize: number }> = {};
+  const storedSamplesResult = await db.select({ count: sql<number>`count(*)` }).from(trainingDataTable);
+  const totalStoredSamples = Number(storedSamplesResult[0]?.count || 0);
+
+  const domainSampleCounts: Record<string, number> = {};
+  for (const domain of trainingSchedulerConfig.domains) {
+    const ct = await db.select({ count: sql<number>`count(*)` }).from(trainingDataTable)
+      .where(eq(trainingDataTable.category, domain));
+    domainSampleCounts[domain] = Number(ct[0]?.count || 0);
+  }
+
+  const domainStats: Record<string, { jobs: number; samples: number; datasetSize: number; storedSamples: number }> = {};
   for (const domain of trainingSchedulerConfig.domains) {
     const domainJobs = jobs.filter(j => j.domain === domain);
     const domainDataset = datasets.find(d => d.domain === domain);
@@ -1077,6 +1207,7 @@ router.get("/auto-collector/training-status", async (_req, res): Promise<void> =
       jobs: domainJobs.length,
       samples: domainJobs.filter(j => j.status === "completed").reduce((s, j) => s + (j.recordsCollected || 0), 0),
       datasetSize: domainDataset?.totalSamples || 0,
+      storedSamples: domainSampleCounts[domain] || 0,
     };
   }
 
@@ -1096,6 +1227,7 @@ router.get("/auto-collector/training-status", async (_req, res): Promise<void> =
       completedJobs: jobs.filter(j => j.status === "completed").length,
       failedJobs: jobs.filter(j => j.status === "failed").length,
       totalSamplesGenerated,
+      totalStoredSamples,
       totalDatasets: datasets.length,
     },
     domainStats,
@@ -1132,6 +1264,201 @@ router.post("/auto-collector/training-run", async (_req, res): Promise<void> => 
   }
   runTrainingGeneration().catch(console.error);
   res.json({ message: "Training generation started", domains: trainingSchedulerConfig.domains });
+});
+
+router.get("/auto-collector/training-samples", async (req, res): Promise<void> => {
+  const domain = req.query.domain as string | undefined;
+  const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+  const offset = parseInt(req.query.offset as string) || 0;
+
+  let query = db.select().from(trainingDataTable).orderBy(desc(trainingDataTable.createdAt)).limit(limit).offset(offset);
+  if (domain) {
+    const samples = await db.select().from(trainingDataTable)
+      .where(eq(trainingDataTable.category, domain))
+      .orderBy(desc(trainingDataTable.createdAt)).limit(limit).offset(offset);
+    const total = await db.select({ count: sql<number>`count(*)` }).from(trainingDataTable)
+      .where(eq(trainingDataTable.category, domain));
+    res.json({ samples, total: Number(total[0]?.count || 0), limit, offset });
+    return;
+  }
+  const samples = await query;
+  const total = await db.select({ count: sql<number>`count(*)` }).from(trainingDataTable);
+  res.json({ samples, total: Number(total[0]?.count || 0), limit, offset });
+});
+
+router.post("/auto-collector/drive-import", async (req, res): Promise<void> => {
+  const { folderQuery, maxFiles } = req.body;
+  const searchQuery = folderQuery || "ENT OR otolaryngology OR otology OR rhinology OR laryngology OR audiology OR 'head and neck'";
+  const fileLimit = Math.min(maxFiles || 20, 50);
+
+  try {
+    const driveFiles = await driveProxyJson(
+      `/drive/v3/files?q=name contains '${searchQuery.split(" OR ")[0].replace(/'/g, "")}' and (mimeType='application/pdf' or mimeType='application/vnd.google-apps.document' or mimeType='text/plain')&pageSize=${fileLimit}&fields=files(id,name,mimeType,size,modifiedTime)`
+    );
+
+    if (!driveFiles.files || driveFiles.files.length === 0) {
+      const broadSearch = await driveProxyJson(
+        `/drive/v3/files?q=fullText contains 'ENT' or fullText contains 'otolaryngology' or fullText contains 'medical'&pageSize=${fileLimit}&fields=files(id,name,mimeType,size,modifiedTime)`
+      );
+      driveFiles.files = broadSearch.files || [];
+    }
+
+    const results: { file: string; samplesGenerated: number; error?: string }[] = [];
+
+    for (const file of (driveFiles.files || []).slice(0, fileLimit)) {
+      try {
+        let content = "";
+        if (file.mimeType === "application/vnd.google-apps.document") {
+          content = await driveProxyText(`/drive/v3/files/${file.id}/export?mimeType=text/plain`);
+        } else {
+          content = await driveProxyText(`/drive/v3/files/${file.id}?alt=media`);
+        }
+
+        if (!content || content.length < 100) {
+          results.push({ file: file.name, samplesGenerated: 0, error: "Content too short or empty" });
+          continue;
+        }
+
+        const chunks = [];
+        const chunkSize = 2000;
+        for (let i = 0; i < content.length && chunks.length < 5; i += chunkSize) {
+          const chunk = content.slice(i, i + chunkSize).trim();
+          if (chunk.length > 200) chunks.push(chunk);
+        }
+
+        let totalSamples = 0;
+        for (const chunk of chunks) {
+          const vpsIp = process.env.VPS_IP || "72.60.167.64";
+          const serverUrl = process.env.OLLAMA_BASE_URL || process.env.VPS_OLLAMA_URL || `http://${vpsIp}:11434`;
+
+          const resp = await fetch(`${serverUrl}/api/chat`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "qwen2.5:7b",
+              messages: [
+                { role: "system", content: DOMAIN_SYSTEM_PROMPTS.otolaryngology },
+                { role: "user", content: `Based on this medical text excerpt, generate 3 training Q&A pairs as a JSON array of [{"instruction":"...","input":"...","output":"..."}].
+
+Text excerpt:
+${chunk.substring(0, 1500)}
+
+Generate clinically precise Q&A pairs that capture the key medical knowledge from this text. Return ONLY the JSON array.` },
+              ],
+              stream: true,
+              options: { temperature: 0.7, num_predict: 2048 },
+            }),
+            signal: AbortSignal.timeout(300000),
+          });
+
+          if (!resp.ok) continue;
+          let genResponse = "";
+          const reader = resp.body?.getReader();
+          if (!reader) continue;
+          const decoder = new TextDecoder();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunkText = decoder.decode(value, { stream: true });
+            for (const line of chunkText.split("\n").filter(l => l.trim())) {
+              try {
+                const obj = JSON.parse(line);
+                if (obj.message?.content) genResponse += obj.message.content;
+              } catch {}
+            }
+          }
+
+          try {
+            const cleaned = genResponse.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+            const m = cleaned.match(/\[[\s\S]*\]/);
+            if (m) {
+              const samples = JSON.parse(m[0]).filter((s: any) => s.instruction && s.output && s.output.length > 50);
+              for (const sample of samples) {
+                await db.insert(trainingDataTable).values({
+                  inputText: sample.instruction + (sample.input ? `\n\nContext: ${sample.input}` : ""),
+                  outputText: sample.output,
+                  systemPrompt: DOMAIN_SYSTEM_PROMPTS.otolaryngology,
+                  category: "otolaryngology",
+                  quality: 5,
+                  source: `drive-import:${file.name}`,
+                });
+              }
+              totalSamples += samples.length;
+            }
+          } catch {}
+
+          await new Promise(r => setTimeout(r, 3000));
+        }
+
+        if (totalSamples > 0) {
+          const existing = await db.select().from(trainingDatasetsTable)
+            .where(eq(trainingDatasetsTable.domain, "otolaryngology"));
+          if (existing.length > 0) {
+            await db.update(trainingDatasetsTable).set({
+              totalSamples: (existing[0].totalSamples || 0) + totalSamples,
+            }).where(eq(trainingDatasetsTable.id, existing[0].id));
+          }
+        }
+
+        results.push({ file: file.name, samplesGenerated: totalSamples });
+        console.log(`[drive-import] ${file.name}: generated ${totalSamples} training samples`);
+      } catch (e: any) {
+        results.push({ file: file.name, samplesGenerated: 0, error: e.message });
+      }
+    }
+
+    res.json({
+      message: "Drive import completed",
+      filesScanned: driveFiles.files?.length || 0,
+      results,
+      totalSamplesGenerated: results.reduce((s, r) => s + r.samplesGenerated, 0),
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/auto-collector/vps-models", async (_req, res): Promise<void> => {
+  try {
+    const vpsIp = process.env.VPS_IP || "72.60.167.64";
+    const serverUrl = process.env.OLLAMA_BASE_URL || process.env.VPS_OLLAMA_URL || `http://${vpsIp}:11434`;
+    const resp = await fetch(`${serverUrl}/api/tags`);
+    const data = await resp.json() as any;
+    res.json({ models: data.models || [] });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/auto-collector/vps-pull-model", async (req, res): Promise<void> => {
+  const { modelName } = req.body;
+  if (!modelName) { res.status(400).json({ error: "modelName required" }); return; }
+  try {
+    const vpsIp = process.env.VPS_IP || "72.60.167.64";
+    const serverUrl = process.env.OLLAMA_BASE_URL || process.env.VPS_OLLAMA_URL || `http://${vpsIp}:11434`;
+    const resp = await fetch(`${serverUrl}/api/pull`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: modelName, stream: true }),
+      signal: AbortSignal.timeout(1800000),
+    });
+    if (!resp.ok) throw new Error(`Ollama returned ${resp.status}`);
+    const reader = resp.body?.getReader();
+    if (!reader) throw new Error("No response body");
+    const decoder = new TextDecoder();
+    let lastStatus = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      for (const line of chunk.split("\n").filter(l => l.trim())) {
+        try { const obj = JSON.parse(line); if (obj.status) lastStatus = obj.status; } catch {}
+      }
+    }
+    res.json({ message: `Model ${modelName} pull completed`, status: lastStatus });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 export default router;

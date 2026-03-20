@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Database, Plus, Play, Trash2, Loader2, RefreshCw, CheckCircle, XCircle, Clock, BarChart3, Zap, Settings } from "lucide-react";
+import { Database, Plus, Play, Trash2, Loader2, RefreshCw, CheckCircle, XCircle, Clock, BarChart3, Zap, Settings, Upload, HardDrive, FileText } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "/api";
 
@@ -367,8 +367,9 @@ function ContinuousTrainingTab() {
           <div className="text-lg font-bold">{s.isRunning ? "Running" : s.enabled ? "Active" : "Paused"}</div>
         </div>
         <div className="p-4 bg-gray-800/40 rounded-xl border border-gray-700">
-          <span className="text-sm text-gray-400 block">Total Samples</span>
-          <div className="text-2xl font-bold text-orange-400">{stats.totalSamplesGenerated || 0}</div>
+          <span className="text-sm text-gray-400 block">Stored Samples</span>
+          <div className="text-2xl font-bold text-orange-400">{stats.totalStoredSamples || 0}</div>
+          <div className="text-xs text-gray-500 mt-1">{stats.totalSamplesGenerated || 0} generated</div>
         </div>
         <div className="p-4 bg-gray-800/40 rounded-xl border border-gray-700">
           <span className="text-sm text-gray-400 block">Completed Jobs</span>
@@ -384,14 +385,19 @@ function ContinuousTrainingTab() {
         {Object.entries(domainStats).map(([domain, d]: any) => (
           <div key={domain} className="p-4 bg-gray-800/30 rounded-xl border border-gray-700">
             <div className={`text-sm font-bold text-${domainColors[domain] || "gray"}-400 mb-3`}>{domainLabels[domain] || domain}</div>
-            <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="grid grid-cols-4 gap-2 text-center">
               <div><span className="text-xs text-gray-500 block">Jobs</span><span className="text-white font-medium">{d.jobs}</span></div>
               <div><span className="text-xs text-gray-500 block">Samples</span><span className="text-white font-medium">{d.samples}</span></div>
+              <div><span className="text-xs text-gray-500 block">Stored</span><span className="text-green-400 font-medium">{d.storedSamples}</span></div>
               <div><span className="text-xs text-gray-500 block">Dataset</span><span className="text-white font-medium">{d.datasetSize}</span></div>
             </div>
           </div>
         ))}
       </div>
+
+      <DriveImportSection onImportComplete={load} />
+
+      <StoredSamplesSection />
 
       {datasets.length > 0 && (
         <div>
@@ -487,6 +493,143 @@ function ContinuousTrainingTab() {
       {s.lastRunAt && (
         <div className="text-xs text-gray-500 text-center">
           Last run: {new Date(s.lastRunAt).toLocaleString()} · Next run in ~{s.intervalMinutes} minutes · Model: {s.model}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DriveImportSection({ onImportComplete }: { onImportComplete: () => void }) {
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [query, setQuery] = useState("");
+  const [maxFiles, setMaxFiles] = useState(10);
+
+  const runImport = async () => {
+    setImporting(true);
+    setResult(null);
+    try {
+      const resp = await fetch(`${API}/auto-collector/drive-import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ folderQuery: query || undefined, maxFiles }),
+      });
+      const data = await resp.json();
+      setResult(data);
+      onImportComplete();
+    } catch (e: any) {
+      setResult({ error: e.message });
+    }
+    setImporting(false);
+  };
+
+  return (
+    <div className="p-4 bg-gray-800/30 rounded-xl border border-gray-700">
+      <h3 className="font-semibold mb-3 flex items-center gap-2">
+        <Upload className="w-4 h-4 text-blue-400" /> Google Drive ENT Book Import
+      </h3>
+      <p className="text-xs text-gray-400 mb-3">Scan Google Drive for ENT/medical books and generate training Q&A pairs from their content.</p>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+        <div className="md:col-span-2">
+          <label className="text-xs text-gray-500 block mb-1">Search Query (optional)</label>
+          <input type="text" value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="ENT OR otolaryngology OR medical..."
+            className="w-full p-2 bg-gray-800 border border-gray-600 rounded text-sm text-white placeholder-gray-500" />
+        </div>
+        <div>
+          <label className="text-xs text-gray-500 block mb-1">Max Files</label>
+          <input type="number" value={maxFiles} onChange={e => setMaxFiles(parseInt(e.target.value) || 10)}
+            className="w-full p-2 bg-gray-800 border border-gray-600 rounded text-sm text-white" min="1" max="50" />
+        </div>
+      </div>
+      <button onClick={runImport} disabled={importing}
+        className="px-4 py-2 bg-blue-500/20 border border-blue-500/50 rounded-lg text-blue-300 text-sm hover:bg-blue-500/30 flex items-center gap-2 disabled:opacity-50">
+        {importing ? <Loader2 className="w-4 h-4 animate-spin" /> : <HardDrive className="w-4 h-4" />}
+        {importing ? "Importing..." : "Import from Drive"}
+      </button>
+      {result && (
+        <div className="mt-3 p-3 bg-gray-900/50 rounded-lg border border-gray-700">
+          {result.error ? (
+            <div className="text-red-400 text-sm">{result.error}</div>
+          ) : (
+            <div>
+              <div className="text-sm text-white mb-2">
+                Scanned {result.filesScanned} files · Generated {result.totalSamplesGenerated} training samples
+              </div>
+              {result.results?.map((r: any, i: number) => (
+                <div key={i} className="text-xs py-1 flex items-center gap-2">
+                  <FileText className="w-3 h-3 text-gray-400" />
+                  <span className="text-gray-300">{r.file}</span>
+                  <span className={r.samplesGenerated > 0 ? "text-green-400" : "text-gray-500"}>
+                    {r.samplesGenerated} samples
+                  </span>
+                  {r.error && <span className="text-red-400">({r.error})</span>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StoredSamplesSection() {
+  const [samples, setSamples] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [domain, setDomain] = useState("");
+
+  const load = (d?: string) => {
+    setLoading(true);
+    const q = d !== undefined ? d : domain;
+    const url = q ? `${API}/auto-collector/training-samples?domain=${q}&limit=20` : `${API}/auto-collector/training-samples?limit=20`;
+    fetch(url).then(r => r.json()).then(data => {
+      setSamples(data.samples || []);
+      setTotal(data.total || 0);
+    }).catch(() => {}).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const domainLabels: Record<string, string> = { otolaryngology: "ENT", social_media: "Social", hedge_fund: "Finance" };
+
+  return (
+    <div className="p-4 bg-gray-800/30 rounded-xl border border-gray-700">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-semibold flex items-center gap-2">
+          <Database className="w-4 h-4 text-green-400" /> Stored Training Samples ({total})
+        </h3>
+        <div className="flex gap-2">
+          <select value={domain} onChange={e => { setDomain(e.target.value); load(e.target.value); }}
+            className="p-1.5 bg-gray-800 border border-gray-600 rounded text-xs text-white">
+            <option value="">All Domains</option>
+            <option value="otolaryngology">ENT Clinical</option>
+            <option value="social_media">Social Media</option>
+            <option value="hedge_fund">Hedge Fund</option>
+          </select>
+          <button onClick={() => load()} className="p-1.5 bg-gray-800 border border-gray-700 rounded text-gray-300">
+            <RefreshCw className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+      {loading ? (
+        <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-green-400" /></div>
+      ) : samples.length === 0 ? (
+        <div className="text-center text-gray-500 py-4 text-sm">No stored samples yet</div>
+      ) : (
+        <div className="space-y-2 max-h-96 overflow-y-auto">
+          {samples.map((s: any) => (
+            <div key={s.id} className="p-3 bg-gray-900/50 rounded-lg border border-gray-700/50">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs px-2 py-0.5 rounded bg-gray-700 text-gray-300">{domainLabels[s.category] || s.category}</span>
+                <span className="text-xs text-gray-500">{s.source}</span>
+                <span className="text-xs text-gray-600">{new Date(s.createdAt).toLocaleString()}</span>
+              </div>
+              <div className="text-sm text-blue-300 font-medium mb-1">{(s.inputText || "").substring(0, 120)}{s.inputText?.length > 120 ? "..." : ""}</div>
+              <div className="text-xs text-gray-400">{(s.outputText || "").substring(0, 200)}{s.outputText?.length > 200 ? "..." : ""}</div>
+            </div>
+          ))}
         </div>
       )}
     </div>
