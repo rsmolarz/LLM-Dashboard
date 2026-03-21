@@ -36,11 +36,12 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 ## VPS Configuration
 - IP: 72.60.167.64, Ollama: port 11434, OpenClaw: port 18789
 - PostgreSQL: port 5432, db=llmhub, user=llmhub
-- Models (9 total, ~45.8 GB):
+- Models (10 total, ~49.6 GB):
   - qwen2.5:7b (7.6B, 4.7GB) — primary training model
   - qwen2.5:14b (14.8B, 9.0GB) — higher quality generation
   - deepseek-r1:8b (8.2B, 5.2GB) — reasoning/analysis
   - meditron:7b (7B, 3.8GB) — medical/clinical specialization
+  - meditron-7b-ent-trained:latest (7B, 3.8GB) — fine-tuned ENT model (created from meditron + 1304 training samples)
   - mistral:latest (7.2B, 4.4GB) — general purpose
   - llama3.2:latest (3.2B, 2.0GB) — lightweight general purpose
   - codellama:7b (7B, 3.8GB) — code generation
@@ -74,6 +75,31 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **VPS Model Management**: GET `/auto-collector/vps-models`, POST `/auto-collector/vps-pull-model` (uses streaming to prevent timeout)
 - **Training samples API**: GET `/auto-collector/training-samples` with domain filtering and pagination. Browsable in Continuous Training tab with domain filter dropdown.
 - Endpoints: `/auto-collector/training-status`, `/auto-collector/training-config`, `/auto-collector/training-run`, `/auto-collector/training-samples`, `/auto-collector/drive-import`, `/auto-collector/vps-models`, `/auto-collector/vps-pull-model`
+
+## PubMed ENT Collector
+- Automated literature collection from NCBI PubMed (free API, no key needed)
+- 25 MeSH queries + 15 keyword queries covering all ENT subspecialties
+- 8 AI-specific subtopics: AI-assisted laryngoscopy, AI in otoscopy, LLMs in clinical workflows, voice pathology detection, multimodal head & neck oncology, AI for sleep apnea, sinus CT interpretation, Bridge2AI
+- Auto-categorizes into 11 ENT subcategories (otology, laryngology, rhinology, head_neck_oncology, ai_ent, sleep_medicine, thyroid, dysphagia, pharyngology, endoscopy, general_ent)
+- Frontend: `/pubmed` with Overview, Articles, Search, History tabs
+
+## Advanced Training Pipeline
+- **Route**: `artifacts/api-server/src/routes/advanced-training-pipeline.ts`
+- **Frontend**: `/pipeline` page with full dashboard
+- **Data Sources** (5 total, 1304+ samples):
+  - PubMed Abstracts (849 samples) — via pubmed-ent-collector
+  - PMC Full-Text (91 samples) — open-access full articles with methods/results/conclusions extraction
+  - ClinicalTrials.gov (269 samples) — active ENT trials with intervention and outcome data
+  - OpenAlex (61 samples) — academic metadata with citation-weighted quality scoring
+  - VPS Training (34 samples) — Ollama-generated Q&A pairs
+- **Model Injection**: Creates fine-tuned model variants on VPS using Ollama `create` API with `from` + `system` + `messages` format
+- **ENT Clinical AI profile**: meditron:7b base, temperature 0.3, seeded on startup
+- **Training rotation**: qwen2.5:7b, mistral:latest, deepseek-r1:8b, meditron:7b (4 models)
+
+## AI Databases & Resources
+- `/databases` page with 28 resources across 5 categories
+- Categories: General Purpose (7), Cloud Platforms (3), Medical AI (4), Laryngoscopy/ENT (11), Search Databases (3)
+- Includes JAMA 2026 landmark papers (Bao et al., Novi et al.), Nature 2025 scoping review, EUR Arch meta-analysis
 
 ## ENT Training Pipeline
 - 10 built-in otolaryngology knowledge modules (137 RAG chunks)

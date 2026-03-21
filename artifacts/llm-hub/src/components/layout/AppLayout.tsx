@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User, Stethoscope, Share2, TrendingUp, Database, Mic, HardDrive, BookOpen } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User, Stethoscope, Share2, TrendingUp, Database, Mic, HardDrive, BookOpen, Beaker } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -28,6 +28,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/voice-agent", label: "Voice Agent", icon: Mic },
     { href: "/databases", label: "Databases", icon: HardDrive },
     { href: "/pubmed", label: "PubMed", icon: BookOpen },
+    { href: "/pipeline", label: "Pipeline", icon: Beaker },
     { href: "/monitor", label: "Monitor", icon: BarChart3 },
     { href: "/admin", label: "Admin", icon: Shield },
   ];

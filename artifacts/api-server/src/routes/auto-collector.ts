@@ -109,7 +109,7 @@ let trainingSchedulerConfig: TrainingSchedulerConfig = {
   autoDataset: true,
 };
 
-const MODEL_ROTATION = ["qwen2.5:7b", "mistral:latest", "deepseek-r1:8b"];
+const MODEL_ROTATION = ["qwen2.5:7b", "mistral:latest", "deepseek-r1:8b", "meditron:7b"];
 let modelRotationIndex = 0;
 
 function getNextModel(): string {
