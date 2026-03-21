@@ -29,6 +29,11 @@ const MESH_QUERIES = [
   '"machine learning"[MeSH Terms] AND "laryngoscopy"[MeSH Terms]',
   '"deep learning"[MeSH Terms] AND "head and neck"[All Fields]',
   '"image processing, computer-assisted"[MeSH Terms] AND "larynx"[MeSH Terms]',
+  '"large language model"[All Fields] AND "otolaryngology"[All Fields]',
+  '"natural language processing"[MeSH Terms] AND "otolaryngology"[MeSH Terms]',
+  '"neural networks, computer"[MeSH Terms] AND "otoscopy"[All Fields]',
+  '"voice disorders"[MeSH Terms] AND "artificial intelligence"[MeSH Terms]',
+  '"thyroid nodule"[MeSH Terms] AND "deep learning"[All Fields]',
 ];
 
 const KEYWORD_QUERIES = [
@@ -299,7 +304,7 @@ async function runCollection(queryType: "mesh" | "keyword" | "both", maxPerQuery
             await db.insert(trainingDataTable).values({
               inputText: sample.input,
               outputText: sample.output,
-              systemPrompt: "You are an expert otolaryngologist and ENT researcher with comprehensive knowledge of current medical literature.",
+              systemPrompt: "You are a board-certified otolaryngologist and AI-in-medicine researcher with comprehensive knowledge of current ENT literature. Per Bao et al. (JAMA Otolaryngology 2026), LLM applications in ENT span data structuring, precision medicine, administrative efficiency, decision support, and multimodal integration. Reference evidence-based benchmarks and cite sources when applicable.",
               category: sample.category,
               quality: 4,
               source: "pubmed",
@@ -471,7 +476,7 @@ router.post("/pubmed-ent/generate-samples/:pmid", async (req, res) => {
         await db.insert(trainingDataTable).values({
           inputText: sample.input,
           outputText: sample.output,
-          systemPrompt: "You are an expert otolaryngologist and ENT researcher with comprehensive knowledge of current medical literature.",
+          systemPrompt: "You are a board-certified otolaryngologist and AI-in-medicine researcher with comprehensive knowledge of current ENT literature. Per Bao et al. (JAMA Otolaryngology 2026), LLM applications in ENT span data structuring, precision medicine, administrative efficiency, decision support, and multimodal integration. Reference evidence-based benchmarks and cite sources when applicable.",
           category: sample.category,
           quality: 4,
           source: "pubmed",

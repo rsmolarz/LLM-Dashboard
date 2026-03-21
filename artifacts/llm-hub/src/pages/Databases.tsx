@@ -147,6 +147,42 @@ const RESOURCES: Resource[] = [
     tags: ["segmentation", "benchmark", "multi-organ", "medical imaging"],
   },
   {
+    name: "LLMs and Otolaryngology: A Review (Bao et al., JAMA 2026)",
+    url: "https://jamanetwork.com/journals/jamaotolaryngology/article-abstract/2844560",
+    description:
+      "Landmark JAMA review identifying 5 LLM application areas in ENT: data structuring, precision medicine, administrative efficiency, decision support, and multimodal integration. Recommends open-source fine-tuning and clinical validation.",
+    category: "laryngoscopy",
+    tags: ["JAMA", "LLM", "review", "2026", "framework"],
+    highlight: true,
+  },
+  {
+    name: "Deep Learning in Otolaryngology (Novi et al., JAMA 2026)",
+    url: "https://jamanetwork.com/journals/jamaotolaryngology/fullarticle/2841500",
+    description:
+      "Narrative review of 327 deep learning studies (2020-2025) in otolaryngology. Proposes a framework for integrating DL into clinical practice. Applications: diagnostic improvement, outcome prediction, intraoperative guidance.",
+    category: "laryngoscopy",
+    tags: ["JAMA", "deep learning", "327 studies", "2026", "framework"],
+    highlight: true,
+  },
+  {
+    name: "Deep Learning in OHNS: Scoping Review (Liu et al., Nature 2025)",
+    url: "https://www.nature.com/articles/s41746-025-01693-0",
+    description:
+      "Analyzed 444 studies — found 99.3% are proof-of-concept, 0.7% had offline validation, zero clinical validation. Only 2/950 FDA AI devices are OHNS-specific. Identifies the 'AI chasm' in otolaryngology.",
+    category: "laryngoscopy",
+    tags: ["Nature", "scoping review", "AI chasm", "444 studies", "FDA"],
+    highlight: true,
+  },
+  {
+    name: "AI in Laryngeal Lesions: Meta-Analysis (EUR Arch 2024)",
+    url: "https://link.springer.com/article/10.1007/s00405-024-09075-0",
+    description:
+      "Systematic review and meta-analysis: AI-assisted endoscopy 92% accuracy, 91% sensitivity for benign vs malignant laryngeal classification. Detection sensitivity 91% across studies.",
+    category: "laryngoscopy",
+    tags: ["meta-analysis", "92% accuracy", "laryngeal", "endoscopy"],
+    highlight: true,
+  },
+  {
     name: "NBI-InfFrames (Zenodo)",
     url: "https://zenodo.org/search?q=NBI-InfFrames",
     description:

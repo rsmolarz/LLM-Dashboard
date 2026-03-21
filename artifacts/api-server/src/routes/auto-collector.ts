@@ -135,6 +135,14 @@ const SUBTOPIC_ROTATION: Record<string, string[]> = {
     "skull base surgery, acoustic neuroma management, CSF leak repair, pituitary approaches",
     "tracheostomy care, decannulation protocols, laryngotracheal reconstruction",
     "epistaxis management, nasal fracture reduction, septal hematoma drainage",
+    "AI-assisted laryngoscopy: CNN-based lesion detection, benign vs malignant classification (92% accuracy), NBI frame classification, real-time diagnostic support",
+    "AI in otoscopy: deep learning for tympanic membrane analysis, AOM vs OME classification (97.6% accuracy), AI vs clinician performance (93.4% vs 73.2%)",
+    "LLMs in ENT clinical workflows: structured data extraction from operative notes, automated phenotyping, clinical decision support, patient education content generation",
+    "AI-driven voice pathology detection: CNN analysis of voice recordings, laryngeal cancer screening via voice biomarkers, dysphonia classification models",
+    "multimodal AI in head and neck oncology: combining imaging (CT/MRI/PET), histopathology, genomics, and clinical data for treatment planning and prognosis",
+    "AI for sleep apnea: polysomnography analysis automation, OSA prediction from craniofacial imaging, CPAP compliance monitoring, surgical outcome prediction",
+    "deep learning for sinus CT interpretation: automated Lund-Mackay scoring, polyp detection, surgical navigation AI, post-operative outcome prediction",
+    "Bridge2AI voice database applications: diverse population voice biomarkers, laryngology AI training datasets, health-voice correlation models",
   ],
   social_media: [
     "Instagram Reels strategy for medical practices, content calendars, hashtag research for healthcare",
@@ -947,7 +955,19 @@ export function getCollectorState() {
 }
 
 const DOMAIN_SYSTEM_PROMPTS: Record<string, string> = {
-  otolaryngology: "You are a board-certified otolaryngologist and medical education specialist. Generate precise, evidence-based training data for ENT clinical AI. Use current medical terminology, cite guidelines (AAO-HNS, ACR) where relevant, and include differential diagnoses.",
+  otolaryngology: `You are a board-certified otolaryngologist, medical education specialist, and AI-in-medicine researcher. Generate precise, evidence-based training data for ENT clinical AI.
+
+Key Research Framework (per Bao et al., JAMA Otolaryngology 2026 — "Large Language Models and Otolaryngology: A Review"):
+- LLM applications in ENT: (1) Data Structuring — converting unstructured clinical notes to structured variables, (2) Precision Medicine — automated phenotyping and subphenotyping, (3) Administrative Efficiency — streamlining documentation, (4) Decision Support — domain-specific clinical tools, (5) Multimodal Integration — combining text with imaging/video/electrophysiology.
+- Otolaryngology is uniquely suited for AI due to its reliance on multimodal data (text, imaging, electrophysiology, video) and symptom-driven complexity.
+- Current gap: 99.3% of deep learning studies in OHNS are proof-of-concept with zero clinical validation (Liu et al., Nature Digital Medicine 2025). Focus training on clinically actionable content.
+
+Key Benchmarks (Novi et al., JAMA Otolaryngology 2026 — "Deep Learning in Otolaryngology" review of 327 studies):
+- AI diagnostic accuracy for ear disease from otoscopy: 90.7% (normal vs abnormal), up to 97.6% for 3-class classification.
+- AI outperforms clinicians: 93.4% vs 73.2% in otoscopy diagnosis.
+- AI-assisted laryngeal endoscopy: 92% accuracy, 91% sensitivity for benign vs malignant classification.
+
+Use current medical terminology, cite guidelines (AAO-HNS, ACR, NCCN) where relevant, include differential diagnoses, and reference AI diagnostic capabilities where applicable.`,
   social_media: "You are a healthcare marketing strategist with expertise in digital media. Generate actionable, data-driven training data for social media AI. Include specific metrics, platform algorithms, and real-world strategy patterns.",
   hedge_fund: "You are a senior quantitative analyst at a multi-strategy hedge fund. Generate rigorous, quantitative training data for financial AI. Use real financial frameworks, formulas, and analytical methods.",
 };
