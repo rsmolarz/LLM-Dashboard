@@ -796,10 +796,82 @@ ssh root@72.60.167.64 \\
               </div>
             )}
 
-            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-              <p className="text-xs text-amber-300">
-                <strong>Hardware requirements:</strong> QLoRA fine-tuning requires a GPU with at least 16GB VRAM (e.g., RTX 4090, A100, or cloud GPU on RunPod/Lambda). For the 13B PMC-LLaMA model, 24GB+ VRAM is recommended. Training on {totalSamples.toLocaleString()} samples typically takes 1-3 hours depending on hardware.
-              </p>
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-amber-400" /> Estimated Compute Requirements
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                  <div className="text-xs text-blue-300 font-semibold mb-2">Meditron-7B / BioMedLM</div>
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                    <div className="flex justify-between"><span>VRAM Required</span><span className="text-white font-medium">16 GB</span></div>
+                    <div className="flex justify-between"><span>GPU Type</span><span className="text-white font-medium">RTX 4090 / A5000</span></div>
+                    <div className="flex justify-between"><span>Est. Train Time</span><span className="text-white font-medium">{Math.max(1, Math.round(totalSamples / 3000))}–{Math.max(2, Math.round(totalSamples / 1500))} hrs</span></div>
+                    <div className="flex justify-between"><span>QLoRA Memory</span><span className="text-white font-medium">~10 GB</span></div>
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                  <div className="text-xs text-purple-300 font-semibold mb-2">PMC-LLaMA-13B</div>
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                    <div className="flex justify-between"><span>VRAM Required</span><span className="text-white font-medium">24 GB</span></div>
+                    <div className="flex justify-between"><span>GPU Type</span><span className="text-white font-medium">A100 40GB / RTX A6000</span></div>
+                    <div className="flex justify-between"><span>Est. Train Time</span><span className="text-white font-medium">{Math.max(2, Math.round(totalSamples / 2000))}–{Math.max(4, Math.round(totalSamples / 1000))} hrs</span></div>
+                    <div className="flex justify-between"><span>QLoRA Memory</span><span className="text-white font-medium">~18 GB</span></div>
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+                  <div className="text-xs text-emerald-300 font-semibold mb-2">Full Fine-Tune (7B)</div>
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                    <div className="flex justify-between"><span>VRAM Required</span><span className="text-white font-medium">80 GB</span></div>
+                    <div className="flex justify-between"><span>GPU Type</span><span className="text-white font-medium">A100 80GB / H100</span></div>
+                    <div className="flex justify-between"><span>Est. Train Time</span><span className="text-white font-medium">{Math.max(3, Math.round(totalSamples / 1000))}–{Math.max(6, Math.round(totalSamples / 500))} hrs</span></div>
+                    <div className="flex justify-between"><span>Memory</span><span className="text-white font-medium">~60 GB</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="p-3 rounded-lg bg-gradient-to-br from-orange-500/10 to-red-500/10 border border-orange-500/20">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs text-orange-300 font-semibold">Lambda Labs Cloud GPU</div>
+                    <a href="https://lambdalabs.com/service/gpu-cloud" target="_blank" rel="noopener noreferrer" className="text-[10px] text-muted-foreground hover:text-orange-300 flex items-center gap-1">
+                      Pricing <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                    <div className="flex justify-between"><span>A100 40GB (QLoRA 7B)</span><span className="text-white font-medium">~$1.10/hr</span></div>
+                    <div className="flex justify-between"><span>A100 80GB (Full FT)</span><span className="text-white font-medium">~$1.75/hr</span></div>
+                    <div className="flex justify-between"><span>H100 80GB (Fastest)</span><span className="text-white font-medium">~$2.49/hr</span></div>
+                    <div className="flex justify-between border-t border-white/10 pt-1.5 mt-1">
+                      <span className="text-orange-300">Est. cost ({totalSamples.toLocaleString()} samples)</span>
+                      <span className="text-orange-300 font-semibold">${(Math.max(1, Math.round(totalSamples / 3000)) * 1.10).toFixed(2)}–${(Math.max(4, Math.round(totalSamples / 1000)) * 1.75).toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-gradient-to-br from-violet-500/10 to-indigo-500/10 border border-violet-500/20">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs text-violet-300 font-semibold">Together AI Fine-Tuning</div>
+                    <a href="https://www.together.ai/pricing" target="_blank" rel="noopener noreferrer" className="text-[10px] text-muted-foreground hover:text-violet-300 flex items-center gap-1">
+                      Pricing <ExternalLink className="w-2.5 h-2.5" />
+                    </a>
+                  </div>
+                  <div className="space-y-1.5 text-xs text-muted-foreground">
+                    <div className="flex justify-between"><span>7B model fine-tune</span><span className="text-white font-medium">~$0.30/M tokens</span></div>
+                    <div className="flex justify-between"><span>13B model fine-tune</span><span className="text-white font-medium">~$0.60/M tokens</span></div>
+                    <div className="flex justify-between"><span>Hosted API included</span><span className="text-white font-medium">Yes</span></div>
+                    <div className="flex justify-between border-t border-white/10 pt-1.5 mt-1">
+                      <span className="text-violet-300">Est. cost ({totalSamples.toLocaleString()} samples)</span>
+                      <span className="text-violet-300 font-semibold">${(totalSamples * 500 / 1000000 * 0.30).toFixed(2)}–${(totalSamples * 500 / 1000000 * 0.60).toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-white/5 border border-white/10">
+                <p className="text-[11px] text-muted-foreground">
+                  Estimates based on {totalSamples.toLocaleString()} training samples, 3 epochs, QLoRA (4-bit) unless noted. Actual costs vary with sequence length, batch size, and provider availability. Together AI pricing is per-token (managed fine-tune); Lambda/RunPod pricing is per GPU-hour (self-managed).
+                </p>
+              </div>
             </div>
           </div>
         )}
