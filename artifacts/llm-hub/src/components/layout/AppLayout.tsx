@@ -29,8 +29,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/databases", label: "Databases", icon: HardDrive },
     { href: "/pubmed", label: "PubMed", icon: BookOpen },
     { href: "/pipeline", label: "Pipeline", icon: Beaker },
-    { href: "/research-pipeline", label: "Research", icon: FlaskConical },
     { href: "/platform-api", label: "Platform API", icon: Key },
+    { href: "/research-pipeline", label: "Research", icon: FlaskConical },
     { href: "/monitor", label: "Monitor", icon: BarChart3 },
     { href: "/admin", label: "Admin", icon: Shield },
   ];
@@ -59,7 +59,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </h1>
         </div>
 
-        <nav className="hidden md:flex items-center gap-1">
+        <nav className="hidden md:flex items-center gap-1 overflow-x-auto scrollbar-hide max-w-[calc(100vw-320px)]">
           {navItems.map((item) => {
             const isActive = location === item.href;
             return (
