@@ -575,6 +575,73 @@ router.get("/pubmed-ent/article/:pmid", (req, res) => {
   res.json({ ...article, category: categorizeArticle(article) });
 });
 
+router.post("/pubmed-ent/export-articles", (req, res) => {
+  try {
+    const { pmids, format } = req.body as { pmids?: string[]; format?: string };
+    const exportFormat = format || "jsonl";
+
+    let articlesToExport: any[];
+    if (pmids && pmids.length > 0) {
+      articlesToExport = pmids
+        .map((id) => storedArticles.get(id))
+        .filter(Boolean) as any[];
+    } else {
+      articlesToExport = Array.from(storedArticles.values());
+    }
+
+    if (articlesToExport.length === 0) {
+      return res.status(404).json({ error: "No articles found for export" });
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+
+    if (exportFormat === "csv") {
+      res.setHeader("Content-Type", "text/csv");
+      res.setHeader("Content-Disposition", `attachment; filename="pubmed-articles-${timestamp}.csv"`);
+      res.write("PMID,Title,Authors,Journal,PubDate,Category,DOI,AbstractLength,MeSH Terms\n");
+      for (const a of articlesToExport) {
+        const cat = categorizeArticle(a);
+        const csvRow = [
+          a.pmid,
+          `"${a.title.replace(/"/g, '""')}"`,
+          `"${a.authors.join("; ").replace(/"/g, '""')}"`,
+          `"${a.journal.replace(/"/g, '""')}"`,
+          a.pubDate,
+          cat,
+          a.doi || "",
+          a.abstract.length,
+          `"${a.meshTerms.join("; ").replace(/"/g, '""')}"`,
+        ].join(",");
+        res.write(csvRow + "\n");
+      }
+      res.end();
+    } else {
+      res.setHeader("Content-Type", "application/x-ndjson");
+      res.setHeader("Content-Disposition", `attachment; filename="pubmed-articles-${timestamp}.jsonl"`);
+      for (const a of articlesToExport) {
+        const line = JSON.stringify({
+          pmid: a.pmid,
+          title: a.title,
+          authors: a.authors,
+          journal: a.journal,
+          pubDate: a.pubDate,
+          category: categorizeArticle(a),
+          abstract: a.abstract,
+          meshTerms: a.meshTerms,
+          keywords: a.keywords,
+          doi: a.doi,
+        });
+        res.write(line + "\n");
+      }
+      res.end();
+    }
+
+    console.log(`[pubmed-export] Exported ${articlesToExport.length} articles as ${exportFormat}`);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post("/pubmed-ent/generate-samples/:pmid", async (req, res) => {
   try {
     const article = storedArticles.get(req.params.pmid);

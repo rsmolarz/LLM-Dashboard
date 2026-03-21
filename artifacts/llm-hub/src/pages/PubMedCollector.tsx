@@ -21,6 +21,9 @@ import {
   PowerOff,
   FlaskConical,
   AlertTriangle,
+  Download,
+  CheckSquare,
+  Square,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -117,6 +120,56 @@ export default function PubMedCollector() {
   const [articleSortBy, setArticleSortBy] = useState("date");
   const [articleSortDir, setArticleSortDir] = useState("desc");
   const [expandedArticle, setExpandedArticle] = useState<string | null>(null);
+  const [selectedPmids, setSelectedPmids] = useState<Set<string>>(new Set());
+  const [exportFormat, setExportFormat] = useState<"jsonl" | "csv">("jsonl");
+  const [exporting, setExporting] = useState(false);
+
+  const toggleSelect = (pmid: string) => {
+    setSelectedPmids((prev) => {
+      const next = new Set(prev);
+      if (next.has(pmid)) next.delete(pmid);
+      else next.add(pmid);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (!articlesData) return;
+    const pagePmids = articlesData.articles.map((a) => a.pmid);
+    const allSelected = pagePmids.every((id) => selectedPmids.has(id));
+    setSelectedPmids((prev) => {
+      const next = new Set(prev);
+      pagePmids.forEach((id) => (allSelected ? next.delete(id) : next.add(id)));
+      return next;
+    });
+  };
+
+  const exportSelected = async () => {
+    setExporting(true);
+    try {
+      const res = await fetch(`${API_BASE}/pubmed-ent/export-articles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pmids: selectedPmids.size > 0 ? Array.from(selectedPmids) : undefined,
+          format: exportFormat,
+        }),
+      });
+      if (res.ok) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const ext = exportFormat === "csv" ? "csv" : "jsonl";
+        a.href = url;
+        a.download = `pubmed-articles-${selectedPmids.size > 0 ? `${selectedPmids.size}-selected` : "all"}.${ext}`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    } catch (e) {
+      console.error("Export failed:", e);
+    }
+    setExporting(false);
+  };
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -511,6 +564,14 @@ export default function PubMedCollector() {
               >
                 <RefreshCw className="w-3.5 h-3.5" />
               </button>
+              <button
+                onClick={exportSelected}
+                disabled={exporting}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs text-muted-foreground hover:text-white hover:bg-white/5 transition-all border border-white/10"
+                title={selectedPmids.size > 0 ? `Export ${selectedPmids.size} selected` : "Export all articles"}
+              >
+                {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              </button>
             </div>
           </div>
 
@@ -549,6 +610,34 @@ export default function PubMedCollector() {
             </div>
           </div>
 
+          {selectedPmids.size > 0 && (
+            <div className="flex items-center justify-between p-3 rounded-lg bg-primary/10 border border-primary/20">
+              <div className="flex items-center gap-2 text-sm text-primary">
+                <CheckSquare className="w-4 h-4" />
+                <span className="font-medium">{selectedPmids.size} article{selectedPmids.size !== 1 ? "s" : ""} selected</span>
+                <button onClick={() => setSelectedPmids(new Set())} className="text-xs text-muted-foreground hover:text-white ml-2">Clear</button>
+              </div>
+              <div className="flex items-center gap-2">
+                <select
+                  value={exportFormat}
+                  onChange={(e) => setExportFormat(e.target.value as "jsonl" | "csv")}
+                  className="px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white focus:outline-none"
+                >
+                  <option value="jsonl">JSONL</option>
+                  <option value="csv">CSV</option>
+                </select>
+                <button
+                  onClick={exportSelected}
+                  disabled={exporting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/20 text-primary border border-primary/30 hover:bg-primary/30 disabled:opacity-50 transition-all"
+                >
+                  {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  Export Selected
+                </button>
+              </div>
+            </div>
+          )}
+
           {!articlesData || articlesData.articles.length === 0 ? (
             <div className="text-center py-16">
               <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-30" />
@@ -560,7 +649,14 @@ export default function PubMedCollector() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-white/[0.03] border-b border-white/10">
-                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground w-[40%]">Title</th>
+                    <th className="w-10 px-3 py-2.5">
+                      <button onClick={toggleSelectAll} className="text-muted-foreground hover:text-white transition-colors">
+                        {articlesData.articles.length > 0 && articlesData.articles.every((a) => selectedPmids.has(a.pmid))
+                          ? <CheckSquare className="w-4 h-4 text-primary" />
+                          : <Square className="w-4 h-4" />}
+                      </button>
+                    </th>
+                    <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground w-[40%]">Title</th>
                     <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground hidden lg:table-cell">Journal</th>
                     <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground w-20">Year</th>
                     <th className="text-left px-3 py-2.5 text-xs font-medium text-muted-foreground">Category</th>
@@ -573,9 +669,22 @@ export default function PubMedCollector() {
                       <tr
                         key={article.pmid}
                         onClick={() => setExpandedArticle(expandedArticle === article.pmid ? null : article.pmid)}
-                        className="border-b border-white/5 hover:bg-white/[0.03] cursor-pointer transition-all"
+                        className={cn(
+                          "border-b border-white/5 hover:bg-white/[0.03] cursor-pointer transition-all",
+                          selectedPmids.has(article.pmid) && "bg-primary/5"
+                        )}
                       >
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-3">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleSelect(article.pmid); }}
+                            className="text-muted-foreground hover:text-white transition-colors"
+                          >
+                            {selectedPmids.has(article.pmid)
+                              ? <CheckSquare className="w-4 h-4 text-primary" />
+                              : <Square className="w-4 h-4" />}
+                          </button>
+                        </td>
+                        <td className="px-3 py-3">
                           <div className="text-white text-xs font-medium line-clamp-2">{article.title}</div>
                           <div className="text-[10px] text-muted-foreground mt-0.5">{article.authors}</div>
                         </td>
@@ -615,7 +724,7 @@ export default function PubMedCollector() {
                       </tr>
                       {expandedArticle === article.pmid && (
                         <tr key={`${article.pmid}-detail`} className="bg-white/[0.02]">
-                          <td colSpan={5} className="px-4 py-3">
+                          <td colSpan={6} className="px-4 py-3">
                             <div className="space-y-2">
                               {article.abstractPreview && (
                                 <div>
