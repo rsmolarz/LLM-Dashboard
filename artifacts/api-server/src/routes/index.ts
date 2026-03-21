@@ -29,6 +29,7 @@ import socialMediaRouter from "./social-media";
 import hedgeFundRouter from "./hedge-fund";
 import dataAgentRouter from "./data-agent";
 import voiceAgentRouter from "./voice-agent";
+import pubmedEntCollectorRouter from "./pubmed-ent-collector";
 
 const router: IRouter = Router();
 
@@ -62,5 +63,6 @@ router.use(socialMediaRouter);
 router.use(hedgeFundRouter);
 router.use(dataAgentRouter);
 router.use(voiceAgentRouter);
+router.use(pubmedEntCollectorRouter);
 
 export default router;
