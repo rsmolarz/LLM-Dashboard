@@ -32,6 +32,13 @@ import voiceAgentRouter from "./voice-agent";
 import pubmedEntCollectorRouter from "./pubmed-ent-collector";
 import advancedTrainingRouter from "./advanced-training-pipeline";
 import hedgeFundTrainingRouter from "./hedge-fund-training";
+import signalsRouter from "./signals";
+import dashboardKpisRouter from "./dashboard-kpis";
+import hfAnalyticsRouter from "./hf-analytics";
+import agentsStatusRouter from "./agents-status";
+import marketProxyRouter from "./market-proxy";
+import codeGuardianRouter from "./code-guardian";
+import socialMediaPlatformRouter from "./social-media-platform";
 
 const router: IRouter = Router();
 
@@ -68,5 +75,12 @@ router.use(voiceAgentRouter);
 router.use(pubmedEntCollectorRouter);
 router.use(advancedTrainingRouter);
 router.use(hedgeFundTrainingRouter);
+router.use(signalsRouter);
+router.use(dashboardKpisRouter);
+router.use(hfAnalyticsRouter);
+router.use(agentsStatusRouter);
+router.use(marketProxyRouter);
+router.use(codeGuardianRouter);
+router.use(socialMediaPlatformRouter);
 
 export default router;

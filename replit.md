@@ -110,6 +110,18 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **Model Injection**: Creates `-hf-trained` model variants on VPS (e.g., deepseek-r1-8b-hf-trained)
 - **Hedge Fund AI profile**: deepseek-r1:8b base, temperature 0.4, seeded on startup
 
+## Platform API — Alpha Factory Integration
+- **API Key**: Stored as `ALPHA_FACTORY_API_KEY` env var
+- **Market Proxy**: Proxies to `https://marketinefficiencyagents.com` (env `MARKET_AGENTS_URL`)
+- **Route files**: `signals.ts`, `dashboard-kpis.ts`, `hf-analytics.ts`, `agents-status.ts`, `market-proxy.ts`, `code-guardian.ts`, `social-media-platform.ts`
+- **Signals** (`/api/signals`): Trading signal CRUD with filtering by agent/type/status/severity/exchange/asset
+- **Dashboard** (`/api/dashboard/*`): KPIs (PnL, Sharpe, Sortino, win rate, drawdown), PnL series, decision breakdown, spread distribution, exchange performance
+- **HF Analytics** (`/api/hf/*`): System overview, risk metrics (VaR, CVaR, Kelly, Calmar), performance attribution, signal intelligence (consensus scoring, false positive rate, SNR), market regime detection, execution analytics, agent intelligence (correlation matrix, ensemble confidence)
+- **Agents** (`/api/agents/*`): Agent status cards (6 agents: market-inefficiency, distressed-asset, spread-arbitrage, sentiment-analyzer, volatility-monitor, code-guardian), activity logs
+- **Market Proxy** (`/api/market/*`): Proxied from marketinefficiencyagents.com — health, live signals (200+), computed KPIs, agent breakdown, confidence distribution, timeline, deep analytics
+- **Code Guardian** (`/api/code-guardian/*`): Security monitoring — health, vulnerability feed (CRUD), upgrade queue (CRUD), broadcast log (CRUD)
+- **Social Media Platform** (`/api/social-media/*`): Platform management (Twitter/X, LinkedIn, Instagram, YouTube), cross-platform KPIs, daily metrics, timeline, top posts, sync trigger
+
 ## AI Databases & Resources
 - `/databases` page with 40 resources across 9 categories
 - Categories: General Purpose (7), Cloud Platforms (3), Medical AI (4), Laryngoscopy/ENT (11), Otoscopy/Ear (3), Voice/Laryngology (3), Search & Repositories (5), Pro Tips (4)
