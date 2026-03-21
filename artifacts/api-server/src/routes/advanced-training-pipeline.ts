@@ -80,14 +80,24 @@ function generateFullTextSamples(text: string, title: string, pmcid: string): Ar
 
   const textLower = text.toLowerCase();
   let category = "general_ent";
-  if (textLower.includes("laryngo") || textLower.includes("vocal")) category = "laryngology";
-  else if (textLower.includes("otitis") || textLower.includes("hearing") || textLower.includes("cochle")) category = "otology";
+  if (textLower.includes("artificial intelligence") || textLower.includes("deep learning") || textLower.includes("machine learning") || textLower.includes("neural network")) category = "ai_ent";
+  else if (textLower.includes("pediatric") || textLower.includes("child") || textLower.includes("neonat")) category = "pediatric_ent";
+  else if (textLower.includes("skull base") || textLower.includes("pituitary")) category = "skull_base";
+  else if (textLower.includes("salivary") || textLower.includes("parotid")) category = "salivary_gland";
+  else if (textLower.includes("tracheostom") || textLower.includes("subglottic stenosis") || textLower.includes("airway obstruction")) category = "airway";
+  else if (textLower.includes("rhinoplast") || textLower.includes("facial plastic") || textLower.includes("septoplast")) category = "facial_plastics";
+  else if (textLower.includes("allergic rhinit") || textLower.includes("immunotherapy")) category = "allergy";
+  else if (textLower.includes("voice disorder") || textLower.includes("dysphon") || textLower.includes("spasmodic")) category = "voice_disorders";
+  else if (textLower.includes("vertigo") || textLower.includes("meniere") || textLower.includes("vestibular")) category = "vestibular";
+  else if (textLower.includes("laryngo") || textLower.includes("vocal")) category = "laryngology";
+  else if (textLower.includes("otitis") || textLower.includes("hearing") || textLower.includes("cochle") || textLower.includes("cholesteatoma")) category = "otology";
   else if (textLower.includes("sinus") || textLower.includes("nasal") || textLower.includes("rhinit")) category = "rhinology";
   else if (textLower.includes("cancer") || textLower.includes("carcinoma") || textLower.includes("tumor")) category = "head_neck_oncology";
-  else if (textLower.includes("artificial intelligence") || textLower.includes("deep learning") || textLower.includes("machine learning")) category = "ai_ent";
-  else if (textLower.includes("sleep apnea")) category = "sleep_medicine";
-  else if (textLower.includes("thyroid")) category = "thyroid";
-  else if (textLower.includes("voice") || textLower.includes("dysphon")) category = "voice_disorders";
+  else if (textLower.includes("sleep apnea") || textLower.includes("snoring")) category = "sleep_medicine";
+  else if (textLower.includes("swallow") || textLower.includes("dysphag")) category = "dysphagia";
+  else if (textLower.includes("thyroid") || textLower.includes("parathyroid")) category = "thyroid";
+  else if (textLower.includes("tonsil") || textLower.includes("pharyn")) category = "pharyngology";
+  else if (textLower.includes("endoscop")) category = "endoscopy";
 
   const sections = text.split(/(?:INTRODUCTION|METHODS|RESULTS|DISCUSSION|CONCLUSION)/i).filter(s => s.trim().length > 100);
 
@@ -148,6 +158,21 @@ router.post("/advanced-training/pmc-collect", async (req, res) => {
     "vocal cord paralysis diagnosis",
     "rhinosinusitis AI treatment",
     "endoscopy AI real-time detection",
+    "pediatric otolaryngology management",
+    "tonsillectomy adenoidectomy outcomes",
+    "skull base endoscopic surgery",
+    "parotid gland tumor surgery",
+    "salivary gland disease management",
+    "tracheostomy outcomes pediatric",
+    "subglottic stenosis treatment",
+    "allergic rhinitis immunotherapy",
+    "vestibular disorders rehabilitation",
+    "Meniere disease treatment",
+    "facial plastic surgery reconstruction",
+    "septoplasty outcomes quality",
+    "laryngopharyngeal reflux management",
+    "dysphagia rehabilitation speech",
+    "cholesteatoma surgery techniques",
   ];
 
   res.json({ message: "PMC full-text collection started", queries: queries.length });
@@ -251,13 +276,24 @@ function generateTrialSamples(trial: any): Array<{ input: string; output: string
 
   let category = "general_ent";
   const text = `${title} ${summary} ${conditionList.join(" ")}`.toLowerCase();
-  if (text.includes("laryngo") || text.includes("vocal") || text.includes("voice")) category = "laryngology";
-  else if (text.includes("hear") || text.includes("cochle") || text.includes("otitis")) category = "otology";
+  if (text.includes("artificial intelligence") || text.includes("deep learning") || text.includes("machine learning")) category = "ai_ent";
+  else if (text.includes("pediatric") || text.includes("child")) category = "pediatric_ent";
+  else if (text.includes("skull base") || text.includes("pituitary")) category = "skull_base";
+  else if (text.includes("salivary") || text.includes("parotid")) category = "salivary_gland";
+  else if (text.includes("tracheostom") || text.includes("subglottic") || text.includes("airway")) category = "airway";
+  else if (text.includes("rhinoplast") || text.includes("facial plastic") || text.includes("septoplast")) category = "facial_plastics";
+  else if (text.includes("allergic rhinit") || text.includes("immunotherapy")) category = "allergy";
+  else if (text.includes("voice disorder") || text.includes("dysphoni") || text.includes("spasmodic")) category = "voice_disorders";
+  else if (text.includes("vertigo") || text.includes("meniere") || text.includes("vestibular")) category = "vestibular";
+  else if (text.includes("laryngo") || text.includes("vocal") || text.includes("voice")) category = "laryngology";
+  else if (text.includes("hear") || text.includes("cochle") || text.includes("otitis") || text.includes("cholesteatoma")) category = "otology";
   else if (text.includes("sinus") || text.includes("nasal") || text.includes("rhinit")) category = "rhinology";
   else if (text.includes("cancer") || text.includes("carcinoma") || text.includes("neoplasm")) category = "head_neck_oncology";
-  else if (text.includes("sleep apnea") || text.includes("osa")) category = "sleep_medicine";
-  else if (text.includes("thyroid")) category = "thyroid";
+  else if (text.includes("sleep apnea") || text.includes("osa") || text.includes("snoring")) category = "sleep_medicine";
   else if (text.includes("dysphagia") || text.includes("swallow")) category = "dysphagia";
+  else if (text.includes("thyroid") || text.includes("parathyroid")) category = "thyroid";
+  else if (text.includes("tonsil") || text.includes("pharyn")) category = "pharyngology";
+  else if (text.includes("endoscop")) category = "endoscopy";
 
   samples.push({
     input: `What is the clinical trial "${title}" investigating and what are its key details?`,
@@ -295,6 +331,26 @@ router.post("/advanced-training/clinicaltrials-collect", async (req, res) => {
     "rhinoplasty",
     "dysphagia",
     "laryngoscopy",
+    "pediatric otolaryngology",
+    "adenoidectomy",
+    "skull base surgery",
+    "parotid tumor",
+    "salivary gland",
+    "tracheostomy",
+    "subglottic stenosis",
+    "allergic rhinitis",
+    "immunotherapy rhinitis",
+    "vestibular disorder",
+    "Meniere disease",
+    "vertigo",
+    "facial reconstruction",
+    "septoplasty",
+    "cholesteatoma",
+    "sensorineural hearing loss",
+    "laryngopharyngeal reflux",
+    "spasmodic dysphonia",
+    "parathyroid surgery",
+    "endoscopic sinus surgery",
   ];
 
   res.json({ message: "ClinicalTrials.gov collection started", queries: queries.length });

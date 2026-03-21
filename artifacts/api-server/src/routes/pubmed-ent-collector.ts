@@ -34,6 +34,31 @@ const MESH_QUERIES = [
   '"neural networks, computer"[MeSH Terms] AND "otoscopy"[All Fields]',
   '"voice disorders"[MeSH Terms] AND "artificial intelligence"[MeSH Terms]',
   '"thyroid nodule"[MeSH Terms] AND "deep learning"[All Fields]',
+  '"pediatrics"[MeSH Terms] AND "otolaryngology"[MeSH Terms]',
+  '"otitis media"[MeSH Terms] AND "child"[MeSH Terms]',
+  '"adenoidectomy"[MeSH Terms]',
+  '"tonsillectomy"[MeSH Terms]',
+  '"rhinoplasty"[MeSH Terms]',
+  '"facial nerve"[MeSH Terms] AND "surgery"[MeSH Terms]',
+  '"salivary gland diseases"[MeSH Terms]',
+  '"parotid neoplasms"[MeSH Terms]',
+  '"skull base"[MeSH Terms] AND "surgery"[MeSH Terms]',
+  '"skull base neoplasms"[MeSH Terms]',
+  '"airway management"[MeSH Terms] AND "otolaryngology"[MeSH Terms]',
+  '"tracheostomy"[MeSH Terms]',
+  '"laryngotracheal stenosis"[MeSH Terms]',
+  '"hypersensitivity"[MeSH Terms] AND "rhinitis"[MeSH Terms]',
+  '"immunotherapy"[MeSH Terms] AND "rhinitis, allergic"[MeSH Terms]',
+  '"dysphonia"[MeSH Terms]',
+  '"vocal cord paralysis"[MeSH Terms]',
+  '"laryngopharyngeal reflux"[MeSH Terms]',
+  '"vertigo"[MeSH Terms]',
+  '"meniere disease"[MeSH Terms]',
+  '"vestibular diseases"[MeSH Terms]',
+  '"cholesteatoma"[MeSH Terms]',
+  '"sensorineural hearing loss"[MeSH Terms]',
+  '"endoscopy"[MeSH Terms] AND "paranasal sinuses"[MeSH Terms]',
+  '"balloon sinuplasty"[All Fields]',
 ];
 
 const KEYWORD_QUERIES = [
@@ -47,6 +72,32 @@ const KEYWORD_QUERIES = [
   "sinonasal imaging AI",
   "tympanic membrane image analysis",
   "obstructive sleep apnea prediction model",
+  "pediatric otolaryngology tonsillectomy outcomes",
+  "pediatric hearing screening",
+  "congenital hearing loss genetics",
+  "facial plastic surgery outcomes",
+  "septoplasty outcomes",
+  "parotid gland tumor management",
+  "submandibular gland sialolithiasis",
+  "skull base surgery endoscopic approach",
+  "anterior skull base reconstruction",
+  "subglottic stenosis management",
+  "tracheostomy decannulation",
+  "pediatric airway obstruction",
+  "allergic rhinitis immunotherapy",
+  "sublingual immunotherapy ENT",
+  "voice therapy dysphonia",
+  "spasmodic dysphonia treatment",
+  "laryngopharyngeal reflux diagnosis",
+  "benign paroxysmal positional vertigo treatment",
+  "vestibular schwannoma management",
+  "cholesteatoma surgery outcomes",
+  "endoscopic sinus surgery outcomes",
+  "balloon sinuplasty vs FESS",
+  "dysphagia evaluation fiberoptic",
+  "modified barium swallow ENT",
+  "thyroid cancer surgical management",
+  "parathyroid surgery outcomes",
 ];
 
 interface PubMedArticle {
@@ -181,14 +232,25 @@ function extractTag(xml: string, tag: string): string | null {
 function categorizeArticle(article: PubMedArticle): string {
   const text = `${article.title} ${article.abstract} ${article.meshTerms.join(" ")} ${article.keywords.join(" ")}`.toLowerCase();
 
-  if (text.includes("artificial intelligence") || text.includes("machine learning") || text.includes("deep learning") || text.includes("neural network")) return "ai_ent";
-  if (text.includes("laryngo") || text.includes("vocal") || text.includes("voice") || text.includes("glott")) return "laryngology";
-  if (text.includes("otitis") || text.includes("hearing") || text.includes("cochle") || text.includes("tympan") || text.includes("ear")) return "otology";
-  if (text.includes("sinus") || text.includes("rhinit") || text.includes("nasal") || text.includes("nose") || text.includes("rhinol")) return "rhinology";
-  if (text.includes("cancer") || text.includes("neoplas") || text.includes("tumor") || text.includes("carcinoma")) return "head_neck_oncology";
-  if (text.includes("sleep apnea") || text.includes("snoring") || text.includes("obstructive sleep")) return "sleep_medicine";
-  if (text.includes("swallow") || text.includes("deglutit") || text.includes("dysphag")) return "dysphagia";
-  if (text.includes("thyroid") || text.includes("parathyroid")) return "thyroid";
+  if (text.includes("artificial intelligence") || text.includes("machine learning") || text.includes("deep learning") || text.includes("neural network") || text.includes("large language model")) return "ai_ent";
+  if (text.includes("pediatric") || text.includes("child") || text.includes("neonat") || text.includes("infant")) {
+    if (text.includes("otolaryngol") || text.includes("tonsil") || text.includes("adenoid") || text.includes("ear tube") || text.includes("myringotomy") || text.includes("hearing")) return "pediatric_ent";
+  }
+  if (text.includes("skull base") || text.includes("anterior cranial") || text.includes("pituitary") || text.includes("cerebrospinal fluid leak")) return "skull_base";
+  if (text.includes("salivary") || text.includes("parotid") || text.includes("submandibular gland") || text.includes("sialolithiasis") || text.includes("sialadenitis")) return "salivary_gland";
+  if (text.includes("tracheostom") || text.includes("subglottic stenosis") || text.includes("laryngotracheal") || text.includes("airway obstruction") || text.includes("stridor")) return "airway";
+  if (text.includes("rhinoplast") || text.includes("facial plastic") || text.includes("septoplast") || text.includes("blepharoplast") || text.includes("facelift") || text.includes("facial reconstruction")) return "facial_plastics";
+  if (text.includes("allergic rhinit") || text.includes("immunotherapy") && text.includes("rhinit") || text.includes("sublingual immunotherapy") || text.includes("allergy") && text.includes("nasal")) return "allergy";
+  if (text.includes("voice disorder") || text.includes("dysphoni") || text.includes("spasmodic dysphonia") || text.includes("voice therapy") || text.includes("vocal hygiene")) return "voice_disorders";
+  if (text.includes("vertigo") || text.includes("meniere") || text.includes("vestibular") || text.includes("benign paroxysmal") || text.includes("bppv")) return "vestibular";
+  if (text.includes("laryngopharyngeal reflux") || text.includes("lpr") && text.includes("reflux")) return "laryngopharyngeal_reflux";
+  if (text.includes("laryngo") || text.includes("vocal cord") || text.includes("vocal fold") || text.includes("glott")) return "laryngology";
+  if (text.includes("otitis") || text.includes("hearing") || text.includes("cochle") || text.includes("tympan") || text.includes("cholesteatoma") || text.includes("sensorineural")) return "otology";
+  if (text.includes("sinus") || text.includes("rhinit") || text.includes("nasal") || text.includes("nose") || text.includes("rhinol") || text.includes("sinuplasty")) return "rhinology";
+  if (text.includes("cancer") || text.includes("neoplas") || text.includes("tumor") || text.includes("carcinoma") || text.includes("squamous cell")) return "head_neck_oncology";
+  if (text.includes("sleep apnea") || text.includes("snoring") || text.includes("obstructive sleep") || text.includes("uvulopalatopharyngoplasty")) return "sleep_medicine";
+  if (text.includes("swallow") || text.includes("deglutit") || text.includes("dysphag") || text.includes("modified barium") || text.includes("fiberoptic endoscopic evaluation")) return "dysphagia";
+  if (text.includes("thyroid") || text.includes("parathyroid") || text.includes("thyroidectom")) return "thyroid";
   if (text.includes("tonsil") || text.includes("adenoid") || text.includes("pharyn")) return "pharyngology";
   if (text.includes("endoscop")) return "endoscopy";
   return "general_ent";
