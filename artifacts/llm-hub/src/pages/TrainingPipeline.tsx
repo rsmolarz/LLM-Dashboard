@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Beaker, Database, FlaskConical, BookOpen, Cpu, Play, RefreshCw, CheckCircle, AlertCircle, Loader2, ChevronRight, Zap, Globe, FileText, Download, ExternalLink, Star, Terminal, Copy, Check } from "lucide-react";
+import { Beaker, Database, FlaskConical, BookOpen, Cpu, Play, RefreshCw, CheckCircle, AlertCircle, Loader2, ChevronRight, Zap, Globe, FileText, Download, ExternalLink, Star, Terminal, Copy, Check, Search } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -74,6 +74,7 @@ export default function TrainingPipeline() {
   const [showFineTuningGuide, setShowFineTuningGuide] = useState(false);
   const [guideTab, setGuideTab] = useState<"axolotl" | "huggingface">("axolotl");
   const [copiedBlock, setCopiedBlock] = useState<string | null>(null);
+  const [showRagGuide, setShowRagGuide] = useState(false);
 
   const copyToClipboard = (text: string, blockId: string) => {
     navigator.clipboard.writeText(text);
@@ -871,6 +872,344 @@ ssh root@72.60.167.64 \\
                 <p className="text-[11px] text-muted-foreground">
                   Estimates based on {totalSamples.toLocaleString()} training samples, 3 epochs, QLoRA (4-bit) unless noted. Actual costs vary with sequence length, batch size, and provider availability. Together AI pricing is per-token (managed fine-tune); Lambda/RunPod pricing is per GPU-hour (self-managed).
                 </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="glass-panel rounded-xl p-5 border border-white/5">
+        <button
+          onClick={() => setShowRagGuide(prev => !prev)}
+          className="w-full flex items-center justify-between"
+        >
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Search className="w-5 h-5 text-teal-400" /> RAG Setup Guide
+          </h2>
+          <ChevronRight className={`w-5 h-5 text-muted-foreground transition-transform ${showRagGuide ? "rotate-90" : ""}`} />
+        </button>
+
+        {showRagGuide && (
+          <div className="mt-4 space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Use your {totalSamples.toLocaleString()} collected ENT articles as a retrieval-augmented generation (RAG) knowledge base with LlamaIndex. This lets your LLM cite real medical literature when answering questions — no fine-tuning required.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="p-3 rounded-lg bg-teal-500/10 border border-teal-500/20">
+                <div className="text-xs text-teal-300 font-semibold mb-1.5">1. Index</div>
+                <p className="text-[11px] text-muted-foreground">Export your training data as JSONL, parse into documents, chunk, and embed into a vector store using LlamaIndex.</p>
+              </div>
+              <div className="p-3 rounded-lg bg-teal-500/10 border border-teal-500/20">
+                <div className="text-xs text-teal-300 font-semibold mb-1.5">2. Query</div>
+                <p className="text-[11px] text-muted-foreground">When a user asks a question, retrieve the top-k most relevant chunks from the vector index using semantic similarity.</p>
+              </div>
+              <div className="p-3 rounded-lg bg-teal-500/10 border border-teal-500/20">
+                <div className="text-xs text-teal-300 font-semibold mb-1.5">3. Generate</div>
+                <p className="text-[11px] text-muted-foreground">Pass retrieved context + the question to your Ollama model. The LLM answers grounded in real ENT literature with citations.</p>
+              </div>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-teal-400">Step 1: Install Dependencies</span>
+                <button onClick={() => copyToClipboard("pip install llama-index llama-index-llms-ollama llama-index-embeddings-huggingface chromadb", "rag1")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                  {copiedBlock === "rag1" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "rag1" ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5">
+{`pip install llama-index llama-index-llms-ollama \\
+  llama-index-embeddings-huggingface chromadb`}
+              </pre>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-teal-400">Step 2: Build the Vector Index (build_rag_index.py)</span>
+                <button onClick={() => copyToClipboard(`import json
+from llama_index.core import Document, VectorStoreIndex, Settings, StorageContext
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.vector_stores.chroma import ChromaVectorStore
+import chromadb
+
+# === Configuration ===
+JSONL_PATH = "./training-data.jsonl"
+PERSIST_DIR = "./ent_rag_index"
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+
+# Use a medical-optimized embedding model
+Settings.embed_model = HuggingFaceEmbedding(model_name=EMBED_MODEL)
+
+# Load your exported JSONL training data as documents
+documents = []
+with open(JSONL_PATH, "r") as f:
+    for line in f:
+        sample = json.loads(line)
+        msgs = sample["messages"]
+        meta = sample.get("metadata", {})
+
+        # Combine the Q&A pair into a single document
+        question = next((m["content"] for m in msgs if m["role"] == "user"), "")
+        answer = next((m["content"] for m in msgs if m["role"] == "assistant"), "")
+        system = next((m["content"] for m in msgs if m["role"] == "system"), "")
+
+        doc_text = f"Question: {question}\\nAnswer: {answer}"
+        if system:
+            doc_text = f"Context: {system}\\n{doc_text}"
+
+        documents.append(Document(
+            text=doc_text,
+            metadata={
+                "source": meta.get("source", "unknown"),
+                "category": meta.get("category", "general"),
+                "quality": meta.get("quality", 3),
+            }
+        ))
+
+print(f"Loaded {len(documents)} documents from JSONL")
+
+# Chunk documents for better retrieval
+splitter = SentenceSplitter(chunk_size=512, chunk_overlap=50)
+
+# Create ChromaDB vector store for persistence
+chroma_client = chromadb.PersistentClient(path=PERSIST_DIR)
+chroma_collection = chroma_client.get_or_create_collection("ent_knowledge")
+vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+storage_context = StorageContext.from_defaults(vector_store=vector_store)
+
+# Build the index
+index = VectorStoreIndex.from_documents(
+    documents,
+    storage_context=storage_context,
+    transformations=[splitter],
+    show_progress=True,
+)
+
+print(f"Index built and persisted to {PERSIST_DIR}")
+print(f"Total chunks: {len(chroma_collection.get()['ids'])}")`, "rag2")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                  {copiedBlock === "rag2" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "rag2" ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5 max-h-[350px] overflow-y-auto">
+{`import json
+from llama_index.core import (
+    Document, VectorStoreIndex, Settings, StorageContext
+)
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.vector_stores.chroma import ChromaVectorStore
+import chromadb
+
+# === Configuration ===
+JSONL_PATH = "./training-data.jsonl"
+PERSIST_DIR = "./ent_rag_index"
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+
+# Use a medical-optimized embedding model
+Settings.embed_model = HuggingFaceEmbedding(
+    model_name=EMBED_MODEL
+)
+
+# Load your exported JSONL training data as documents
+documents = []
+with open(JSONL_PATH, "r") as f:
+    for line in f:
+        sample = json.loads(line)
+        msgs = sample["messages"]
+        meta = sample.get("metadata", {})
+
+        question = next(
+            (m["content"] for m in msgs if m["role"] == "user"), ""
+        )
+        answer = next(
+            (m["content"] for m in msgs if m["role"] == "assistant"), ""
+        )
+        system = next(
+            (m["content"] for m in msgs if m["role"] == "system"), ""
+        )
+
+        doc_text = f"Question: {question}\\nAnswer: {answer}"
+        if system:
+            doc_text = f"Context: {system}\\n{doc_text}"
+
+        documents.append(Document(
+            text=doc_text,
+            metadata={
+                "source": meta.get("source", "unknown"),
+                "category": meta.get("category", "general"),
+                "quality": meta.get("quality", 3),
+            }
+        ))
+
+print(f"Loaded {len(documents)} documents from JSONL")
+
+# Chunk documents for better retrieval
+splitter = SentenceSplitter(chunk_size=512, chunk_overlap=50)
+
+# Create ChromaDB vector store for persistence
+chroma_client = chromadb.PersistentClient(path=PERSIST_DIR)
+chroma_collection = chroma_client.get_or_create_collection(
+    "ent_knowledge"
+)
+vector_store = ChromaVectorStore(
+    chroma_collection=chroma_collection
+)
+storage_context = StorageContext.from_defaults(
+    vector_store=vector_store
+)
+
+# Build the index
+index = VectorStoreIndex.from_documents(
+    documents,
+    storage_context=storage_context,
+    transformations=[splitter],
+    show_progress=True,
+)
+
+print(f"Index built and persisted to {PERSIST_DIR}")
+print(f"Total chunks: {len(chroma_collection.get()['ids'])}")`}
+              </pre>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs font-semibold text-teal-400">Step 3: Query with Ollama RAG (query_ent_rag.py)</span>
+                <button onClick={() => copyToClipboard(`import chromadb
+from llama_index.core import VectorStoreIndex, Settings
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.llms.ollama import Ollama
+from llama_index.vector_stores.chroma import ChromaVectorStore
+
+# === Configuration ===
+PERSIST_DIR = "./ent_rag_index"
+OLLAMA_URL = "http://72.60.167.64:11434"
+MODEL = "meditron-7b-ent-trained:latest"
+
+# Setup embedding model (must match indexing step)
+Settings.embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-small-en-v1.5"
+)
+
+# Connect to your VPS Ollama instance
+Settings.llm = Ollama(
+    model=MODEL,
+    base_url=OLLAMA_URL,
+    request_timeout=300,
+    temperature=0.3,
+)
+
+# Load the persisted ChromaDB index
+chroma_client = chromadb.PersistentClient(path=PERSIST_DIR)
+chroma_collection = chroma_client.get_collection("ent_knowledge")
+vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+index = VectorStoreIndex.from_vector_store(vector_store)
+
+# Create a query engine with citation support
+query_engine = index.as_query_engine(
+    similarity_top_k=5,
+    response_mode="compact",
+)
+
+# Interactive query loop
+print("ENT RAG System Ready (type 'quit' to exit)")
+print(f"Model: {MODEL} | Index: {len(chroma_collection.get()['ids'])} chunks")
+print("-" * 60)
+
+while True:
+    question = input("\\nAsk about ENT: ")
+    if question.lower() in ("quit", "exit", "q"):
+        break
+    response = query_engine.query(question)
+    print(f"\\n{response}")
+    print("\\n--- Sources ---")
+    for node in response.source_nodes:
+        meta = node.metadata
+        print(f"  [{meta.get('source','?')}] {meta.get('category','?')} (quality: {meta.get('quality','?')}) — score: {node.score:.3f}")`, "rag3")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                  {copiedBlock === "rag3" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "rag3" ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5 max-h-[350px] overflow-y-auto">
+{`import chromadb
+from llama_index.core import VectorStoreIndex, Settings
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.llms.ollama import Ollama
+from llama_index.vector_stores.chroma import ChromaVectorStore
+
+# === Configuration ===
+PERSIST_DIR = "./ent_rag_index"
+OLLAMA_URL = "http://72.60.167.64:11434"
+MODEL = "meditron-7b-ent-trained:latest"
+
+# Setup embedding model (must match indexing step)
+Settings.embed_model = HuggingFaceEmbedding(
+    model_name="BAAI/bge-small-en-v1.5"
+)
+
+# Connect to your VPS Ollama instance
+Settings.llm = Ollama(
+    model=MODEL,
+    base_url=OLLAMA_URL,
+    request_timeout=300,
+    temperature=0.3,
+)
+
+# Load the persisted ChromaDB index
+chroma_client = chromadb.PersistentClient(path=PERSIST_DIR)
+chroma_collection = chroma_client.get_collection("ent_knowledge")
+vector_store = ChromaVectorStore(
+    chroma_collection=chroma_collection
+)
+index = VectorStoreIndex.from_vector_store(vector_store)
+
+# Create a query engine with citation support
+query_engine = index.as_query_engine(
+    similarity_top_k=5,
+    response_mode="compact",
+)
+
+# Interactive query loop
+print("ENT RAG System Ready (type 'quit' to exit)")
+print(f"Model: {MODEL} | "
+      f"Index: {len(chroma_collection.get()['ids'])} chunks")
+print("-" * 60)
+
+while True:
+    question = input("\\nAsk about ENT: ")
+    if question.lower() in ("quit", "exit", "q"):
+        break
+    response = query_engine.query(question)
+    print(f"\\n{response}")
+    print("\\n--- Sources ---")
+    for node in response.source_nodes:
+        meta = node.metadata
+        print(f"  [{meta.get('source','?')}] "
+              f"{meta.get('category','?')} "
+              f"(quality: {meta.get('quality','?')}) "
+              f"— score: {node.score:.3f}")`}
+              </pre>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="p-3 rounded-lg bg-teal-500/10 border border-teal-500/20">
+                <div className="text-xs text-teal-300 font-semibold mb-2">Why RAG + Fine-Tuning Together?</div>
+                <ul className="text-[11px] text-muted-foreground space-y-1.5">
+                  <li className="flex items-start gap-1.5"><span className="text-teal-400 mt-0.5">&#9679;</span> Fine-tuning teaches the model ENT reasoning patterns and medical terminology</li>
+                  <li className="flex items-start gap-1.5"><span className="text-teal-400 mt-0.5">&#9679;</span> RAG provides real-time access to specific articles, reducing hallucination</li>
+                  <li className="flex items-start gap-1.5"><span className="text-teal-400 mt-0.5">&#9679;</span> Combined approach gives the best clinical accuracy with source citations</li>
+                  <li className="flex items-start gap-1.5"><span className="text-teal-400 mt-0.5">&#9679;</span> Vector index can be updated without retraining the model</li>
+                </ul>
+              </div>
+              <div className="p-3 rounded-lg bg-white/5 border border-white/10">
+                <div className="text-xs text-white font-semibold mb-2">Resource Requirements</div>
+                <div className="space-y-1.5 text-[11px] text-muted-foreground">
+                  <div className="flex justify-between"><span>Embedding Model</span><span className="text-white">BGE-small (130MB)</span></div>
+                  <div className="flex justify-between"><span>Index Size ({totalSamples.toLocaleString()} docs)</span><span className="text-white">~{Math.round(totalSamples * 0.5)} MB</span></div>
+                  <div className="flex justify-between"><span>RAM for Indexing</span><span className="text-white">~2 GB</span></div>
+                  <div className="flex justify-between"><span>Indexing Time</span><span className="text-white">~{Math.max(1, Math.round(totalSamples / 2000))} min</span></div>
+                  <div className="flex justify-between"><span>Query Latency</span><span className="text-white">&lt;100ms + LLM time</span></div>
+                  <div className="flex justify-between"><span>GPU Required</span><span className="text-white">No (CPU is fine)</span></div>
+                </div>
               </div>
             </div>
           </div>
