@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Beaker, Database, FlaskConical, BookOpen, Cpu, Play, RefreshCw, CheckCircle, AlertCircle, Loader2, ChevronRight, Zap, Globe, FileText } from "lucide-react";
+import { Beaker, Database, FlaskConical, BookOpen, Cpu, Play, RefreshCw, CheckCircle, AlertCircle, Loader2, ChevronRight, Zap, Globe, FileText, Download } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -67,6 +67,10 @@ export default function TrainingPipeline() {
   const [selectedModel, setSelectedModel] = useState("meditron:7b");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [sampleLimit, setSampleLimit] = useState(50);
+  const [exportCategory, setExportCategory] = useState("");
+  const [exportSource, setExportSource] = useState("");
+  const [exportMinQuality, setExportMinQuality] = useState(1);
+  const [showExportOptions, setShowExportOptions] = useState(false);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -176,6 +180,12 @@ export default function TrainingPipeline() {
             <RefreshCw className="w-4 h-4" /> Refresh
           </button>
           <button
+            onClick={() => setShowExportOptions(prev => !prev)}
+            className="px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-white text-sm flex items-center gap-1.5 transition-all"
+          >
+            <Download className="w-4 h-4" /> Export Training Data
+          </button>
+          <button
             onClick={runAllCollectors}
             disabled={!!collecting.all}
             className="px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white text-sm font-medium flex items-center gap-2 transition-all disabled:opacity-50"
@@ -185,6 +195,75 @@ export default function TrainingPipeline() {
           </button>
         </div>
       </div>
+
+      {showExportOptions && (
+        <div className="glass-panel rounded-xl p-4 border border-emerald-500/30 bg-emerald-500/5 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Download className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-white font-semibold text-sm">Export Training Data as JSONL</h3>
+            </div>
+            <span className="text-xs text-muted-foreground">Standard format for LLM fine-tuning (OpenAI, Ollama, Hugging Face)</span>
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <label className="text-xs text-muted-foreground block mb-1">Filter by Category</label>
+              <select
+                value={exportCategory}
+                onChange={e => setExportCategory(e.target.value)}
+                className="w-full p-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm"
+              >
+                <option value="">All Categories</option>
+                {sortedCategories.map(([cat]) => (
+                  <option key={cat} value={cat}>{cat.replace(/_/g, " ")} ({categories[cat]})</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className="text-xs text-muted-foreground block mb-1">Filter by Source</label>
+              <select
+                value={exportSource}
+                onChange={e => setExportSource(e.target.value)}
+                className="w-full p-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm"
+              >
+                <option value="">All Sources</option>
+                {Object.entries(sources).map(([src, data]) => (
+                  <option key={src} value={src}>{SOURCE_LABELS[src] || src} ({data.count})</option>
+                ))}
+              </select>
+            </div>
+            <div className="w-32">
+              <label className="text-xs text-muted-foreground block mb-1">Min Quality</label>
+              <select
+                value={exportMinQuality}
+                onChange={e => setExportMinQuality(Number(e.target.value))}
+                className="w-full p-2 rounded-lg bg-white/5 border border-white/10 text-white text-sm"
+              >
+                {[1, 2, 3, 4, 5].map(q => (
+                  <option key={q} value={q}>{q}+ stars</option>
+                ))}
+              </select>
+            </div>
+            <div className="pt-4">
+              <a
+                href={`${API}/api/advanced-training/export-jsonl?${new URLSearchParams({
+                  ...(exportCategory && { category: exportCategory }),
+                  ...(exportSource && { source: exportSource }),
+                  ...(exportMinQuality > 1 && { minQuality: String(exportMinQuality) }),
+                }).toString()}`}
+                download
+                className="px-4 py-2 rounded-lg bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white text-sm font-medium flex items-center gap-2 transition-all whitespace-nowrap"
+              >
+                <Download className="w-4 h-4" />
+                Download .jsonl
+              </a>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Each line contains a JSON object with <code className="text-emerald-400">messages</code> (system/user/assistant) and <code className="text-emerald-400">metadata</code> (source, category, quality).
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="glass-panel rounded-xl p-4 border border-white/5">

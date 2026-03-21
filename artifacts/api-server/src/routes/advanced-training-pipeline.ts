@@ -636,6 +636,54 @@ router.get("/advanced-training/stats", async (_req, res) => {
   }
 });
 
+router.get("/advanced-training/export-jsonl", async (req, res) => {
+  try {
+    const category = req.query.category as string | undefined;
+    const source = req.query.source as string | undefined;
+    const minQuality = Math.min(Math.max(1, Number(req.query.minQuality) || 1), 5);
+
+    const conditions: any[] = [sql`${trainingDataTable.quality} >= ${minQuality}`];
+    if (category) conditions.push(eq(trainingDataTable.category, category));
+    if (source) conditions.push(eq(trainingDataTable.source, source));
+
+    const samples = await db
+      .select()
+      .from(trainingDataTable)
+      .where(conditions.length > 1 ? and(...conditions) : conditions[0])
+      .orderBy(desc(trainingDataTable.quality));
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const parts = [category && `-${category}`, source && `-${source}`].filter(Boolean).join("");
+    const suffix = parts || "";
+    const filename = `training-data${suffix}-${timestamp}.jsonl`;
+
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    for (const sample of samples) {
+      const jsonlLine = JSON.stringify({
+        messages: [
+          ...(sample.systemPrompt ? [{ role: "system", content: sample.systemPrompt }] : []),
+          { role: "user", content: sample.inputText },
+          { role: "assistant", content: sample.outputText },
+        ],
+        metadata: {
+          source: sample.source,
+          category: sample.category,
+          quality: sample.quality,
+          id: sample.id,
+        },
+      });
+      res.write(jsonlLine + "\n");
+    }
+
+    res.end();
+    console.log(`[export] Exported ${samples.length} samples as JSONL (category=${category || "all"}, source=${source || "all"}, minQuality=${minQuality})`);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post("/advanced-training/collect-all", async (_req, res) => {
   res.json({ message: "Full collection pipeline started (PMC + ClinicalTrials + OpenAlex)" });
 
