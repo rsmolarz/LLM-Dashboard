@@ -487,25 +487,86 @@ router.post("/pubmed-ent/search-custom", async (req, res) => {
   }
 });
 
-router.get("/pubmed-ent/articles", (_req, res) => {
-  const articles = Array.from(storedArticles.values())
-    .sort((a, b) => b.pubDate.localeCompare(a.pubDate))
-    .slice(0, 100)
-    .map((a) => ({
-      pmid: a.pmid,
-      title: a.title,
-      authors: a.authors.slice(0, 3).join(", ") + (a.authors.length > 3 ? " et al." : ""),
-      journal: a.journal,
-      pubDate: a.pubDate,
-      category: categorizeArticle(a),
-      hasAbstract: a.abstract.length > 0,
-      abstractLength: a.abstract.length,
-      meshTerms: a.meshTerms.slice(0, 5),
-      keywords: a.keywords.slice(0, 5),
-      doi: a.doi,
-    }));
+router.get("/pubmed-ent/articles", (req, res) => {
+  const search = ((req.query.search as string) || "").toLowerCase().trim();
+  const categoryFilter = (req.query.category as string) || "";
+  const yearFilter = (req.query.year as string) || "";
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(100, Math.max(5, Number(req.query.pageSize) || 20));
+  const sortBy = (req.query.sortBy as string) || "date";
+  const sortDir = (req.query.sortDir as string) || "desc";
 
-  res.json({ total: storedArticles.size, articles });
+  let allArticles = Array.from(storedArticles.values()).map((a) => {
+    const cat = categorizeArticle(a);
+    return { ...a, _category: cat };
+  });
+
+  if (search) {
+    allArticles = allArticles.filter(
+      (a) =>
+        a.title.toLowerCase().includes(search) ||
+        a.journal.toLowerCase().includes(search) ||
+        a.abstract.toLowerCase().includes(search) ||
+        a.authors.some((auth: string) => auth.toLowerCase().includes(search)) ||
+        a.pmid.includes(search)
+    );
+  }
+
+  if (categoryFilter) {
+    allArticles = allArticles.filter((a) => a._category === categoryFilter);
+  }
+
+  if (yearFilter) {
+    allArticles = allArticles.filter((a) => a.pubDate.startsWith(yearFilter));
+  }
+
+  const categories = Array.from(storedArticles.values()).reduce((acc: Record<string, number>, a) => {
+    const cat = categorizeArticle(a);
+    acc[cat] = (acc[cat] || 0) + 1;
+    return acc;
+  }, {});
+
+  const years = Array.from(new Set(
+    Array.from(storedArticles.values()).map((a) => a.pubDate.slice(0, 4)).filter(Boolean)
+  )).sort((a, b) => b.localeCompare(a));
+
+  allArticles.sort((a, b) => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    if (sortBy === "title") return dir * a.title.localeCompare(b.title);
+    if (sortBy === "journal") return dir * a.journal.localeCompare(b.journal);
+    if (sortBy === "category") return dir * a._category.localeCompare(b._category);
+    return dir * b.pubDate.localeCompare(a.pubDate);
+  });
+
+  const totalFiltered = allArticles.length;
+  const totalPages = Math.ceil(totalFiltered / pageSize);
+  const paged = allArticles.slice((page - 1) * pageSize, page * pageSize);
+
+  const articles = paged.map((a) => ({
+    pmid: a.pmid,
+    title: a.title,
+    authors: a.authors.slice(0, 3).join(", ") + (a.authors.length > 3 ? " et al." : ""),
+    journal: a.journal,
+    pubDate: a.pubDate,
+    category: a._category,
+    hasAbstract: a.abstract.length > 0,
+    abstractLength: a.abstract.length,
+    abstractPreview: a.abstract.length > 0 ? a.abstract.slice(0, 300) + (a.abstract.length > 300 ? "..." : "") : "",
+    meshTerms: a.meshTerms.slice(0, 5),
+    keywords: a.keywords.slice(0, 5),
+    doi: a.doi,
+  }));
+
+  res.json({
+    total: storedArticles.size,
+    totalFiltered,
+    page,
+    pageSize,
+    totalPages,
+    categories,
+    years,
+    articles,
+  });
 });
 
 router.get("/pubmed-ent/article/:pmid", (req, res) => {
