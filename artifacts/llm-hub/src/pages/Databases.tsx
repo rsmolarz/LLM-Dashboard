@@ -12,6 +12,9 @@ import {
   Filter,
   Star,
   ArrowUpRight,
+  Mic,
+  Lightbulb,
+  Ear,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -21,7 +24,10 @@ type Category =
   | "cloud"
   | "medical"
   | "laryngoscopy"
-  | "search";
+  | "otoscopy"
+  | "voice"
+  | "search"
+  | "tips";
 
 interface Resource {
   name: string;
@@ -265,6 +271,111 @@ const RESOURCES: Resource[] = [
     category: "search",
     tags: ["academic search", "free", "cross-discipline", "data links"],
   },
+  {
+    name: "University of Chile Otoscopy Dataset (Zenodo)",
+    url: "https://zenodo.org/search?q=otoscopy+chile",
+    description:
+      "Publicly released otoscopy image dataset from the University of Chile Hospital. Used for machine learning-based middle ear condition detection and classification.",
+    category: "otoscopy",
+    tags: ["otoscopy", "Zenodo", "public", "middle ear", "Chile"],
+    highlight: true,
+  },
+  {
+    name: "Van Akdamar Hospital Otoscopy Dataset (Figshare)",
+    url: "https://figshare.com/search?q=otoscopy",
+    description:
+      "Publicly released otoscopy dataset from Van Akdamar Hospital, Turkey. Available through Figshare for machine learning research on tympanic membrane pathology.",
+    category: "otoscopy",
+    tags: ["otoscopy", "Figshare", "public", "Turkey", "tympanic membrane"],
+    highlight: true,
+  },
+  {
+    name: "41,664-Image Otoscopy Dataset (npj Digital Medicine)",
+    url: "https://www.nature.com/articles/s41746-023-00898-3",
+    description:
+      "Deep learning model trained on 41,664 otoscopic images labeled across 11 diagnostic classes by a senior ENT specialist. Published in npj Digital Medicine — data may be accessible by request to authors.",
+    category: "otoscopy",
+    tags: ["41,664 images", "11 classes", "deep learning", "npj Digital Medicine", "request"],
+    highlight: true,
+  },
+  {
+    name: "SVD — Saarbrücken Voice Database",
+    url: "https://stimmdb.coli.uni-saarland.de/",
+    description:
+      "Long-running German voice pathology database with over 2,000 voice recordings from healthy and pathological speakers. Freely available for research — widely cited in vocal fold disorder ML studies.",
+    category: "voice",
+    tags: ["voice pathology", "German", "free", "2,000+ recordings", "vocal fold"],
+    highlight: true,
+  },
+  {
+    name: "AVPD — Advanced Voice Pathology Database",
+    url: "https://scholar.google.com/scholar?q=Advanced+Voice+Pathology+Database+AVPD",
+    description:
+      "Frequently used in voice pathology ML research for vocal fold disorder classification. Contains recordings and clinical annotations for training voice disorder detection models.",
+    category: "voice",
+    tags: ["voice pathology", "AVPD", "vocal fold", "classification", "ML"],
+    highlight: true,
+  },
+  {
+    name: "NIH Bridge2AI — Voice as a Biomarker",
+    url: "https://bridge2ai.org/voice/",
+    description:
+      "Major NIH Common Fund project building the largest diverse voice database linked to health biomarkers. Currently under construction — will be a transformative open resource for voice AI and laryngology research.",
+    category: "voice",
+    tags: ["NIH", "Bridge2AI", "voice biomarker", "diversity", "open resource"],
+    highlight: true,
+  },
+  {
+    name: "IEEE DataPort — Biomedical Datasets",
+    url: "https://ieee-dataport.org/",
+    description:
+      "Growing repository specifically for engineering and biomedical datasets, including endoscopy, signal processing, and acoustic data relevant to ENT AI research.",
+    category: "search",
+    tags: ["IEEE", "biomedical", "endoscopy", "signal processing", "repository"],
+  },
+  {
+    name: "MIMIC / PhysioNet — Clinical Data",
+    url: "https://physionet.org/",
+    description:
+      "While not ENT-specific, PhysioNet hosts voice, audio, and clinical note data that can be filtered for ENT diagnoses using ICD codes. MIMIC-III/IV contain millions of clinical records.",
+    category: "search",
+    tags: ["PhysioNet", "MIMIC", "clinical notes", "ICD codes", "audio"],
+  },
+  {
+    name: "ResearchGate — Dataset Discovery",
+    url: "https://www.researchgate.net/search?q=otolaryngology+dataset",
+    description:
+      "Authors often post their datasets or respond to direct requests on ResearchGate. Search for ENT imaging datasets — many researchers share upon reasonable request.",
+    category: "tips",
+    tags: ["dataset discovery", "author contact", "direct requests"],
+  },
+  {
+    name: "Pro Tip: Check 'Data Availability' Sections",
+    url: "https://pubmed.ncbi.nlm.nih.gov/?term=otolaryngology+artificial+intelligence",
+    description:
+      "Many PubMed/PMC papers now deposit datasets on Zenodo, Figshare, or OSF as a condition of publication. Always check the 'Data Availability Statement' section at the bottom of papers.",
+    category: "tips",
+    tags: ["pro tip", "data availability", "Zenodo", "Figshare", "OSF"],
+    highlight: true,
+  },
+  {
+    name: "Pro Tip: Contact Corresponding Authors",
+    url: "https://pubmed.ncbi.nlm.nih.gov/?term=deep+learning+otolaryngology",
+    description:
+      "Many ENT imaging datasets are available from institutions upon reasonable request, even when not publicly posted. Contacting corresponding authors of ML papers is often the most productive path for accessing niche ENT data.",
+    category: "tips",
+    tags: ["pro tip", "collaboration", "institutional data", "data sharing"],
+    highlight: true,
+  },
+  {
+    name: "Pro Tip: Academic ENT Department Outreach",
+    url: "https://scholar.google.com/scholar?q=machine+learning+otolaryngology+dataset",
+    description:
+      "ENT — especially laryngology — is one of the more data-sparse specialties in medical AI. Reaching out to academic ENT departments publishing ML papers is often the most productive path for accessing institutional datasets that require collaboration or data-sharing agreements.",
+    category: "tips",
+    tags: ["pro tip", "academic", "collaboration", "data-sparse", "institutional"],
+    highlight: true,
+  },
 ];
 
 const CATEGORY_CONFIG: Record<
@@ -280,7 +391,10 @@ const CATEGORY_CONFIG: Record<
     icon: Microscope,
     color: "text-purple-400",
   },
-  search: { label: "Search Databases", icon: BookOpen, color: "text-amber-400" },
+  otoscopy: { label: "Otoscopy / Ear", icon: Ear, color: "text-pink-400" },
+  voice: { label: "Voice / Laryngology", icon: Mic, color: "text-orange-400" },
+  search: { label: "Search & Repositories", icon: BookOpen, color: "text-amber-400" },
+  tips: { label: "Pro Tips", icon: Lightbulb, color: "text-yellow-400" },
 };
 
 export default function Databases() {

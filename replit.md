@@ -97,8 +97,11 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **Training rotation**: qwen2.5:7b, mistral:latest, deepseek-r1:8b, meditron:7b (4 models)
 
 ## AI Databases & Resources
-- `/databases` page with 28 resources across 5 categories
-- Categories: General Purpose (7), Cloud Platforms (3), Medical AI (4), Laryngoscopy/ENT (11), Search Databases (3)
+- `/databases` page with 40 resources across 9 categories
+- Categories: General Purpose (7), Cloud Platforms (3), Medical AI (4), Laryngoscopy/ENT (11), Otoscopy/Ear (3), Voice/Laryngology (3), Search & Repositories (5), Pro Tips (4)
+- Otoscopy datasets: University of Chile (Zenodo), Van Akdamar Hospital (Figshare), 41,664-image dataset (npj Digital Medicine)
+- Voice databases: SVD (Saarbrücken, free), AVPD, NIH Bridge2AI Voice
+- Pro tips: Data Availability sections, corresponding author outreach, academic ENT department collaboration
 - Includes JAMA 2026 landmark papers (Bao et al., Novi et al.), Nature 2025 scoping review, EUR Arch meta-analysis
 
 ## ENT Training Pipeline
