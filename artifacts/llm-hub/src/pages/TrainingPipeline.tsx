@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Beaker, Database, FlaskConical, BookOpen, Cpu, Play, RefreshCw, CheckCircle, AlertCircle, Loader2, ChevronRight, Zap, Globe, FileText, Download, ExternalLink, Star } from "lucide-react";
+import { Beaker, Database, FlaskConical, BookOpen, Cpu, Play, RefreshCw, CheckCircle, AlertCircle, Loader2, ChevronRight, Zap, Globe, FileText, Download, ExternalLink, Star, Terminal, Copy, Check } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -71,6 +71,15 @@ export default function TrainingPipeline() {
   const [exportSource, setExportSource] = useState("");
   const [exportMinQuality, setExportMinQuality] = useState(1);
   const [showExportOptions, setShowExportOptions] = useState(false);
+  const [showFineTuningGuide, setShowFineTuningGuide] = useState(false);
+  const [guideTab, setGuideTab] = useState<"axolotl" | "huggingface">("axolotl");
+  const [copiedBlock, setCopiedBlock] = useState<string | null>(null);
+
+  const copyToClipboard = (text: string, blockId: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedBlock(blockId);
+    setTimeout(() => setCopiedBlock(null), 2000);
+  };
 
   const fetchStats = useCallback(async () => {
     try {
@@ -330,6 +339,470 @@ export default function TrainingPipeline() {
             </div>
           </a>
         </div>
+      </div>
+
+      <div className="glass-panel rounded-xl p-5 border border-white/5">
+        <button
+          onClick={() => setShowFineTuningGuide(prev => !prev)}
+          className="w-full flex items-center justify-between"
+        >
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Terminal className="w-5 h-5 text-cyan-400" /> Fine-Tuning Guide
+          </h2>
+          <ChevronRight className={`w-5 h-5 text-muted-foreground transition-transform ${showFineTuningGuide ? "rotate-90" : ""}`} />
+        </button>
+
+        {showFineTuningGuide && (
+          <div className="mt-4 space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Step-by-step instructions for fine-tuning a medical LLM on your exported JSONL data using either Axolotl or HuggingFace Trainer.
+            </p>
+
+            <div className="flex gap-2 border-b border-white/10 pb-1">
+              <button
+                onClick={() => setGuideTab("axolotl")}
+                className={`px-3 py-1.5 rounded-t-lg text-sm font-medium transition-all ${guideTab === "axolotl" ? "bg-cyan-500/20 text-cyan-300 border-b-2 border-cyan-400" : "text-muted-foreground hover:text-white"}`}
+              >
+                Axolotl (Recommended)
+              </button>
+              <button
+                onClick={() => setGuideTab("huggingface")}
+                className={`px-3 py-1.5 rounded-t-lg text-sm font-medium transition-all ${guideTab === "huggingface" ? "bg-purple-500/20 text-purple-300 border-b-2 border-purple-400" : "text-muted-foreground hover:text-white"}`}
+              >
+                HuggingFace Trainer
+              </button>
+            </div>
+
+            {guideTab === "axolotl" ? (
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-cyan-400">Step 1: Install Axolotl</span>
+                    <button onClick={() => copyToClipboard("git clone https://github.com/OpenAccess-AI-Collective/axolotl.git\ncd axolotl\npip install packaging ninja\npip install -e '.[flash-attn,deepspeed]'", "ax1")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                      {copiedBlock === "ax1" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "ax1" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5">
+{`git clone https://github.com/OpenAccess-AI-Collective/axolotl.git
+cd axolotl
+pip install packaging ninja
+pip install -e '.[flash-attn,deepspeed]'`}
+                  </pre>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-cyan-400">Step 2: Create config YAML (ent_finetune.yml)</span>
+                    <button onClick={() => copyToClipboard(`base_model: epfl-llm/meditron-7b
+model_type: LlamaForCausalLM
+tokenizer_type: LlamaTokenizer
+load_in_8bit: true
+adapter: qlora
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - v_proj
+  - k_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+datasets:
+  - path: ./training-data.jsonl
+    type: sharegpt
+    conversation: chatml
+
+sequence_len: 2048
+sample_packing: true
+pad_to_sequence_len: true
+
+wandb_project: ent-meditron-finetune
+output_dir: ./ent-meditron-qlora
+
+gradient_accumulation_steps: 4
+micro_batch_size: 2
+num_epochs: 3
+learning_rate: 0.0002
+optimizer: adamw_bnb_8bit
+lr_scheduler: cosine
+warmup_steps: 100
+
+bf16: auto
+tf32: false
+flash_attention: true
+
+eval_steps: 50
+save_steps: 100
+logging_steps: 10`, "ax2")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                      {copiedBlock === "ax2" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "ax2" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5 max-h-[300px] overflow-y-auto">
+{`base_model: epfl-llm/meditron-7b
+model_type: LlamaForCausalLM
+tokenizer_type: LlamaTokenizer
+load_in_8bit: true
+adapter: qlora
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0.05
+lora_target_modules:
+  - q_proj
+  - v_proj
+  - k_proj
+  - o_proj
+  - gate_proj
+  - up_proj
+  - down_proj
+
+datasets:
+  - path: ./training-data.jsonl
+    type: sharegpt
+    conversation: chatml
+
+sequence_len: 2048
+sample_packing: true
+pad_to_sequence_len: true
+
+wandb_project: ent-meditron-finetune
+output_dir: ./ent-meditron-qlora
+
+gradient_accumulation_steps: 4
+micro_batch_size: 2
+num_epochs: 3
+learning_rate: 0.0002
+optimizer: adamw_bnb_8bit
+lr_scheduler: cosine
+warmup_steps: 100
+
+bf16: auto
+tf32: false
+flash_attention: true
+
+eval_steps: 50
+save_steps: 100
+logging_steps: 10`}
+                  </pre>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-cyan-400">Step 3: Run Fine-Tuning</span>
+                    <button onClick={() => copyToClipboard("accelerate launch -m axolotl.cli.train ent_finetune.yml", "ax3")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                      {copiedBlock === "ax3" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "ax3" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5">
+{`accelerate launch -m axolotl.cli.train ent_finetune.yml`}
+                  </pre>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-cyan-400">Step 4: Merge LoRA & Convert to GGUF for Ollama</span>
+                    <button onClick={() => copyToClipboard(`# Merge the LoRA adapter back into the base model
+python -m axolotl.cli.merge_lora ent_finetune.yml --lora_model_dir=./ent-meditron-qlora
+
+# Convert to GGUF format for Ollama
+git clone https://github.com/ggerganov/llama.cpp.git
+cd llama.cpp && make -j
+python convert_hf_to_gguf.py ../ent-meditron-merged --outtype q4_K_M
+
+# Deploy to your VPS Ollama instance
+scp ent-meditron-merged-q4_K_M.gguf root@72.60.167.64:/models/
+ssh root@72.60.167.64 'ollama create meditron-ent-finetuned -f /models/Modelfile'`, "ax4")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                      {copiedBlock === "ax4" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "ax4" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5">
+{`# Merge the LoRA adapter back into the base model
+python -m axolotl.cli.merge_lora ent_finetune.yml \\
+  --lora_model_dir=./ent-meditron-qlora
+
+# Convert to GGUF format for Ollama
+git clone https://github.com/ggerganov/llama.cpp.git
+cd llama.cpp && make -j
+python convert_hf_to_gguf.py ../ent-meditron-merged \\
+  --outtype q4_K_M
+
+# Deploy to your VPS Ollama instance
+scp ent-meditron-merged-q4_K_M.gguf \\
+  root@72.60.167.64:/models/
+ssh root@72.60.167.64 \\
+  'ollama create meditron-ent-finetuned -f /models/Modelfile'`}
+                  </pre>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-purple-400">Step 1: Install Dependencies</span>
+                    <button onClick={() => copyToClipboard("pip install transformers datasets peft bitsandbytes accelerate trl", "hf1")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                      {copiedBlock === "hf1" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "hf1" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5">
+{`pip install transformers datasets peft \\
+  bitsandbytes accelerate trl`}
+                  </pre>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-purple-400">Step 2: Fine-Tuning Script (finetune_ent.py)</span>
+                    <button onClick={() => copyToClipboard(`import torch
+from datasets import load_dataset
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    TrainingArguments,
+)
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from trl import SFTTrainer
+
+# === Configuration ===
+BASE_MODEL = "epfl-llm/meditron-7b"
+DATASET_PATH = "./training-data.jsonl"
+OUTPUT_DIR = "./ent-meditron-hf-qlora"
+
+# === Load model in 4-bit ===
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_use_double_quant=True,
+)
+
+model = AutoModelForCausalLM.from_pretrained(
+    BASE_MODEL,
+    quantization_config=bnb_config,
+    device_map="auto",
+    trust_remote_code=True,
+)
+tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+tokenizer.pad_token = tokenizer.eos_token
+
+# === LoRA config ===
+model = prepare_model_for_kbit_training(model)
+lora_config = LoraConfig(
+    r=32,
+    lora_alpha=64,
+    lora_dropout=0.05,
+    target_modules=["q_proj","v_proj","k_proj","o_proj",
+                     "gate_proj","up_proj","down_proj"],
+    bias="none",
+    task_type="CAUSAL_LM",
+)
+model = get_peft_model(model, lora_config)
+
+# === Load JSONL dataset ===
+dataset = load_dataset("json", data_files=DATASET_PATH, split="train")
+
+def format_chat(example):
+    text = ""
+    for msg in example["messages"]:
+        text += f"<|im_start|>{msg['role']}\\n{msg['content']}<|im_end|>\\n"
+    return {"text": text}
+
+dataset = dataset.map(format_chat)
+
+# === Training ===
+training_args = TrainingArguments(
+    output_dir=OUTPUT_DIR,
+    num_train_epochs=3,
+    per_device_train_batch_size=2,
+    gradient_accumulation_steps=4,
+    learning_rate=2e-4,
+    bf16=True,
+    logging_steps=10,
+    save_steps=100,
+    eval_steps=50,
+    warmup_steps=100,
+    lr_scheduler_type="cosine",
+    optim="paged_adamw_8bit",
+    save_total_limit=3,
+)
+
+trainer = SFTTrainer(
+    model=model,
+    train_dataset=dataset,
+    args=training_args,
+    tokenizer=tokenizer,
+    max_seq_length=2048,
+    dataset_text_field="text",
+    packing=True,
+)
+
+trainer.train()
+trainer.save_model(OUTPUT_DIR)
+print(f"Model saved to {OUTPUT_DIR}")`, "hf2")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                      {copiedBlock === "hf2" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "hf2" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5 max-h-[400px] overflow-y-auto">
+{`import torch
+from datasets import load_dataset
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig,
+    TrainingArguments,
+)
+from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from trl import SFTTrainer
+
+# === Configuration ===
+BASE_MODEL = "epfl-llm/meditron-7b"
+DATASET_PATH = "./training-data.jsonl"
+OUTPUT_DIR = "./ent-meditron-hf-qlora"
+
+# === Load model in 4-bit ===
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_use_double_quant=True,
+)
+
+model = AutoModelForCausalLM.from_pretrained(
+    BASE_MODEL,
+    quantization_config=bnb_config,
+    device_map="auto",
+    trust_remote_code=True,
+)
+tokenizer = AutoTokenizer.from_pretrained(BASE_MODEL)
+tokenizer.pad_token = tokenizer.eos_token
+
+# === LoRA config ===
+model = prepare_model_for_kbit_training(model)
+lora_config = LoraConfig(
+    r=32,
+    lora_alpha=64,
+    lora_dropout=0.05,
+    target_modules=["q_proj","v_proj","k_proj","o_proj",
+                     "gate_proj","up_proj","down_proj"],
+    bias="none",
+    task_type="CAUSAL_LM",
+)
+model = get_peft_model(model, lora_config)
+
+# === Load JSONL dataset ===
+dataset = load_dataset("json", data_files=DATASET_PATH, split="train")
+
+def format_chat(example):
+    text = ""
+    for msg in example["messages"]:
+        text += f"<|im_start|>{msg['role']}\\n"
+        text += f"{msg['content']}<|im_end|>\\n"
+    return {"text": text}
+
+dataset = dataset.map(format_chat)
+
+# === Training ===
+training_args = TrainingArguments(
+    output_dir=OUTPUT_DIR,
+    num_train_epochs=3,
+    per_device_train_batch_size=2,
+    gradient_accumulation_steps=4,
+    learning_rate=2e-4,
+    bf16=True,
+    logging_steps=10,
+    save_steps=100,
+    eval_steps=50,
+    warmup_steps=100,
+    lr_scheduler_type="cosine",
+    optim="paged_adamw_8bit",
+    save_total_limit=3,
+)
+
+trainer = SFTTrainer(
+    model=model,
+    train_dataset=dataset,
+    args=training_args,
+    tokenizer=tokenizer,
+    max_seq_length=2048,
+    dataset_text_field="text",
+    packing=True,
+)
+
+trainer.train()
+trainer.save_model(OUTPUT_DIR)
+print(f"Model saved to {OUTPUT_DIR}")`}
+                  </pre>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-purple-400">Step 3: Run Training</span>
+                    <button onClick={() => copyToClipboard("accelerate launch finetune_ent.py", "hf3")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                      {copiedBlock === "hf3" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "hf3" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5">
+{`accelerate launch finetune_ent.py`}
+                  </pre>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold text-purple-400">Step 4: Merge & Deploy to Ollama on VPS</span>
+                    <button onClick={() => copyToClipboard(`# Merge LoRA weights
+python -c "
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+base = AutoModelForCausalLM.from_pretrained('epfl-llm/meditron-7b')
+model = PeftModel.from_pretrained(base, './ent-meditron-hf-qlora')
+merged = model.merge_and_unload()
+merged.save_pretrained('./ent-meditron-merged')
+AutoTokenizer.from_pretrained('epfl-llm/meditron-7b').save_pretrained('./ent-meditron-merged')
+"
+
+# Convert to GGUF and deploy (same as Axolotl Step 4)
+cd llama.cpp
+python convert_hf_to_gguf.py ../ent-meditron-merged --outtype q4_K_M
+scp ent-meditron-merged-q4_K_M.gguf root@72.60.167.64:/models/
+ssh root@72.60.167.64 'ollama create meditron-ent-finetuned -f /models/Modelfile'`, "hf4")} className="text-xs text-muted-foreground hover:text-white flex items-center gap-1">
+                      {copiedBlock === "hf4" ? <Check className="w-3 h-3 text-green-400" /> : <Copy className="w-3 h-3" />} {copiedBlock === "hf4" ? "Copied" : "Copy"}
+                    </button>
+                  </div>
+                  <pre className="bg-black/40 rounded-lg p-3 text-xs text-green-300 font-mono overflow-x-auto border border-white/5">
+{`# Merge LoRA weights
+python -c "
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+base = AutoModelForCausalLM.from_pretrained('epfl-llm/meditron-7b')
+model = PeftModel.from_pretrained(base, './ent-meditron-hf-qlora')
+merged = model.merge_and_unload()
+merged.save_pretrained('./ent-meditron-merged')
+AutoTokenizer.from_pretrained('epfl-llm/meditron-7b') \\
+  .save_pretrained('./ent-meditron-merged')
+"
+
+# Convert to GGUF and deploy (same as Axolotl Step 4)
+cd llama.cpp
+python convert_hf_to_gguf.py ../ent-meditron-merged \\
+  --outtype q4_K_M
+scp ent-meditron-merged-q4_K_M.gguf \\
+  root@72.60.167.64:/models/
+ssh root@72.60.167.64 \\
+  'ollama create meditron-ent-finetuned -f /models/Modelfile'`}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <p className="text-xs text-amber-300">
+                <strong>Hardware requirements:</strong> QLoRA fine-tuning requires a GPU with at least 16GB VRAM (e.g., RTX 4090, A100, or cloud GPU on RunPod/Lambda). For the 13B PMC-LLaMA model, 24GB+ VRAM is recommended. Training on {totalSamples.toLocaleString()} samples typically takes 1-3 hours depending on hardware.
+              </p>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
