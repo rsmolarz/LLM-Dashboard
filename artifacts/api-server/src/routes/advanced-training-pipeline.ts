@@ -636,6 +636,85 @@ router.get("/advanced-training/stats", async (_req, res) => {
   }
 });
 
+router.get("/advanced-training/progress", async (_req, res) => {
+  try {
+    const total = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(trainingDataTable);
+
+    const bySource = await db
+      .select({
+        source: trainingDataTable.source,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(trainingDataTable)
+      .groupBy(trainingDataTable.source);
+
+    const byCategory = await db
+      .select({
+        category: trainingDataTable.category,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(trainingDataTable)
+      .groupBy(trainingDataTable.category);
+
+    const avgTokensPerSample = 500;
+    const totalSamples = total[0]?.count || 0;
+    const estimatedTokens = totalSamples * avgTokensPerSample;
+    const estimatedSizeMB = parseFloat(((estimatedTokens * 4) / (1024 * 1024)).toFixed(2));
+
+    const growthData = await db
+      .select({
+        date: sql<string>`to_char(${trainingDataTable.createdAt}::date, 'YYYY-MM-DD')`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(trainingDataTable)
+      .groupBy(sql`${trainingDataTable.createdAt}::date`)
+      .orderBy(sql`${trainingDataTable.createdAt}::date`);
+
+    let cumulative = 0;
+    const cumulativeGrowth = growthData.map((d) => {
+      cumulative += d.count;
+      return { date: d.date, added: d.count, total: cumulative };
+    });
+
+    const oldest = await db
+      .select({ ts: sql<string>`to_char(min(${trainingDataTable.createdAt}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')` })
+      .from(trainingDataTable);
+
+    const newest = await db
+      .select({ ts: sql<string>`to_char(max(${trainingDataTable.createdAt}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')` })
+      .from(trainingDataTable);
+
+    const qualityDist = await db
+      .select({
+        quality: trainingDataTable.quality,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(trainingDataTable)
+      .groupBy(trainingDataTable.quality)
+      .orderBy(trainingDataTable.quality);
+
+    res.json({
+      totalSamples,
+      estimatedSizeMB,
+      estimatedTokens,
+      sourceBreakdown: Object.fromEntries(bySource.map((s) => [s.source, s.count])),
+      categoryCount: byCategory.length,
+      qualityDistribution: Object.fromEntries(qualityDist.map((q) => [q.quality, q.count])),
+      firstCollectionAt: oldest[0]?.ts || null,
+      lastCollectionAt: newest[0]?.ts || null,
+      lastPipelineRun: pipelineStats.lastRunAt,
+      nextScheduledRun: pipelineStats.lastRunAt
+        ? new Date(new Date(pipelineStats.lastRunAt).getTime() + 30 * 60 * 1000).toISOString()
+        : null,
+      growthOverTime: cumulativeGrowth,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get("/advanced-training/export-jsonl", async (req, res) => {
   try {
     const category = req.query.category as string | undefined;

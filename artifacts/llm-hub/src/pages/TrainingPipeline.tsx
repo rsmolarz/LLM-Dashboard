@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Beaker, Database, FlaskConical, BookOpen, Cpu, Play, RefreshCw, CheckCircle, AlertCircle, Loader2, ChevronRight, Zap, Globe, FileText, Download, ExternalLink, Star, Terminal, Copy, Check, Search } from "lucide-react";
+import { Beaker, Database, FlaskConical, BookOpen, Cpu, Play, RefreshCw, CheckCircle, AlertCircle, Loader2, ChevronRight, Zap, Globe, FileText, Download, ExternalLink, Star, Terminal, Copy, Check, Search, TrendingUp, Clock, HardDrive, BarChart3 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -75,6 +75,17 @@ export default function TrainingPipeline() {
   const [guideTab, setGuideTab] = useState<"axolotl" | "huggingface">("axolotl");
   const [copiedBlock, setCopiedBlock] = useState<string | null>(null);
   const [showRagGuide, setShowRagGuide] = useState(false);
+  const [progressData, setProgressData] = useState<any>(null);
+  const [progressLoading, setProgressLoading] = useState(false);
+
+  const fetchProgress = useCallback(async () => {
+    setProgressLoading(true);
+    try {
+      const res = await fetch(`${API}/api/advanced-training/progress`);
+      if (res.ok) setProgressData(await res.json());
+    } catch { }
+    setProgressLoading(false);
+  }, []);
 
   const copyToClipboard = (text: string, blockId: string) => {
     navigator.clipboard.writeText(text);
@@ -99,9 +110,11 @@ export default function TrainingPipeline() {
 
   useEffect(() => {
     fetchStats();
+    fetchProgress();
     const interval = setInterval(fetchStats, 10000);
-    return () => clearInterval(interval);
-  }, [fetchStats]);
+    const progressInterval = setInterval(fetchProgress, 30000);
+    return () => { clearInterval(interval); clearInterval(progressInterval); };
+  }, [fetchStats, fetchProgress]);
 
   const runCollector = async (type: string) => {
     setCollecting(prev => ({ ...prev, [type]: true }));
@@ -1214,6 +1227,139 @@ while True:
             </div>
           </div>
         )}
+      </div>
+
+      <div className="glass-panel rounded-xl p-5 border border-white/5">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <TrendingUp className="w-5 h-5 text-emerald-400" /> Training Progress Tracker
+          </h2>
+          <button
+            onClick={fetchProgress}
+            disabled={progressLoading}
+            className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-white text-xs flex items-center gap-1.5 transition-all"
+          >
+            {progressLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+          <div className="rounded-lg bg-white/[0.03] border border-white/5 p-3">
+            <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
+              <Database className="w-3 h-3" /> Total Samples
+            </div>
+            <div className="text-2xl font-bold text-white">{(progressData?.totalSamples || totalSamples).toLocaleString()}</div>
+          </div>
+          <div className="rounded-lg bg-white/[0.03] border border-white/5 p-3">
+            <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
+              <HardDrive className="w-3 h-3" /> Estimated Size
+            </div>
+            <div className="text-2xl font-bold text-white">{progressData?.estimatedSizeMB || 0} <span className="text-sm text-muted-foreground">MB</span></div>
+          </div>
+          <div className="rounded-lg bg-white/[0.03] border border-white/5 p-3">
+            <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
+              <Clock className="w-3 h-3" /> Last Collection
+            </div>
+            <div className="text-sm font-medium text-white mt-1">
+              {progressData?.lastCollectionAt
+                ? new Date(progressData.lastCollectionAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                : "Never"}
+            </div>
+          </div>
+          <div className="rounded-lg bg-white/[0.03] border border-white/5 p-3">
+            <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
+              <Clock className="w-3 h-3" /> Next Scheduled
+            </div>
+            <div className="text-sm font-medium text-white mt-1">
+              {progressData?.nextScheduledRun
+                ? new Date(progressData.nextScheduledRun).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                : "Not scheduled"}
+            </div>
+          </div>
+        </div>
+
+        {progressData?.growthOverTime && progressData.growthOverTime.length > 0 && (
+          <div className="mb-4">
+            <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1.5">
+              <BarChart3 className="w-3.5 h-3.5 text-emerald-400" /> Samples Over Time
+            </div>
+            <div className="rounded-lg bg-white/[0.02] border border-white/5 p-4">
+              <div className="flex items-end gap-1 h-32">
+                {(() => {
+                  const data = progressData.growthOverTime;
+                  const displayData = data.length > 30 ? data.slice(-30) : data;
+                  const maxTotal = Math.max(...displayData.map((d: any) => d.total));
+                  const minTotal = Math.min(...displayData.map((d: any) => d.total));
+                  const range = maxTotal - minTotal || 1;
+                  return displayData.map((d: any, i: number) => {
+                    const height = ((d.total - minTotal) / range) * 90 + 10;
+                    const barColor = d.added > 0 ? "bg-emerald-500" : "bg-white/10";
+                    return (
+                      <div key={i} className="flex-1 flex flex-col items-center group relative min-w-0">
+                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-black/90 border border-white/10 rounded px-2 py-1 text-[9px] text-white whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                          {d.date}: {d.total} total (+{d.added})
+                        </div>
+                        <div
+                          className={`w-full rounded-sm ${barColor} transition-all min-h-[2px]`}
+                          style={{ height: `${Math.max(height, 2)}%` }}
+                        />
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+              <div className="flex justify-between mt-2 text-[9px] text-muted-foreground">
+                <span>{(() => { const d = progressData.growthOverTime; const dd = d.length > 30 ? d.slice(-30) : d; return dd[0]?.date; })()}</span>
+                <span>{(() => { const d = progressData.growthOverTime; const dd = d.length > 30 ? d.slice(-30) : d; return dd[dd.length - 1]?.date; })()}</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {progressData?.sourceBreakdown && Object.keys(progressData.sourceBreakdown).length > 0 && (
+            <div className="rounded-lg bg-white/[0.02] border border-white/5 p-3">
+              <div className="text-xs font-medium text-muted-foreground mb-2">Source Breakdown</div>
+              <div className="space-y-1.5">
+                {Object.entries(progressData.sourceBreakdown).map(([source, count]) => {
+                  const pct = progressData.totalSamples > 0 ? ((count as number) / progressData.totalSamples) * 100 : 0;
+                  return (
+                    <div key={source} className="flex items-center gap-2">
+                      <span className="text-[10px] text-muted-foreground w-20 truncate">{source}</span>
+                      <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500/60 rounded-full" style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="text-[10px] text-white font-medium w-12 text-right">{(count as number).toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {progressData?.qualityDistribution && Object.keys(progressData.qualityDistribution).length > 0 && (
+            <div className="rounded-lg bg-white/[0.02] border border-white/5 p-3">
+              <div className="text-xs font-medium text-muted-foreground mb-2">Quality Distribution</div>
+              <div className="space-y-1.5">
+                {Object.entries(progressData.qualityDistribution).map(([quality, count]) => {
+                  const pct = progressData.totalSamples > 0 ? ((count as number) / progressData.totalSamples) * 100 : 0;
+                  const starColors: Record<string, string> = { "1": "bg-red-500/60", "2": "bg-orange-500/60", "3": "bg-yellow-500/60", "4": "bg-lime-500/60", "5": "bg-emerald-500/60" };
+                  return (
+                    <div key={quality} className="flex items-center gap-2">
+                      <span className="text-[10px] text-muted-foreground w-20 flex items-center gap-0.5">
+                        {"★".repeat(Number(quality))}{"☆".repeat(5 - Number(quality))}
+                      </span>
+                      <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full ${starColors[quality] || "bg-white/20"}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <span className="text-[10px] text-white font-medium w-12 text-right">{(count as number).toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
