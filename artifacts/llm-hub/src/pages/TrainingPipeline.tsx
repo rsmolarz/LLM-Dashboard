@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Beaker, Database, FlaskConical, BookOpen, Cpu, Play, RefreshCw, CheckCircle, AlertCircle, Loader2, ChevronRight, Zap, Globe, FileText, Download } from "lucide-react";
+import { Beaker, Database, FlaskConical, BookOpen, Cpu, Play, RefreshCw, CheckCircle, AlertCircle, Loader2, ChevronRight, Zap, Globe, FileText, Download, ExternalLink, Star } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
 
@@ -264,6 +264,73 @@ export default function TrainingPipeline() {
           </p>
         </div>
       )}
+
+      <div className="glass-panel rounded-xl p-5 border border-white/5">
+        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <Star className="w-5 h-5 text-amber-400" /> Recommended Base Models for Fine-Tuning
+        </h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <a
+            href="https://huggingface.co/epfl-llm/meditron-7b"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group p-4 rounded-xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 hover:border-blue-400/40 transition-all"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-white font-semibold text-sm">Meditron-7B</h3>
+              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground group-hover:text-blue-400 transition-colors" />
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              EPFL's medical LLM adapted from Llama 2. Pretrained on curated medical corpora including PubMed, medical guidelines, and clinical papers. Optimized for clinical reasoning and medical Q&A.
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-medium">7B params</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-medium">Medical</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-300 font-medium">On VPS</span>
+            </div>
+          </a>
+
+          <a
+            href="https://huggingface.co/chaoyi-wu/PMC-LLaMA-13B"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group p-4 rounded-xl bg-gradient-to-br from-purple-500/10 to-purple-600/5 border border-purple-500/20 hover:border-purple-400/40 transition-all"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-white font-semibold text-sm">PMC-LLaMA-13B</h3>
+              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground group-hover:text-purple-400 transition-colors" />
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Fine-tuned on 4.8M biomedical academic papers from PubMed Central. Excels at biomedical text understanding, medical literature synthesis, and clinical knowledge extraction.
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-medium">13B params</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-medium">Biomedical</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-medium">Recommended</span>
+            </div>
+          </a>
+
+          <a
+            href="https://huggingface.co/stanford-crfm/BioMedLM"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group p-4 rounded-xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 hover:border-emerald-400/40 transition-all"
+          >
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-white font-semibold text-sm">BioMedLM</h3>
+              <ExternalLink className="w-3.5 h-3.5 text-muted-foreground group-hover:text-emerald-400 transition-colors" />
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">
+              Stanford CRFM's 2.7B biomedical language model trained on PubMed abstracts and full-text articles. Lightweight yet powerful for domain-specific medical tasks and ENT knowledge.
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-medium">2.7B params</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-medium">PubMed</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-medium">Lightweight</span>
+            </div>
+          </a>
+        </div>
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="glass-panel rounded-xl p-4 border border-white/5">
