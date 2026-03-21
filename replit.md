@@ -47,6 +47,15 @@ The project is structured as a pnpm monorepo with distinct artifacts for the fro
 -   **Alpha Factory (Market Inefficiency Agents)**: External platform integrated via API for trading signals, dashboard KPIs, HF analytics, agent status, and market data (proxied from `marketinefficiencyagents.com`).
 -   **Various Voice AI Providers**: Integrated and benchmarked in the Voice Agent Hub (e.g., Amazon Lex, ElevenLabs, OpenAI Voice, Google Dialogflow, Azure Speech, IBM Watson, Rasa, DeepPavlov, OpenVoice/OVO, Mycroft, Coqui TTS).
 
+## Platform API Gateway
+OpenAI-compatible API gateway (`/platform-api`) enabling external applications to access VPS LLM models:
+-   **OpenAI-Compatible Endpoints**: `GET /api/v1/models` (list models), `POST /api/v1/chat/completions` (chat with streaming support) — works with any OpenAI SDK by pointing `base_url` at this server.
+-   **API Key Management**: Generate, activate/deactivate, and delete API keys. Keys use SHA-256 hashing (only shown once on creation). Stored in `api_keys` PostgreSQL table.
+-   **Rate Limiting**: Per-key configurable rate limits (requests/minute) with in-memory sliding window.
+-   **Usage Tracking**: Atomic SQL-increment counters for total requests and tokens per key.
+-   **Management UI**: 3-tab interface (API Keys, Documentation, Usage) with key creation form, copy-to-clipboard, toggle/delete controls, and auto-generated code examples (Python, JS/TS, curl).
+-   **Route**: `artifacts/api-server/src/routes/platform-api.ts`; DB schema: `lib/db/src/schema/api-keys.ts`; Frontend: `artifacts/llm-hub/src/pages/PlatformApi.tsx`.
+
 ## Research Pipeline
 The ENT Clinical AI Research Pipeline (`/research-pipeline`) is a comprehensive clinical research management section sourced from 4 uploaded DOCX documents:
 -   **REDCap Data Schema**: 6 instruments (Enrollment, Clinical Presentation, Diagnosis, Imaging, Voice Data, Treatment Outcomes) with 55+ fields using canonical REDCap data dictionary types (`text`, `radio`, `checkbox`, `dropdown`, `slider`, `file`) and coded choices (e.g., `1, Male | 2, Female`). Exportable as REDCap-importable CSV.

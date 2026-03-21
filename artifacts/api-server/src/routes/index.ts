@@ -40,6 +40,7 @@ import marketProxyRouter from "./market-proxy";
 import codeGuardianRouter from "./code-guardian";
 import socialMediaPlatformRouter from "./social-media-platform";
 import researchPipelineRouter from "./research-pipeline";
+import platformApiRouter from "./platform-api";
 
 const router: IRouter = Router();
 
@@ -84,5 +85,6 @@ router.use(marketProxyRouter);
 router.use(codeGuardianRouter);
 router.use(socialMediaPlatformRouter);
 router.use(researchPipelineRouter);
+router.use(platformApiRouter);
 
 export default router;
