@@ -39,6 +39,7 @@ import agentsStatusRouter from "./agents-status";
 import marketProxyRouter from "./market-proxy";
 import codeGuardianRouter from "./code-guardian";
 import socialMediaPlatformRouter from "./social-media-platform";
+import researchPipelineRouter from "./research-pipeline";
 
 const router: IRouter = Router();
 
@@ -82,5 +83,6 @@ router.use(agentsStatusRouter);
 router.use(marketProxyRouter);
 router.use(codeGuardianRouter);
 router.use(socialMediaPlatformRouter);
+router.use(researchPipelineRouter);
 
 export default router;

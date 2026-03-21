@@ -21,6 +21,7 @@ import VoiceAgent from "@/pages/VoiceAgent";
 import Databases from "@/pages/Databases";
 import PubMedCollector from "@/pages/PubMedCollector";
 import TrainingPipeline from "@/pages/TrainingPipeline";
+import ResearchPipeline from "@/pages/ResearchPipeline";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -54,6 +55,7 @@ function Router() {
         <Route path="/databases" component={Databases} />
         <Route path="/pubmed" component={PubMedCollector} />
         <Route path="/pipeline" component={TrainingPipeline} />
+        <Route path="/research-pipeline" component={ResearchPipeline} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
