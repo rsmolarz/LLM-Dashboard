@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
+import { Agent } from "undici";
 import { db, llmConfigTable, documentsTable, documentChunksTable } from "@workspace/db";
 import {
   GetLlmStatusResponse,
@@ -12,6 +13,12 @@ import {
   SendChatMessageBody,
   SendChatMessageResponse,
 } from "@workspace/api-zod";
+
+const ollamaAgent = new Agent({
+  headersTimeout: 600000,
+  bodyTimeout: 600000,
+  connectTimeout: 30000,
+});
 
 const router: IRouter = Router();
 
@@ -563,7 +570,9 @@ router.post("/llm/chat/stream", async (req, res): Promise<void> => {
           temperature: parsed.data.temperature ?? 0.7,
         },
       }),
-      signal: AbortSignal.timeout(120000),
+      signal: AbortSignal.timeout(300000),
+      // @ts-ignore
+      dispatcher: ollamaAgent,
     });
 
     if (!ollamaRes.ok) {

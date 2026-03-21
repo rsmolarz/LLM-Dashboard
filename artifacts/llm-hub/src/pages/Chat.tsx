@@ -12,6 +12,7 @@ import {
   useAddMessage,
   useListModels,
   useRateMessage,
+  useListModelProfiles,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -19,10 +20,21 @@ import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL;
 
+interface ModelOption {
+  id: string;
+  name: string;
+  isProfile?: boolean;
+  profileId?: number;
+  baseModel?: string;
+  systemPrompt?: string;
+}
+
 export default function Chat() {
   const queryClient = useQueryClient();
   const [selectedConvId, setSelectedConvId] = useState<number | null>(null);
   const [selectedModel, setSelectedModel] = useState("llama3");
+  const [activeSystemPrompt, setActiveSystemPrompt] = useState<string | null>(null);
+  const [activeBaseModel, setActiveBaseModel] = useState<string | null>(null);
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [input, setInput] = useState("");
   const [streamingContent, setStreamingContent] = useState("");
@@ -33,6 +45,7 @@ export default function Chat() {
     query: { enabled: !!selectedConvId } as any
   });
   const { data: ollamaModels = [] } = useListModels();
+  const { data: modelProfiles = [] } = useListModelProfiles();
 
   const [useRag, setUseRag] = useState(false);
   const [useBrain, setUseBrain] = useState(false);
@@ -51,13 +64,42 @@ export default function Chat() {
     }
   }, [messages, streamingContent, isStreaming]);
 
-  const modelOptions = ollamaModels.length > 0 
-    ? ollamaModels.map(m => ({ id: m.name, name: m.name }))
-    : [{ id: "llama3", name: "llama3" }];
+  const modelOptions: ModelOption[] = [
+    ...(modelProfiles as any[]).map((p: any) => ({
+      id: `profile:${p.id}`,
+      name: p.name,
+      isProfile: true,
+      profileId: p.id,
+      baseModel: p.baseModel,
+      systemPrompt: p.systemPrompt,
+    })),
+    ...(ollamaModels.length > 0
+      ? ollamaModels.map(m => ({ id: m.name, name: m.name }))
+      : [{ id: "llama3", name: "llama3" }]),
+  ];
+
+  const handleSelectModel = (option: ModelOption) => {
+    setSelectedModel(option.id);
+    if (option.isProfile && option.systemPrompt) {
+      setActiveSystemPrompt(option.systemPrompt);
+      setActiveBaseModel(option.baseModel || "qwen2.5:14b");
+    } else {
+      setActiveSystemPrompt(null);
+      setActiveBaseModel(null);
+    }
+    setShowModelSelect(false);
+  };
 
   const handleNewChat = () => {
+    const option = modelOptions.find(m => m.id === selectedModel);
+    const displayName = option?.name || selectedModel;
     createConv.mutate({
-      data: { title: "New Conversation", model: selectedModel }
+      data: {
+        title: displayName + " Chat",
+        model: activeBaseModel || selectedModel,
+        profileId: option?.profileId,
+        systemPrompt: activeSystemPrompt || undefined,
+      }
     }, {
       onSuccess: (data) => {
         setSelectedConvId(data.id);
@@ -89,12 +131,14 @@ export default function Chat() {
     queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
 
     const conv = conversations.find(c => c.id === selectedConvId);
-    const modelToUse = conv?.model || selectedModel;
+    const convSystemPrompt = (conv as any)?.systemPrompt || activeSystemPrompt;
+    const modelToUse = conv?.model || activeBaseModel || selectedModel;
     
-    const formattedHistory = [...messages, { role: 'user', content: userMsgContent }].map(m => ({
-      role: m.role,
-      content: m.content
-    }));
+    const formattedHistory = [
+      ...(convSystemPrompt ? [{ role: 'system' as const, content: convSystemPrompt }] : []),
+      ...messages.map(m => ({ role: m.role, content: m.content })),
+      { role: 'user' as const, content: userMsgContent },
+    ];
 
     setIsStreaming(true);
     setStreamingContent("");
@@ -155,7 +199,7 @@ export default function Chat() {
       });
       queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
     }
-  }, [input, selectedConvId, isStreaming, messages, conversations, selectedModel, useRag, useBrain, addMsg, queryClient]);
+  }, [input, selectedConvId, isStreaming, messages, conversations, selectedModel, activeBaseModel, activeSystemPrompt, useRag, useBrain, addMsg, queryClient]);
 
   return (
     <div className="flex-1 flex overflow-hidden h-full">
@@ -175,7 +219,16 @@ export default function Chat() {
             conversations.map((conv) => (
               <div 
                 key={conv.id}
-                onClick={() => setSelectedConvId(conv.id)}
+                onClick={() => {
+                  setSelectedConvId(conv.id);
+                  if ((conv as any).systemPrompt) {
+                    setActiveSystemPrompt((conv as any).systemPrompt);
+                    setActiveBaseModel(conv.model);
+                  } else {
+                    setActiveSystemPrompt(null);
+                    setActiveBaseModel(null);
+                  }
+                }}
                 className={cn(
                   "group flex items-center justify-between p-3 rounded-xl cursor-pointer transition-all duration-200 border",
                   selectedConvId === conv.id 
@@ -374,18 +427,35 @@ export default function Chat() {
                 onClick={() => setShowModelSelect(!showModelSelect)}
               >
                 <span className="flex items-center gap-2">
-                  <HardDrive className="w-4 h-4 text-primary" />
-                  {selectedModel}
+                  {activeSystemPrompt ? <Brain className="w-4 h-4 text-purple-400" /> : <HardDrive className="w-4 h-4 text-primary" />}
+                  {modelOptions.find(m => m.id === selectedModel)?.name || selectedModel}
                 </span>
                 <ChevronDown className="w-4 h-4 opacity-50" />
               </Button>
 
               {showModelSelect && (
-                <div className="absolute top-full left-0 w-full mt-2 bg-[#18181B] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50">
-                  {modelOptions.map(m => (
+                <div className="absolute top-full left-0 w-full mt-2 bg-[#18181B] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50 max-h-80 overflow-y-auto">
+                  {modelOptions.some(m => m.isProfile) && (
+                    <div className="px-4 py-2 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-white/5">AI Coaches & Profiles</div>
+                  )}
+                  {modelOptions.filter(m => m.isProfile).map(m => (
                     <button
                       key={m.id}
-                      onClick={() => { setSelectedModel(m.id); setShowModelSelect(false); }}
+                      onClick={() => handleSelectModel(m)}
+                      className="w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-white/5 transition-colors text-white"
+                    >
+                      <Brain className="w-4 h-4 text-purple-400" />
+                      {m.name}
+                      <span className="ml-auto text-[10px] uppercase bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">Profile</span>
+                    </button>
+                  ))}
+                  {modelOptions.some(m => !m.isProfile) && (
+                    <div className="px-4 py-2 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-white/5">Base Models</div>
+                  )}
+                  {modelOptions.filter(m => !m.isProfile).map(m => (
+                    <button
+                      key={m.id}
+                      onClick={() => handleSelectModel(m)}
                       className="w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-white/5 transition-colors text-white"
                     >
                       <HardDrive className="w-4 h-4 text-muted-foreground" />

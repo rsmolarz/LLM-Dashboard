@@ -12,7 +12,8 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 
 ## Key Features
 - **Local LLM Management**: Connect to VPS Ollama, pull/delete models, chat interface
-- **Chat**: Multi-conversation chat with model selection, message rating (1-5), streaming responses
+- **Chat**: Multi-conversation chat with model selection, message rating (1-5), streaming responses, model profile integration (system prompt injection from profiles)
+- **Model Profiles in Chat**: Chat model selector shows AI Coaches & Profiles (with system prompts) above base Ollama models. Profile system prompt is persisted per conversation (profileId + systemPrompt columns). Personal Brand Coach (BBG methodology, qwen2.5:14b) is seeded on startup.
 - **Training & Customization** (10 tabs): Overview Dashboard, Model Profiles, Training Data, Knowledge Base, ENT Training, VPS Training, Fine-tuning, Backup, Model Evolution, Project Brain
 - **Deep Research**: Multi-model research engine at `/research`. "Deep" mode fans out to all local Ollama models in parallel; "Extensive" mode adds Claude and GPT. Session saving, follow-up questions, source citations
 - **Vision Studio**: `/vision` page with image generation (GPT-Image-1) and vision analysis (llava:13b on VPS). Domain presets for Medical/ENT, Finance, Social Media, Real Estate

@@ -140,6 +140,8 @@ export const ListConversationsResponseItem = zod.object({
   id: zod.number(),
   title: zod.string(),
   model: zod.string(),
+  profileId: zod.number().nullish(),
+  systemPrompt: zod.string().nullish(),
   createdAt: zod.date(),
   updatedAt: zod.date(),
 });
@@ -153,6 +155,8 @@ export const ListConversationsResponse = zod.array(
 export const CreateConversationBody = zod.object({
   title: zod.string(),
   model: zod.string(),
+  profileId: zod.number().optional(),
+  systemPrompt: zod.string().optional(),
 });
 
 /**
