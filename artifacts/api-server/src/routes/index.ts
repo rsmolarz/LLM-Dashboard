@@ -31,6 +31,7 @@ import dataAgentRouter from "./data-agent";
 import voiceAgentRouter from "./voice-agent";
 import pubmedEntCollectorRouter from "./pubmed-ent-collector";
 import advancedTrainingRouter from "./advanced-training-pipeline";
+import hedgeFundTrainingRouter from "./hedge-fund-training";
 
 const router: IRouter = Router();
 
@@ -66,5 +67,6 @@ router.use(dataAgentRouter);
 router.use(voiceAgentRouter);
 router.use(pubmedEntCollectorRouter);
 router.use(advancedTrainingRouter);
+router.use(hedgeFundTrainingRouter);
 
 export default router;

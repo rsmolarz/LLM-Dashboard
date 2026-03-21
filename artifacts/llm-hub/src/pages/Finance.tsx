@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { TrendingUp, Briefcase, BarChart3, Brain, BookOpen, DollarSign, Loader2, Plus, Trash2, Target, PieChart, Coins, Activity, Globe, UserCheck, Bitcoin } from "lucide-react";
+import { TrendingUp, Briefcase, BarChart3, Brain, BookOpen, DollarSign, Loader2, Plus, Trash2, Target, PieChart, Coins, Activity, Globe, UserCheck, Bitcoin, Database } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "/api";
 
-type Tab = "screener" | "portfolio" | "sentiment" | "journal" | "earnings" | "performance" | "options" | "sectors" | "dividends" | "patterns" | "macro" | "insider" | "crypto";
+type Tab = "screener" | "portfolio" | "sentiment" | "journal" | "earnings" | "performance" | "options" | "sectors" | "dividends" | "patterns" | "macro" | "insider" | "crypto" | "training";
 
 const TABS: { id: Tab; label: string; icon: any }[] = [
   { id: "screener", label: "Stock Screener", icon: TrendingUp },
@@ -19,6 +19,7 @@ const TABS: { id: Tab; label: string; icon: any }[] = [
   { id: "macro", label: "Macro Dashboard", icon: Globe },
   { id: "insider", label: "Insider Activity", icon: UserCheck },
   { id: "crypto", label: "Crypto Analysis", icon: Bitcoin },
+  { id: "training", label: "HF Training", icon: Database },
 ];
 
 function StockScreenerTab() {
@@ -463,6 +464,161 @@ function SimpleGenTab({ title, desc, endpoint, fields, resultKey }: { title: str
   );
 }
 
+function HFTrainingTab() {
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState<Record<string, boolean>>({});
+  const [results, setResults] = useState<Record<string, any>>({});
+  const [injectModel, setInjectModel] = useState("deepseek-r1:8b");
+  const [injectCategory, setInjectCategory] = useState("");
+
+  const loadStats = async () => {
+    try {
+      const r = await fetch(`${API}/hedge-training/stats`);
+      setStats(await r.json());
+    } catch (e) { console.error(e); }
+  };
+
+  useEffect(() => { loadStats(); }, []);
+
+  const runCollector = async (name: string, endpoint: string, body: any = {}) => {
+    setLoading(p => ({ ...p, [name]: true }));
+    try {
+      const r = await fetch(`${API}/hedge-training/${endpoint}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      setResults(p => ({ ...p, [name]: data }));
+      setTimeout(loadStats, 5000);
+    } catch (e) { console.error(e); }
+    setLoading(p => ({ ...p, [name]: false }));
+  };
+
+  const priorityCategories = ["distressed_assets", "market_inefficiency", "arbitrage", "credit_markets", "special_situations"];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-white">Hedge Fund Training Pipeline</h2>
+          <p className="text-gray-400 text-sm">Market inefficiencies & distressed assets training data</p>
+        </div>
+        <button onClick={() => runCollector("all", "collect-all")} disabled={loading.all}
+          className="px-5 py-2 rounded-lg bg-gradient-to-r from-green-500 to-emerald-600 text-white font-medium disabled:opacity-50 flex items-center gap-2">
+          {loading.all ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+          Run Full Pipeline
+        </button>
+      </div>
+
+      {stats && (
+        <div className="grid grid-cols-4 gap-3">
+          <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700 text-center">
+            <span className="text-xs text-gray-400 block">Total HF Samples</span>
+            <span className="text-2xl font-bold text-green-400">{stats.totalSamples || 0}</span>
+          </div>
+          <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700 text-center">
+            <span className="text-xs text-gray-400 block">Sources</span>
+            <span className="text-2xl font-bold text-cyan-400">{Object.keys(stats.bySource || {}).length}</span>
+          </div>
+          <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700 text-center">
+            <span className="text-xs text-gray-400 block">Categories</span>
+            <span className="text-2xl font-bold text-purple-400">{Object.keys(stats.byCategory || {}).length}</span>
+          </div>
+          <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700 text-center">
+            <span className="text-xs text-gray-400 block">Priority Categories</span>
+            <span className="text-2xl font-bold text-yellow-400">
+              {Object.entries(stats.byCategory || {}).filter(([k]) => priorityCategories.includes(k)).reduce((s, [, v]: any) => s + v, 0)}
+            </span>
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700 space-y-3">
+          <h3 className="text-white font-semibold text-sm">Data Sources</h3>
+          {stats?.bySource && Object.entries(stats.bySource).sort((a: any, b: any) => b[1].count - a[1].count).map(([source, data]: any) => (
+            <div key={source} className="flex justify-between items-center">
+              <span className="text-gray-300 text-sm">{source.replace(/_/g, " ")}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-green-400 text-sm font-medium">{data.count}</span>
+                <span className="text-gray-500 text-xs">avg q{data.avgQuality}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700 space-y-3">
+          <h3 className="text-white font-semibold text-sm">Categories</h3>
+          <div className="max-h-64 overflow-y-auto space-y-1">
+            {stats?.byCategory && Object.entries(stats.byCategory).sort((a: any, b: any) => b[1] - a[1]).map(([cat, count]: any) => (
+              <div key={cat} className="flex justify-between items-center">
+                <span className={`text-sm ${priorityCategories.includes(cat) ? "text-yellow-300 font-medium" : "text-gray-300"}`}>
+                  {priorityCategories.includes(cat) ? "\u2605 " : ""}{cat.replace(/_/g, " ")}
+                </span>
+                <span className="text-green-400 text-sm">{count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-4 gap-3">
+        {[
+          { name: "openalex", label: "OpenAlex Finance", endpoint: "openalex-collect", body: { maxPerQuery: 15 }, desc: "Academic papers on inefficiencies & distressed" },
+          { name: "sec", label: "SEC EDGAR", endpoint: "sec-distressed-collect", body: { maxResults: 20 }, desc: "Chapter 11, going concern, distressed filings" },
+          { name: "fred", label: "FRED Macro", endpoint: "fred-macro-collect", body: {}, desc: "HY spreads, VIX, yield curve, macro indicators" },
+          { name: "synthetic", label: "Synthetic Q5", endpoint: "synthetic-generate", body: {}, desc: "Expert-level distressed & inefficiency scenarios" },
+        ].map(c => (
+          <button key={c.name} onClick={() => runCollector(c.name, c.endpoint, c.body)} disabled={loading[c.name]}
+            className="p-3 bg-gray-800/50 rounded-lg border border-gray-700 hover:border-green-500/50 transition-all text-left disabled:opacity-50">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-white text-sm font-medium">{c.label}</span>
+              {loading[c.name] && <Loader2 className="w-3 h-3 animate-spin text-green-400" />}
+            </div>
+            <p className="text-gray-500 text-xs">{c.desc}</p>
+            {results[c.name] && <p className="text-green-400 text-xs mt-1">{results[c.name].samplesAdded != null ? `+${results[c.name].samplesAdded} samples` : results[c.name].message || "Started"}</p>}
+          </button>
+        ))}
+      </div>
+
+      <div className="bg-gray-800/50 rounded-lg p-4 border border-yellow-500/30 space-y-3">
+        <h3 className="text-yellow-300 font-semibold text-sm">Inject to VPS Model</h3>
+        <p className="text-gray-400 text-xs">Create a fine-tuned hedge fund model on VPS from collected training data</p>
+        <div className="flex gap-3">
+          <select value={injectModel} onChange={e => setInjectModel(e.target.value)}
+            className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm">
+            {["deepseek-r1:8b", "qwen2.5:7b", "qwen2.5:14b", "mistral:latest"].map(m => <option key={m}>{m}</option>)}
+          </select>
+          <select value={injectCategory} onChange={e => setInjectCategory(e.target.value)}
+            className="p-2 bg-gray-800 border border-gray-700 rounded text-white text-sm flex-1">
+            <option value="">All finance categories</option>
+            {["distressed_assets", "market_inefficiency", "arbitrage", "credit_markets", "special_situations",
+              "quantitative_strategies", "volatility", "market_microstructure", "macro_strategy", "behavioral_finance",
+              "hedge_fund_strategies", "risk_management", "ai_quant"].map(c => <option key={c} value={c}>{c.replace(/_/g, " ")}</option>)}
+          </select>
+          <button onClick={() => runCollector("inject", "inject-to-model", { model: injectModel, category: injectCategory || undefined, limit: 100 })}
+            disabled={loading.inject}
+            className="px-5 py-2 rounded bg-gradient-to-r from-yellow-500 to-amber-600 text-black font-medium disabled:opacity-50 flex items-center gap-2">
+            {loading.inject ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+            Inject Model
+          </button>
+        </div>
+        {results.inject && (
+          <div className="p-3 bg-gray-700/50 rounded text-sm">
+            {results.inject.success ? (
+              <div className="text-green-400">
+                Created <span className="font-bold">{results.inject.modelName}</span> from {results.inject.baseModel} with {results.inject.samplesUsed} samples ({results.inject.messagesInjected} messages injected)
+              </div>
+            ) : (
+              <div className="text-red-400">{results.inject.error}</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Finance() {
   const [tab, setTab] = useState<Tab>("screener");
   const [dashboard, setDashboard] = useState<any>(null);
@@ -551,6 +707,7 @@ export default function Finance() {
             { key: "symbol", label: "Crypto Symbol (e.g., BTC, ETH)" },
             { key: "analysisType", label: "Analysis Type", options: ["fundamental", "technical", "on-chain", "sentiment", "defi"] },
           ]} resultKey="aiAnalysis" />}
+        {tab === "training" && <HFTrainingTab />}
       </div>
     </div>
   );

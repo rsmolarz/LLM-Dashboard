@@ -29,7 +29,7 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - **User Authentication**: Replit Auth (OIDC PKCE) with session management, per-user data scoping
 - **ENT Clinical AI** (15 tabs): `/clinical` page — Clinical Decision Support, Audiogram AI, Case Studies, Report Writer, Drug Interactions, Patient Education, Image Annotation, Protocols, Surgical Planning, Treatment Outcomes, Literature Search, Symptom Timeline, Referral Letters, Dosage Calculator, Voice Disorders
 - **Social Media AI** (11 tabs): `/social` page — Content Calendar, Post Generator, Viral Hooks, Analytics, Brand Voice, Hashtag Strategy, Competitor Analysis, Engagement Predictor, Caption Writer, Reel Scripts, Audience Personas
-- **Hedge Fund AI** (13 tabs): `/finance` page — Stock Screener, Portfolio, Sentiment, Trade Journal, Earnings, AI Tracker, Options Strategy, Sector Rotation, Dividends, Technical Patterns, Macro Dashboard, Insider Activity, Crypto Analysis
+- **Hedge Fund AI** (14 tabs): `/finance` page — Stock Screener, Portfolio, Sentiment, Trade Journal, Earnings, AI Tracker, Options Strategy, Sector Rotation, Dividends, Technical Patterns, Macro Dashboard, Insider Activity, Crypto Analysis, HF Training Pipeline
 - **Database Training Agent** (5 tabs): `/data-agent` page — Dashboard (domain stats for ENT/Social/Finance), Continuous Training (auto-scheduler status, config, run history), Data Sources (CRUD), Jobs (run generation jobs per domain), Datasets (quality scoring)
 - **Voice Agent Hub** (8 tabs): `/voice-agent` page — Dashboard, All Providers, Cloud Services, Local Engines, Voice Chat, History, Benchmark, Dialog Flows. Compares 12 voice AI providers: Cloud (Amazon Lex, ElevenLabs, OpenAI Voice, Google Dialogflow, Azure Speech, IBM Watson) and Local (Rasa, DeepPavlov, OpenVoice/OVO, Mycroft, Local LLM/Ollama, Coqui TTS). Integrated with local Ollama for real conversational responses. Provider benchmarking with rankings, dialog flow generation via LLM.
 
@@ -83,18 +83,32 @@ Full-stack monorepo (pnpm workspace) for managing a self-hosted Ollama LLM serve
 - Auto-categorizes into 11 ENT subcategories (otology, laryngology, rhinology, head_neck_oncology, ai_ent, sleep_medicine, thyroid, dysphagia, pharyngology, endoscopy, general_ent)
 - Frontend: `/pubmed` with Overview, Articles, Search, History tabs
 
-## Advanced Training Pipeline
+## Advanced Training Pipeline (ENT)
 - **Route**: `artifacts/api-server/src/routes/advanced-training-pipeline.ts`
 - **Frontend**: `/pipeline` page with full dashboard
-- **Data Sources** (5 total, 1304+ samples):
-  - PubMed Abstracts (849 samples) — via pubmed-ent-collector
-  - PMC Full-Text (91 samples) — open-access full articles with methods/results/conclusions extraction
-  - ClinicalTrials.gov (269 samples) — active ENT trials with intervention and outcome data
-  - OpenAlex (61 samples) — academic metadata with citation-weighted quality scoring
+- **Data Sources** (5 total, 2068+ ENT samples):
+  - PubMed Abstracts (1184 samples) — via pubmed-ent-collector, 50+ MeSH + 36 keyword queries
+  - PMC Full-Text (168 samples) — open-access full articles, 30 queries covering all subspecialties
+  - ClinicalTrials.gov (594 samples) — 35 queries, active ENT trials with intervention/outcome data
+  - OpenAlex (88 samples) — academic metadata with citation-weighted quality scoring
   - VPS Training (34 samples) — Ollama-generated Q&A pairs
+- **20 ENT categories**: ai_ent, pediatric_ent, skull_base, salivary_gland, airway, facial_plastics, allergy, voice_disorders, vestibular, laryngology, otology, rhinology, head_neck_oncology, sleep_medicine, dysphagia, thyroid, pharyngology, endoscopy, laryngopharyngeal_reflux, general_ent
 - **Model Injection**: Creates fine-tuned model variants on VPS using Ollama `create` API with `from` + `system` + `messages` format
 - **ENT Clinical AI profile**: meditron:7b base, temperature 0.3, seeded on startup
 - **Training rotation**: qwen2.5:7b, mistral:latest, deepseek-r1:8b, meditron:7b (4 models)
+
+## Hedge Fund Training Pipeline
+- **Route**: `artifacts/api-server/src/routes/hedge-fund-training.ts`
+- **Frontend**: HF Training tab on `/finance` page
+- **Data Sources** (4 total, 1701+ samples):
+  - SEC EDGAR (1360 samples) — Chapter 11, going concern, distressed filings, activist investors, merger agreements, covenant violations
+  - OpenAlex Finance (316 samples) — 35 queries: distressed debt, market inefficiencies, statistical arbitrage, behavioral finance, factor investing
+  - FRED Macro (15 samples) — Macro indicator analysis: HY spreads, VIX, yield curve, CPI, rates
+  - Synthetic Q5 (10 samples) — Expert-level distressed asset and market inefficiency analysis scenarios
+- **18 finance categories**: distressed_assets, market_inefficiency, arbitrage, special_situations, quantitative_strategies, credit_markets, volatility, market_microstructure, hedge_fund_strategies, risk_management, private_equity, real_estate, commodities, behavioral_finance, ai_quant, macro_strategy, crypto, general_finance
+- **Priority focus**: distressed_assets (659) + market_inefficiency (161) = 820 priority samples (48% of total)
+- **Model Injection**: Creates `-hf-trained` model variants on VPS (e.g., deepseek-r1-8b-hf-trained)
+- **Hedge Fund AI profile**: deepseek-r1:8b base, temperature 0.4, seeded on startup
 
 ## AI Databases & Resources
 - `/databases` page with 40 resources across 9 categories
