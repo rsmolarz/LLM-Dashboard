@@ -3,6 +3,13 @@ import { db } from "@workspace/db";
 import { vpsDatabaseConfigTable, trainingDataTable, chatMessagesTable, conversationsTable, documentsTable, discoveredSourcesTable, trainingDataJobsTable, trainingDatasetsTable } from "@workspace/db/schema";
 import { eq, desc, asc, sql } from "drizzle-orm";
 import { getUncachableGmailClient, driveProxyJson, driveProxyText } from "./google-clients";
+import { Agent } from "undici";
+
+const ollamaAgent = new Agent({
+  headersTimeout: 1200000,
+  bodyTimeout: 1200000,
+  connectTimeout: 30000,
+});
 
 const router: IRouter = Router();
 
@@ -990,6 +997,8 @@ async function generateDomainTrainingData(domain: string, model: string, count: 
           options: { temperature: 0.8, num_predict: 2048 },
         }),
         signal: controller.signal,
+        // @ts-ignore - undici dispatcher to override headersTimeout
+        dispatcher: ollamaAgent,
       });
       if (!resp.ok) throw new Error(`Ollama returned ${resp.status}`);
       const reader = resp.body?.getReader();
@@ -1136,6 +1145,8 @@ async function runTrainingGeneration() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: cycleModel, prompt: "Ready", stream: true }),
         signal: AbortSignal.timeout(180000),
+        // @ts-ignore
+        dispatcher: ollamaAgent,
       });
       const warmReader = warmResp.body?.getReader();
       if (warmReader) { while (!(await warmReader.read()).done) {} }
@@ -1348,7 +1359,9 @@ Generate clinically precise Q&A pairs that capture the key medical knowledge fro
               stream: true,
               options: { temperature: 0.7, num_predict: 2048 },
             }),
-            signal: AbortSignal.timeout(300000),
+            signal: AbortSignal.timeout(600000),
+            // @ts-ignore
+            dispatcher: ollamaAgent,
           });
 
           if (!resp.ok) continue;
@@ -1441,6 +1454,8 @@ router.post("/auto-collector/vps-pull-model", async (req, res): Promise<void> =>
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: modelName, stream: true }),
       signal: AbortSignal.timeout(1800000),
+      // @ts-ignore
+      dispatcher: ollamaAgent,
     });
     if (!resp.ok) throw new Error(`Ollama returned ${resp.status}`);
     const reader = resp.body?.getReader();
