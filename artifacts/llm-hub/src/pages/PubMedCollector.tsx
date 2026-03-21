@@ -604,9 +604,11 @@ export default function PubMedCollector() {
                             <button
                               onClick={(e) => { e.stopPropagation(); generateSamples(article.pmid); }}
                               disabled={generatingFor === article.pmid}
+                              title="Generate training Q&amp;A pairs from this article"
                               className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-green-500/10 text-green-300 border border-green-500/20 hover:bg-green-500/20 disabled:opacity-50"
                             >
                               {generatingFor === article.pmid ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+                              <span className="hidden xl:inline">Generate</span>
                             </button>
                           </div>
                         </td>
@@ -629,12 +631,22 @@ export default function PubMedCollector() {
                                   <span key={k} className="px-2 py-0.5 rounded-md bg-cyan-500/10 text-[10px] text-cyan-300">{k}</span>
                                 ))}
                               </div>
-                              <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
-                                <span>PMID: {article.pmid}</span>
-                                {article.doi && <span>DOI: {article.doi}</span>}
-                                {article.hasAbstract && <span className="text-green-400">{article.abstractLength} chars</span>}
-                                <span>{article.pubDate}</span>
-                                <span className="lg:hidden">{article.journal}</span>
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                                  <span>PMID: {article.pmid}</span>
+                                  {article.doi && <span>DOI: {article.doi}</span>}
+                                  {article.hasAbstract && <span className="text-green-400">{article.abstractLength} chars</span>}
+                                  <span>{article.pubDate}</span>
+                                  <span className="lg:hidden">{article.journal}</span>
+                                </div>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); generateSamples(article.pmid); }}
+                                  disabled={generatingFor === article.pmid}
+                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-green-500/10 text-green-300 border border-green-500/20 hover:bg-green-500/20 disabled:opacity-50 transition-all"
+                                >
+                                  {generatingFor === article.pmid ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                                  Generate More Samples
+                                </button>
                               </div>
                             </div>
                           </td>
