@@ -361,6 +361,199 @@ router.put("/research-pipeline/tasks/:id", (req, res) => {
   res.json({ task });
 });
 
+interface RedcapSetupStep {
+  id: string;
+  step: number;
+  title: string;
+  description: string;
+  status: "pending" | "done" | "skipped";
+  details?: string;
+}
+
+const setupSteps: RedcapSetupStep[] = [
+  { id: "s1", step: 1, title: "Identify your institution's REDCap admin", description: "Find out who manages REDCap at your institution. This is typically the Clinical Research Office, IT Research Services, or a Biomedical Informatics department.", status: "pending", details: "Check your institution's research website or ask your department research coordinator." },
+  { id: "s2", step: 2, title: "Submit REDCap project request", description: "Request a new REDCap project in Development mode. Use the email template below or your institution's online request form.", status: "pending", details: "Most institutions process these within 1-5 business days." },
+  { id: "s3", step: 3, title: "Import data dictionary", description: "Once your project is created, import the CSV data dictionary from this platform. Go to REDCap > Project Setup > Data Dictionary > Upload.", status: "pending", details: "Use the 'Export CSV' button on the REDCap Schema tab to download the file." },
+  { id: "s4", step: 4, title: "Request API token", description: "In REDCap, go to API > Request API Token. Your admin must approve this. Once granted, enter the token in the connection panel below.", status: "pending", details: "API access may require additional IRB documentation at some institutions." },
+  { id: "s5", step: 5, title: "Test API connection", description: "Enter your REDCap URL and API token in the connection panel below and test the connection.", status: "pending" },
+  { id: "s6", step: 6, title: "Configure instruments in Development", description: "Review all 6 instruments in REDCap, test data entry forms, adjust field labels or branching logic as needed.", status: "pending" },
+  { id: "s7", step: 7, title: "Move to Production (after IRB approval)", description: "Once IRB approves your protocol, move the project to Production mode to begin real data collection.", status: "pending", details: "This step requires IRB approval — do not move to Production before then." },
+];
+
+const redcapAdminEmail = {
+  subject: "REDCap Project Request — ENT AI Clinical Dataset Research",
+  body: `Dear REDCap Administrator,
+
+I am writing to request a new REDCap project for a clinical research study in the Department of Otolaryngology.
+
+Project Details:
+  - Project Title: ENT-AI Dataset Development
+  - PI: [YOUR NAME, MD]
+  - Department: Otolaryngology — Head and Neck Surgery
+  - Purpose: Development of a de-identified clinical dataset for machine learning research in otolaryngology
+  - IRB Status: In preparation (data dictionary setup in Development mode only at this stage)
+  - Estimated enrollment: 500–2,000 encounters (retrospective) + 200–500 patients (prospective)
+
+I have a complete REDCap data dictionary (CSV) ready to import with 6 instruments and 55+ fields covering:
+  1. Patient Enrollment (demographics, consent)
+  2. Clinical Presentation (symptoms, history)
+  3. Diagnosis & Classification (ICD-10, pathology)
+  4. Imaging & Media Records (endoscopy, otoscopy)
+  5. Voice & Acoustic Data (recordings, acoustic measures)
+  6. Treatment & Outcomes (interventions, follow-up)
+
+I would also like to request API access for this project to enable integration with our research data management platform.
+
+Please let me know if you need any additional information or documentation to process this request. I am happy to schedule a meeting to discuss the project.
+
+Thank you for your time.
+
+Best regards,
+[YOUR NAME], MD
+Department of Otolaryngology — Head and Neck Surgery
+[INSTITUTION]
+[EMAIL] | [PHONE]`
+};
+
+let redcapConnection: { url: string; token: string; connected: boolean; lastTest: string | null; projectTitle: string | null } = {
+  url: "",
+  token: "",
+  connected: false,
+  lastTest: null,
+  projectTitle: null,
+};
+
+router.get("/research-pipeline/redcap-setup", (_req, res) => {
+  res.json({
+    steps: setupSteps,
+    adminEmail: redcapAdminEmail,
+    connection: {
+      url: redcapConnection.url,
+      hasToken: !!redcapConnection.token,
+      connected: redcapConnection.connected,
+      lastTest: redcapConnection.lastTest,
+      projectTitle: redcapConnection.projectTitle,
+    },
+  });
+});
+
+router.put("/research-pipeline/redcap-setup/steps/:id", (req, res) => {
+  const step = setupSteps.find(s => s.id === req.params.id);
+  if (!step) { res.status(404).json({ error: "Step not found" }); return; }
+  const validStatuses = ["pending", "done", "skipped"] as const;
+  if (req.body.status !== undefined) {
+    if (!validStatuses.includes(req.body.status)) { res.status(400).json({ error: `status must be one of: ${validStatuses.join(", ")}` }); return; }
+    step.status = req.body.status;
+  }
+  res.json({ step });
+});
+
+router.post("/research-pipeline/redcap-setup/connection", async (req, res) => {
+  const { url, token } = req.body;
+  if (!url || typeof url !== "string") { res.status(400).json({ error: "url is required" }); return; }
+  if (!token || typeof token !== "string") { res.status(400).json({ error: "token is required" }); return; }
+
+  const cleanUrl = url.replace(/\/+$/, "");
+  redcapConnection.url = cleanUrl;
+  redcapConnection.token = token;
+
+  try {
+    const apiUrl = `${cleanUrl}/api/`;
+    const params = new URLSearchParams();
+    params.append("token", token);
+    params.append("content", "project");
+    params.append("format", "json");
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!response.ok) {
+      redcapConnection.connected = false;
+      redcapConnection.lastTest = new Date().toISOString();
+      res.json({ connected: false, error: `REDCap returned HTTP ${response.status}` });
+      return;
+    }
+
+    const data = await response.json();
+    redcapConnection.connected = true;
+    redcapConnection.lastTest = new Date().toISOString();
+    redcapConnection.projectTitle = data.project_title || null;
+
+    const setupStep = setupSteps.find(s => s.id === "s5");
+    if (setupStep) setupStep.status = "done";
+
+    res.json({
+      connected: true,
+      projectTitle: data.project_title,
+      creationTime: data.creation_time,
+      inProduction: data.in_production,
+    });
+  } catch (err: any) {
+    redcapConnection.connected = false;
+    redcapConnection.lastTest = new Date().toISOString();
+    res.json({ connected: false, error: err.message || "Connection failed" });
+  }
+});
+
+router.post("/research-pipeline/redcap-setup/import-dictionary", async (req, res) => {
+  if (!redcapConnection.connected || !redcapConnection.token || !redcapConnection.url) {
+    res.status(400).json({ error: "REDCap not connected. Test connection first." });
+    return;
+  }
+
+  try {
+    const csvRows: string[] = [];
+    csvRows.push("Variable / Field Name,Form Name,Section Header,Field Type,Field Label,Choices Calculations or Slider Labels,Field Note,Text Validation Type OR Show Slider Number,Text Validation Min,Text Validation Max,Identifier?,Branching Logic (Show field only if...),Required Field?,Custom Alignment,Question Number (surveys only),Matrix Group Name,Matrix Ranking?,Field Annotation");
+
+    function esc(s: string) { return s.replace(/"/g, '""'); }
+
+    for (const inst of redcapInstruments) {
+      for (const field of inst.fields) {
+        const choices = (field.choices || "").replace(/\s*\|\s*/g, " | ");
+        const validationType = field.type === "slider" ? "number_1dp" : (field.validation || "");
+        const valMin = field.validationMin || "";
+        const valMax = field.validationMax || "";
+        csvRows.push(`"${esc(field.name)}","${esc(inst.id)}","","${esc(field.type)}","${esc(field.label)}","${esc(choices)}","","${esc(validationType)}","${valMin}","${valMax}","","","${field.required ? "y" : ""}","","","","",""`);
+      }
+    }
+
+    const csvContent = csvRows.join("\n");
+    const apiUrl = `${redcapConnection.url}/api/`;
+
+    const formData = new URLSearchParams();
+    formData.append("token", redcapConnection.token);
+    formData.append("content", "metadata");
+    formData.append("format", "csv");
+    formData.append("data", csvContent);
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: formData.toString(),
+      signal: AbortSignal.timeout(30000),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      res.json({ success: false, error: `REDCap returned HTTP ${response.status}: ${text}` });
+      return;
+    }
+
+    const result = await response.text();
+
+    const importStep = setupSteps.find(s => s.id === "s3");
+    if (importStep) importStep.status = "done";
+
+    res.json({ success: true, result, fieldsImported: redcapInstruments.reduce((sum, i) => sum + i.fields.length, 0) });
+  } catch (err: any) {
+    res.json({ success: false, error: err.message || "Import failed" });
+  }
+});
+
 router.get("/research-pipeline/export/redcap-csv", (_req, res) => {
   const rows: string[] = [];
   rows.push("Variable / Field Name,Form Name,Section Header,Field Type,Field Label,Choices Calculations or Slider Labels,Field Note,Text Validation Type OR Show Slider Number,Text Validation Min,Text Validation Max,Identifier?,Branching Logic (Show field only if...),Required Field?,Custom Alignment,Question Number (surveys only),Matrix Group Name,Matrix Ranking?,Field Annotation");

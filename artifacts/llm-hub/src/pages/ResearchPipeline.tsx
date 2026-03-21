@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from "react";
 import {
   FlaskConical, FileText, Shield, Mail, Users, CheckCircle, Clock,
   AlertCircle, ChevronDown, ChevronRight, Database, Clipboard, Copy, Check,
-  Download, Loader2, RefreshCw, ClipboardList, BookOpen, Target, Beaker
+  Download, Loader2, RefreshCw, ClipboardList, BookOpen, Target, Beaker,
+  Settings, Link2, Upload, CircleDot, SkipForward, ExternalLink, Plug, Wifi, WifiOff
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
@@ -18,7 +19,7 @@ interface Overview {
   outreachTemplates: number;
 }
 
-type Tab = "overview" | "redcap" | "irb" | "outreach" | "consent" | "tasks";
+type Tab = "overview" | "redcap-setup" | "redcap" | "irb" | "outreach" | "consent" | "tasks";
 
 export default function ResearchPipeline() {
   const [tab, setTab] = useState<Tab>("overview");
@@ -28,6 +29,7 @@ export default function ResearchPipeline() {
   const [outreachData, setOutreachData] = useState<any>(null);
   const [consentData, setConsentData] = useState<any>(null);
   const [tasksData, setTasksData] = useState<any>(null);
+  const [setupData, setSetupData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [expandedInstrument, setExpandedInstrument] = useState<string | null>(null);
   const [expandedIrb, setExpandedIrb] = useState<string | null>(null);
@@ -38,13 +40,14 @@ export default function ResearchPipeline() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [ov, rc, irb, out, con, tasks] = await Promise.all([
+      const [ov, rc, irb, out, con, tasks, setup] = await Promise.all([
         fetch(`${API}/api/research-pipeline/overview`).then(r => r.json()),
         fetch(`${API}/api/research-pipeline/redcap-schema`).then(r => r.json()),
         fetch(`${API}/api/research-pipeline/irb`).then(r => r.json()),
         fetch(`${API}/api/research-pipeline/outreach`).then(r => r.json()),
         fetch(`${API}/api/research-pipeline/consent`).then(r => r.json()),
         fetch(`${API}/api/research-pipeline/tasks`).then(r => r.json()),
+        fetch(`${API}/api/research-pipeline/redcap-setup`).then(r => r.json()),
       ]);
       setOverview(ov);
       setRedcapData(rc);
@@ -52,6 +55,7 @@ export default function ResearchPipeline() {
       setOutreachData(out);
       setConsentData(con);
       setTasksData(tasks);
+      setSetupData(setup);
     } catch { }
     setLoading(false);
   }, []);
@@ -83,6 +87,7 @@ export default function ResearchPipeline() {
 
   const tabs: { key: Tab; label: string; icon: any }[] = [
     { key: "overview", label: "Overview", icon: Target },
+    { key: "redcap-setup", label: "REDCap Setup", icon: Settings },
     { key: "redcap", label: "REDCap Schema", icon: Database },
     { key: "irb", label: "IRB Protocol", icon: Shield },
     { key: "outreach", label: "Outreach Emails", icon: Mail },
@@ -198,6 +203,8 @@ export default function ResearchPipeline() {
           </div>
         </div>
       )}
+
+      {tab === "redcap-setup" && setupData && <RedcapSetupTab setupData={setupData} copyText={copyText} copiedId={copiedId} fetchData={fetchData} API={API} />}
 
       {tab === "redcap" && redcapData && (
         <div className="space-y-4">
@@ -400,7 +407,7 @@ export default function ResearchPipeline() {
       )}
 
       {tab === "tasks" && tasksData && (
-        <div className="space-y-4">
+        <div className="space-y-4 overflow-y-auto max-h-[calc(100vh-14rem)]">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <CheckCircle className="w-5 h-5 text-emerald-400" /> Research Pipeline Tasks
           </h2>
@@ -440,6 +447,256 @@ export default function ResearchPipeline() {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+function RedcapSetupTab({ setupData, copyText, copiedId, fetchData, API }: {
+  setupData: any;
+  copyText: (text: string, id: string) => void;
+  copiedId: string | null;
+  fetchData: () => void;
+  API: string;
+}) {
+  const [redcapUrl, setRedcapUrl] = useState(setupData.connection?.url || "");
+  const [redcapToken, setRedcapToken] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [connectionResult, setConnectionResult] = useState<any>(null);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<any>(null);
+  const [updatingStep, setUpdatingStep] = useState<string | null>(null);
+
+  const stepStatusColors: Record<string, string> = {
+    pending: "text-gray-400 bg-gray-400/10 border-gray-500/20",
+    done: "text-emerald-400 bg-emerald-400/10 border-emerald-500/20",
+    skipped: "text-amber-400 bg-amber-400/10 border-amber-500/20",
+  };
+
+  const stepIcons: Record<string, any> = {
+    pending: CircleDot,
+    done: CheckCircle,
+    skipped: SkipForward,
+  };
+
+  const updateStepStatus = async (stepId: string, status: string) => {
+    setUpdatingStep(stepId);
+    try {
+      await fetch(`${API}/api/research-pipeline/redcap-setup/steps/${stepId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      await fetchData();
+    } catch { }
+    setUpdatingStep(null);
+  };
+
+  const testConnection = async () => {
+    if (!redcapUrl || !redcapToken) return;
+    setConnecting(true);
+    setConnectionResult(null);
+    try {
+      const resp = await fetch(`${API}/api/research-pipeline/redcap-setup/connection`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: redcapUrl, token: redcapToken }),
+      });
+      const data = await resp.json();
+      setConnectionResult(data);
+      await fetchData();
+    } catch (err: any) {
+      setConnectionResult({ connected: false, error: err.message });
+    }
+    setConnecting(false);
+  };
+
+  const importDictionary = async () => {
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const resp = await fetch(`${API}/api/research-pipeline/redcap-setup/import-dictionary`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await resp.json();
+      setImportResult(data);
+      await fetchData();
+    } catch (err: any) {
+      setImportResult({ success: false, error: err.message });
+    }
+    setImporting(false);
+  };
+
+  const completedSteps = setupData.steps.filter((s: any) => s.status === "done").length;
+  const totalSteps = setupData.steps.length;
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+          <Settings className="w-5 h-5 text-orange-400" /> REDCap Development Setup
+        </h2>
+        <p className="text-xs text-muted-foreground mt-1">Step-by-step guide to request and configure your REDCap project in Development mode. No IRB approval needed for this stage.</p>
+      </div>
+
+      <div className="glass-panel rounded-xl p-4 border border-white/5">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-white">Setup Progress</span>
+          <span className="text-sm font-bold text-orange-400">{completedSteps}/{totalSteps}</span>
+        </div>
+        <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+          <div className="h-full bg-gradient-to-r from-orange-500 to-amber-500 rounded-full transition-all" style={{ width: `${(completedSteps / totalSteps) * 100}%` }} />
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        {setupData.steps.map((step: any) => {
+          const Icon = stepIcons[step.status] || CircleDot;
+          return (
+            <div key={step.id} className={`glass-panel rounded-xl border p-4 ${step.status === "done" ? "border-emerald-500/20 bg-emerald-500/[0.02]" : "border-white/5"}`}>
+              <div className="flex items-start gap-3">
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-xs text-muted-foreground font-mono w-5">{step.step}.</span>
+                  <Icon className={`w-4 h-4 ${step.status === "done" ? "text-emerald-400" : step.status === "skipped" ? "text-amber-400" : "text-gray-400"}`} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-sm font-medium ${step.status === "done" ? "text-emerald-300 line-through" : "text-white"}`}>{step.title}</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">{step.description}</div>
+                  {step.details && <div className="text-[10px] text-muted-foreground/70 mt-1 italic">{step.details}</div>}
+                </div>
+                <select
+                  value={step.status}
+                  onChange={(e) => updateStepStatus(step.id, e.target.value)}
+                  disabled={updatingStep === step.id}
+                  className={`px-2 py-1 rounded text-[10px] font-medium border cursor-pointer ${stepStatusColors[step.status]}`}
+                >
+                  <option value="pending">Pending</option>
+                  <option value="done">Done</option>
+                  <option value="skipped">Skipped</option>
+                </select>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="glass-panel rounded-xl border border-white/5 p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+          <Mail className="w-4 h-4 text-violet-400" /> REDCap Admin Request Email
+        </h3>
+        <p className="text-xs text-muted-foreground">Copy this email and send it to your institution's REDCap administrator to request a new project.</p>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">Subject:</span>
+            <span className="text-white font-medium">{setupData.adminEmail.subject}</span>
+          </div>
+          <div className="whitespace-pre-line text-xs text-white/80 leading-relaxed bg-white/[0.02] rounded-lg p-4 border border-white/5 max-h-64 overflow-y-auto">
+            {setupData.adminEmail.body}
+          </div>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            onClick={() => copyText(`Subject: ${setupData.adminEmail.subject}\n\n${setupData.adminEmail.body}`, "admin-email")}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-violet-600/20 text-violet-400 border border-violet-500/30 hover:bg-violet-600/30 transition-all"
+          >
+            {copiedId === "admin-email" ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            {copiedId === "admin-email" ? "Copied" : "Copy Email"}
+          </button>
+        </div>
+      </div>
+
+      <div className="glass-panel rounded-xl border border-white/5 p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+          <Plug className="w-4 h-4 text-cyan-400" /> REDCap API Connection
+        </h3>
+        <p className="text-xs text-muted-foreground">Once you have your REDCap project and API token, connect it here to enable direct data dictionary import.</p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">REDCap URL</label>
+            <input
+              type="url"
+              value={redcapUrl}
+              onChange={(e) => setRedcapUrl(e.target.value)}
+              placeholder="https://redcap.yourschool.edu"
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs placeholder:text-muted-foreground/50 focus:border-cyan-500/50 focus:outline-none transition-all"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">API Token</label>
+            <input
+              type="password"
+              value={redcapToken}
+              onChange={(e) => setRedcapToken(e.target.value)}
+              placeholder="Enter your REDCap API token"
+              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white text-xs placeholder:text-muted-foreground/50 focus:border-cyan-500/50 focus:outline-none transition-all"
+            />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={testConnection}
+              disabled={connecting || !redcapUrl || !redcapToken}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-600/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+            >
+              {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+              {connecting ? "Testing..." : "Test Connection"}
+            </button>
+
+            {setupData.connection?.connected && (
+              <button
+                onClick={importDictionary}
+                disabled={importing}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600/30 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+              >
+                {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                {importing ? "Importing..." : "Import Data Dictionary"}
+              </button>
+            )}
+          </div>
+
+          {setupData.connection?.connected && (
+            <div className="flex items-center gap-2 text-xs p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+              <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-emerald-300">Connected to: {setupData.connection.projectTitle || "REDCap Project"}</span>
+            </div>
+          )}
+
+          {connectionResult && (
+            <div className={`text-xs p-3 rounded-lg border ${connectionResult.connected ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300" : "bg-red-500/10 border-red-500/20 text-red-300"}`}>
+              {connectionResult.connected ? (
+                <div className="flex items-center gap-2">
+                  <Wifi className="w-3.5 h-3.5" />
+                  <span>Connected successfully! Project: {connectionResult.projectTitle}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <WifiOff className="w-3.5 h-3.5" />
+                  <span>Connection failed: {connectionResult.error}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {importResult && (
+            <div className={`text-xs p-3 rounded-lg border ${importResult.success ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-300" : "bg-red-500/10 border-red-500/20 text-red-300"}`}>
+              {importResult.success ? (
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span>Data dictionary imported successfully! {importResult.fieldsImported} fields pushed to REDCap.</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  <span>Import failed: {importResult.error}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
