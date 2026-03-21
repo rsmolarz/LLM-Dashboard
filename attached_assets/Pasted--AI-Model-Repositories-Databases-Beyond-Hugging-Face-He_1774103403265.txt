@@ -1,0 +1,45 @@
+🤖 AI Model Repositories & Databases (Beyond Hugging Face)
+Here are the major platforms used for building, sharing, and training AI models:
+General Purpose Repositories
+
+GitHub / GitHub Models — The most widely used code hosting platform; many AI models, training scripts, and datasets are stored here, often linked from papers
+Kaggle — Offers datasets, notebooks, and model competitions; huge community with thousands of public datasets
+Papers With Code — Links ML papers to their code and datasets, making it easy to find implementations and benchmarks
+arXiv — Preprint server where AI research (including model architectures and training data) is published first; not a model host but essential for discovering new work
+Zenodo — CERN-backed open repository for scientific data and software, commonly used for medical and research datasets
+OSF (Open Science Framework) — A research data and model repository used heavily in academic/clinical AI research
+
+Cloud Platform-Specific
+
+Google Vertex AI / Model Garden — Google's hub for pre-trained and fine-tunable models
+AWS SageMaker JumpStart — Amazon's curated catalog of pre-built ML models
+Azure Machine Learning Registry — Microsoft's model registry
+
+Medical AI Specific
+
+PhysioNet — A major repository of medical data, particularly cardiovascular and physiological signals; openly accessible
+The Cancer Imaging Archive (TCIA) — Large collection of cancer-related medical imaging datasets (CT, MRI, etc.)
+Grand Challenge — Hosts medical imaging AI competitions with associated annotated datasets
+Medical Segmentation Decathlon — Benchmark datasets for medical image segmentation
+
+
+🔬 AI Datasets & Resources for Flexible Laryngoscopy / Otolaryngology
+This is a narrower, specialized area — but there are resources out there. The field is growing rapidly.
+Dedicated Laryngoscopy Datasets
+
+NBI-InfFrames (Zenodo) — A publicly available dataset of narrow-band imaging (NBI) laryngoscopic frames hosted on Zenodo, developed by Moccia et al. It contains 720 frames and has been used in studies on automated informative frame classification from laryngoscopic videos. PubMed Central
+Laryngeal Endoscopic Image Dataset (arXiv/PubMed) — This open-access dataset contains 536 manually segmented laryngeal images from two patients captured during laser incisions, annotated across 7 tissue classes, and used to train and compare CNN-based semantic segmentation methods (SegNet, UNet, ENet, ErfNet). arXiv
+GIRAFE Dataset — A glottal imaging dataset specifically designed for advanced segmentation, analysis, and facilitative playbacks evaluation (referenced as GIRAFE 1.0 on arXiv, 2024). Springer
+Laryngoscope8 — A laryngeal image dataset developed for classification of laryngeal diseases using attention mechanisms, referenced in recent literature on deep learning for ENT endoscopy. Springer
+
+NIH Bridge2AI — Voice Database
+The NIH Common Fund has funded the Bridge2AI project, which is building a diverse voice database linked to health biomarkers specifically designed to train AI algorithms for laryngology and voice pathology. NewYork-Presbyterian This is particularly promising because one of the key known drawbacks of ML is that tools are only as good as the data that goes into them — collecting data from diverse populations ensures the algorithm works broadly rather than only for a subset of patients. NewYork-Presbyterian
+AI Applied to Flexible Laryngoscopy
+Google Gemini 1.5 Pro has been evaluated for interpreting laryngoscopy frames and videos sourced from Google Images and YouTube, recognizing the procedure as laryngoscopy in 98.9% of frames and accurately diagnosing a pathology in a majority of frames — suggesting the potential of foundation models as clinical decision support tools in laryngoscopy. PubMed
+Deep learning models like ResNet-50 have been trained and tested on multi-center laryngoscopy image databases using both white light and narrow-band imaging to classify diagnostically informative frames in real time. Springer
+Key Search Databases for Research
+PubMed, Scopus, and Google Scholar are the primary electronic databases used to search the AI/ORL literature PubMed Central — these are best for finding papers that link to released datasets.
+
+Summary Table
+PlatformBest ForZenodoAcademic medical datasets (NBI-InfFrames, etc.)KaggleGeneral medical imaging competitionsGrand ChallengeMedical imaging benchmarksTCIACancer imaging (head & neck)PhysioNetPhysiological/voice signal dataNIH Bridge2AIVoice + laryngology AI (in development)arXivFinding new laryngoscopy ML papers with data links
+The honest reality is that dedicated open-access flexible laryngoscopy datasets are still scarce — it's one of the recognized bottlenecks in the field. Most research groups build and keep their own institutional datasets. Your best strategy is to search Zenodo + arXiv + PubMed together, and check the data availability sections of relevant papers for request-based access to private institutional datasets.
