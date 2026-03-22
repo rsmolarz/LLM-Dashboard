@@ -434,7 +434,7 @@ export default function Databases() {
             AI Databases & Resources
           </h2>
           <p className="text-muted-foreground mt-1 text-sm">
-            Model repositories, medical datasets, laryngoscopy resources, and
+            Model githubrepositories, medical datasets, laryngoscopy resources, and
             research databases
           </p>
         </div>
