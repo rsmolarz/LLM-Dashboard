@@ -134,10 +134,20 @@ router.post("/training-pipeline/fine-tuning/:id/run", requireAuth, async (req, r
   await db.update(fineTuningJobsTable).set({ status: "running" }).where(eq(fineTuningJobsTable.id, id));
 
   try {
+    const createPayload: any = {
+      model: job.outputModel,
+      from: job.baseModel,
+      stream: false,
+    };
+    if (job.systemPrompt) {
+      createPayload.system = job.systemPrompt;
+    }
+    createPayload.parameters = { temperature: 0.4, top_p: 0.9 };
+
     const createRes = await fetch(`${serverUrl}/api/create`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: job.outputModel, modelfile: job.modelfileContent, stream: false }),
+      body: JSON.stringify(createPayload),
       signal: AbortSignal.timeout(300000),
     });
 

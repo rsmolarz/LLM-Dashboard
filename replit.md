@@ -37,7 +37,7 @@ The project is structured as a pnpm monorepo with distinct artifacts for the fro
     -   **Hedge Fund Training Pipeline**: Gathers data from SEC EDGAR, OpenAlex Finance, FRED Macro, and synthetic scenarios, categorized across 18 finance categories to train deepseek-r1-based models.
 
 ## External Dependencies
--   **Ollama**: Self-hosted LLM server (VPS IP: 72.60.167.64, port 11434).
+-   **Ollama**: Self-hosted LLM server (VPS IP: 72.60.167.64, port 11434, v0.18.0). Model creation uses new `from`/`system`/`parameters` API format (not legacy `modelfile` string).
 -   **PostgreSQL**: Database hosted on Replit (VPS IP: 72.60.167.64, port 5432).
 -   **OpenClaw**: (VPS IP: 72.60.167.64, port 18789) for conversation history handling.
 -   **OpenAI**: Integrated for advanced AI capabilities (e.g., gpt-5.2, GPT-Image-1) via Replit AI Integrations proxy.
