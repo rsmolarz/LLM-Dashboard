@@ -24,7 +24,7 @@ The project is structured as a pnpm monorepo with distinct artifacts for the fro
     -   **Deep Research Engine**: Facilitates multi-model research, fanning out queries to local Ollama models ("Deep" mode) and external services like Claude and GPT ("Extensive" mode), with session saving and source citations.
     -   **Vision Studio**: Integrates image generation (GPT-Image-1) and vision analysis (llava:13b) with domain-specific presets (Medical/ENT, Finance, Social Media, Real Estate).
     -   **Agent Orchestration**: Manages AI agents with fleet management, task routing, memories, tool definitions, and category filtering. Features step-by-step execution logs.
-    -   **RAG (Retrieval Augmented Generation)**: Enhances chat responses by injecting context from the Knowledge Base and Project Brain using TF-IDF scoring for intelligent retrieval.
+    -   **RAG (Retrieval Augmented Generation)**: Vector-powered knowledge retrieval using pgvector on PostgreSQL. Supports Ollama embedding models (nomic-embed-text) with keyword-hash fallback. Ingests PubMed articles, ENT training knowledge, document chunks, and custom documents. HNSW index for fast cosine similarity search. Integrated into chat via `prepareRagMessages` — vector search is attempted first, falls back to TF-IDF keyword matching. Management UI at `/rag` with ingestion controls, test search, and source breakdown.
     -   **Analytics & Monitoring**: Provides dashboards for usage, model performance, VPS stats, and real-time system health metrics.
     -   **Workflow Automation**: Schedules recurring tasks like research, training, backups, and benchmarks.
     -   **Real-time Notifications**: SSE-based system for user notifications.

@@ -9,3 +9,4 @@ export * from "./research";
 export * from "./auth";
 export * from "./ai-features";
 export * from "./api-keys";
+export * from "./rag-embeddings";

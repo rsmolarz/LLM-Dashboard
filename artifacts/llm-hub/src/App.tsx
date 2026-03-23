@@ -23,6 +23,7 @@ import PubMedCollector from "@/pages/PubMedCollector";
 import TrainingPipeline from "@/pages/TrainingPipeline";
 import ResearchPipeline from "@/pages/ResearchPipeline";
 import PlatformApi from "@/pages/PlatformApi";
+import RagKnowledgeBase from "@/pages/RagKnowledgeBase";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -58,6 +59,7 @@ function Router() {
         <Route path="/pipeline" component={TrainingPipeline} />
         <Route path="/research-pipeline" component={ResearchPipeline} />
         <Route path="/platform-api" component={PlatformApi} />
+        <Route path="/rag" component={RagKnowledgeBase} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

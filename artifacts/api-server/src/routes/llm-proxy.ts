@@ -310,6 +310,17 @@ router.delete("/llm/models/:name", async (req, res): Promise<void> => {
 });
 
 async function searchRagContext(query: string, maxResults = 3): Promise<string | null> {
+  try {
+    const { searchVectorKnowledge } = await import("./rag-pipeline");
+    const vectorResults = await searchVectorKnowledge(query, maxResults);
+    if (vectorResults.length > 0 && vectorResults[0].score > 0.05) {
+      return vectorResults
+        .filter(r => r.score > 0.05)
+        .map(r => `[From: ${r.title} (${r.sourceType}, score: ${r.score.toFixed(3)})]\n${r.content}`)
+        .join("\n\n---\n\n");
+    }
+  } catch {}
+
   const queryWords = query.toLowerCase().split(/\s+/).filter(w => w.length > 2);
   if (queryWords.length === 0) return null;
 

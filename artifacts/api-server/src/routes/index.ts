@@ -41,6 +41,7 @@ import codeGuardianRouter from "./code-guardian";
 import socialMediaPlatformRouter from "./social-media-platform";
 import researchPipelineRouter from "./research-pipeline";
 import platformApiRouter from "./platform-api";
+import ragPipelineRouter from "./rag-pipeline";
 
 const router: IRouter = Router();
 
@@ -86,5 +87,6 @@ router.use(codeGuardianRouter);
 router.use(socialMediaPlatformRouter);
 router.use(researchPipelineRouter);
 router.use(platformApiRouter);
+router.use(ragPipelineRouter);
 
 export default router;
