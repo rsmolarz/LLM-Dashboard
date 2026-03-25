@@ -3,8 +3,11 @@ import { db } from "@workspace/db";
 import { vpsDatabaseConfigTable, documentsTable, conversationsTable, chatMessagesTable } from "@workspace/db/schema";
 import { getCollectorState } from "./auto-collector";
 import { sql, count } from "drizzle-orm";
+import { getRateLimitMetrics, getActiveWindows, requireAdmin } from "../middlewares/rateLimiter";
 
 const router: IRouter = Router();
+
+router.use("/monitor", requireAdmin);
 
 async function getVpsClient() {
   const [config] = await db.select().from(vpsDatabaseConfigTable).limit(1);
@@ -218,6 +221,27 @@ router.get("/monitor/dashboard", async (_req, res): Promise<void> => {
     });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || "Dashboard fetch failed" });
+  }
+});
+
+router.get("/monitor/rate-limits", async (_req, res): Promise<void> => {
+  try {
+    const metrics = getRateLimitMetrics();
+    const activeWindows = getActiveWindows();
+    const totalRequests = metrics.reduce((s, m) => s + m.totalRequests, 0);
+    const totalRejected = metrics.reduce((s, m) => s + m.rejectedRequests, 0);
+
+    res.json({
+      activeWindows,
+      totalRequests,
+      totalRejected,
+      overallAcceptRate: totalRequests > 0
+        ? ((1 - totalRejected / totalRequests) * 100).toFixed(1) + "%"
+        : "100%",
+      endpoints: metrics,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Rate limit metrics failed" });
   }
 });
 

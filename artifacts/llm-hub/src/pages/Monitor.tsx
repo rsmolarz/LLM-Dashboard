@@ -4,10 +4,11 @@ import {
   Activity, Server, Database, HardDrive, Brain, Clock,
   RefreshCw, CheckCircle2, XCircle, AlertCircle, Loader2,
   Mail, FolderOpen, MessageSquare, Globe, BookOpen,
-  Cpu, Zap, Timer, TrendingUp, Play, Pause, BarChart3
+  Cpu, Zap, Timer, TrendingUp, Play, Pause, BarChart3, Shield
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@workspace/replit-auth-web";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -151,6 +152,7 @@ function formatUptime(startedAt: string): string {
 }
 
 export default function Monitor() {
+  const { isAdmin } = useAuth();
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -209,6 +211,18 @@ export default function Monitor() {
       setTimeout(() => fetchDashboard(), 2000);
     } catch {}
   };
+
+  if (!isAdmin) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <Shield className="w-12 h-12 text-red-400 mx-auto" />
+          <h2 className="text-xl font-bold text-white">Admin Access Required</h2>
+          <p className="text-sm text-muted-foreground">You need admin privileges to view this page.</p>
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -573,6 +587,72 @@ export default function Monitor() {
           )}
         </motion.div>
       </div>
+
+      <RateLimitPanel />
     </div>
+  );
+}
+
+function RateLimitPanel() {
+  const [data, setData] = useState<any>(null);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/monitor/rate-limits`);
+        if (res.ok) setData(await res.json());
+      } catch {}
+    };
+    fetchData();
+    const iv = setInterval(fetchData, 15000);
+    return () => clearInterval(iv);
+  }, []);
+
+  if (!data) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="glass-panel rounded-2xl border border-white/5 p-5"
+    >
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-semibold text-white flex items-center gap-2">
+          <Shield className="w-5 h-5 text-orange-400" />
+          Rate Limiting
+        </h3>
+        <div className="flex gap-3 text-xs">
+          <span className="text-muted-foreground">
+            {data.totalRequests.toLocaleString()} requests
+          </span>
+          <span className={data.totalRejected > 0 ? "text-red-400" : "text-emerald-400"}>
+            {data.totalRejected} rejected
+          </span>
+          <span className="text-emerald-400">{data.overallAcceptRate} accept rate</span>
+        </div>
+      </div>
+
+      {data.endpoints.length > 0 ? (
+        <div className="space-y-2">
+          {data.endpoints.slice(0, 8).map((ep: any) => (
+            <div key={ep.endpoint} className="flex items-center gap-3 bg-white/5 rounded-lg px-3 py-2">
+              <span className="text-xs font-mono text-white flex-1 truncate">{ep.endpoint}</span>
+              <span className="text-xs text-muted-foreground">{ep.totalRequests} req</span>
+              <span className={cn("text-xs", ep.rejectedRequests > 0 ? "text-red-400" : "text-emerald-400")}>
+                {ep.acceptRate}
+              </span>
+              <div className="w-16 h-1 bg-white/5 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-emerald-500 to-green-400 rounded-full"
+                  style={{ width: ep.acceptRate }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-muted-foreground text-center py-4">No rate-limited traffic yet</p>
+      )}
+    </motion.div>
   );
 }

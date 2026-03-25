@@ -10,31 +10,33 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { data: status } = useGetLlmStatus({ query: { refetchInterval: 15000 } as any });
-  const { user, isLoading: authLoading, isAuthenticated, login, logout } = useAuth();
+  const { user, isLoading: authLoading, isAuthenticated, isAdmin, login, logout } = useAuth();
 
   const navItems = [
-    { href: "/", label: "Local LLM", icon: Server },
-    { href: "/chat", label: "Chat", icon: MessageSquare },
-    { href: "/training", label: "Training", icon: Brain },
-    { href: "/research", label: "Research", icon: Search },
-    { href: "/vision", label: "Vision", icon: Eye },
-    { href: "/agents", label: "Agents", icon: Bot },
-    { href: "/analytics", label: "Analytics", icon: LineChart },
-    { href: "/automations", label: "Automations", icon: Zap },
-    { href: "/clinical", label: "Clinical", icon: Stethoscope },
-    { href: "/social", label: "Social", icon: Share2 },
-    { href: "/finance", label: "Finance", icon: TrendingUp },
-    { href: "/data-agent", label: "Data Agent", icon: Database },
-    { href: "/voice-agent", label: "Voice Agent", icon: Mic },
-    { href: "/databases", label: "Databases", icon: HardDrive },
-    { href: "/pubmed", label: "PubMed", icon: BookOpen },
-    { href: "/pipeline", label: "Pipeline", icon: Beaker },
-    { href: "/platform-api", label: "Platform API", icon: Key },
-    { href: "/rag", label: "RAG", icon: Library },
-    { href: "/research-pipeline", label: "Research", icon: FlaskConical },
-    { href: "/monitor", label: "Monitor", icon: BarChart3 },
-    { href: "/admin", label: "Admin", icon: Shield },
+    { href: "/", label: "Local LLM", icon: Server, adminOnly: false },
+    { href: "/chat", label: "Chat", icon: MessageSquare, adminOnly: false },
+    { href: "/training", label: "Training", icon: Brain, adminOnly: false },
+    { href: "/research", label: "Research", icon: Search, adminOnly: false },
+    { href: "/vision", label: "Vision", icon: Eye, adminOnly: false },
+    { href: "/agents", label: "Agents", icon: Bot, adminOnly: false },
+    { href: "/analytics", label: "Analytics", icon: LineChart, adminOnly: false },
+    { href: "/automations", label: "Automations", icon: Zap, adminOnly: false },
+    { href: "/clinical", label: "Clinical", icon: Stethoscope, adminOnly: false },
+    { href: "/social", label: "Social", icon: Share2, adminOnly: false },
+    { href: "/finance", label: "Finance", icon: TrendingUp, adminOnly: false },
+    { href: "/data-agent", label: "Data Agent", icon: Database, adminOnly: false },
+    { href: "/voice-agent", label: "Voice Agent", icon: Mic, adminOnly: false },
+    { href: "/databases", label: "Databases", icon: HardDrive, adminOnly: true },
+    { href: "/pubmed", label: "PubMed", icon: BookOpen, adminOnly: false },
+    { href: "/pipeline", label: "Pipeline", icon: Beaker, adminOnly: true },
+    { href: "/platform-api", label: "Platform API", icon: Key, adminOnly: true },
+    { href: "/rag", label: "RAG", icon: Library, adminOnly: false },
+    { href: "/research-pipeline", label: "Research", icon: FlaskConical, adminOnly: false },
+    { href: "/monitor", label: "Monitor", icon: BarChart3, adminOnly: true },
+    { href: "/admin", label: "Admin", icon: Shield, adminOnly: true },
   ];
+
+  const visibleNavItems = navItems.filter(item => !item.adminOnly || isAdmin);
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col font-sans overflow-hidden">
@@ -82,7 +84,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                       <User className="w-3 h-3 text-primary" />
                     </div>
                   )}
-                  <span className="hidden lg:inline text-xs text-muted-foreground">{user?.username}</span>
+                  <span className="hidden lg:inline text-xs text-muted-foreground">
+                    {user?.username}
+                    {isAdmin && <span className="ml-1 text-[10px] text-amber-400 font-semibold">(Admin)</span>}
+                  </span>
                   <button onClick={logout} className="p-1.5 rounded-lg hover:bg-white/5 text-muted-foreground hover:text-white transition-colors" title="Log out">
                     <LogOut className="w-3.5 h-3.5" />
                   </button>
@@ -98,7 +103,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </div>
 
         <nav className="hidden md:flex items-center gap-0.5 px-3 md:px-6 pb-2 overflow-x-auto scrollbar-hide flex-wrap">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const isActive = location === item.href;
             return (
               <Link
@@ -122,7 +127,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       {mobileMenuOpen && (
         <div className="md:hidden fixed inset-0 top-14 z-20 bg-black/80 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)}>
           <nav className="bg-background border-r border-white/5 w-64 h-full p-4 space-y-1" onClick={(e) => e.stopPropagation()}>
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const isActive = location === item.href;
               return (
                 <Link

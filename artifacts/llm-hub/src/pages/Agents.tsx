@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Bot, Plus, Trash2, Loader2, Settings, MessageSquare, Activity,
@@ -33,7 +33,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
-type View = "fleet" | "create" | "detail" | "settings" | "setup" | "tasks";
+type View = "fleet" | "create" | "detail" | "settings" | "setup" | "tasks" | "messages";
 
 const CATEGORIES = [
   { id: "general", label: "General", icon: Bot, color: "text-blue-400" },
@@ -99,6 +99,15 @@ export default function Agents() {
                 {gatewayStatus?.online ? "Gateway Online" : "Gateway Offline"}
               </span>
             </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setView("messages")}
+              className="text-muted-foreground hover:text-white"
+              title="Agent Messages"
+            >
+              <Route className="w-4 h-4" />
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -224,6 +233,16 @@ export default function Agents() {
               exit={{ opacity: 0, y: -10 }}
             >
               <TasksView agents={agents as any[]} onBack={() => setView("fleet")} />
+            </motion.div>
+          )}
+          {view === "messages" && (
+            <motion.div
+              key="messages"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+            >
+              <MessagesView agents={agents as any[]} onBack={() => setView("fleet")} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -1576,6 +1595,249 @@ function TasksView({ agents, onBack }: { agents: any[]; onBack: () => void }) {
               </div>
             );
           })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MessagesView({ agents, onBack }: { agents: any[]; onBack: () => void }) {
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [delegateOpen, setDelegateOpen] = useState(false);
+  const [delegateForm, setDelegateForm] = useState({ fromAgent: "", toAgent: "", title: "", description: "" });
+  const [delegating, setDelegating] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<number | null>(null);
+  const [delegationChain, setDelegationChain] = useState<any>(null);
+
+  const fetchMessages = async () => {
+    try {
+      const res = await fetch("/api/agents/messages/all");
+      if (res.ok) setMessages(await res.json());
+    } catch {}
+    setLoading(false);
+  };
+
+  const fetchDelegationChain = async (taskId: number) => {
+    try {
+      const res = await fetch(`/api/agents/delegation-chain/${taskId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setDelegationChain(data);
+        setSelectedTask(taskId);
+      }
+    } catch {}
+  };
+
+  const handleDelegate = async () => {
+    if (!delegateForm.fromAgent || !delegateForm.toAgent || !delegateForm.title) return;
+    setDelegating(true);
+    try {
+      const res = await fetch(`/api/agents/${delegateForm.fromAgent}/delegate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetAgentId: delegateForm.toAgent,
+          title: delegateForm.title,
+          description: delegateForm.description,
+        }),
+      });
+      if (res.ok) {
+        setDelegateOpen(false);
+        setDelegateForm({ fromAgent: "", toAgent: "", title: "", description: "" });
+        fetchMessages();
+      }
+    } catch {}
+    setDelegating(false);
+  };
+
+  useEffect(() => { fetchMessages(); }, []);
+
+  const getAgentName = (agentId: string) => {
+    const agent = agents.find((a: any) => a.agentId === agentId);
+    return agent ? `${agent.emoji || "🤖"} ${agent.name}` : agentId;
+  };
+
+  const messageTypeColors: Record<string, string> = {
+    delegation: "text-purple-400 bg-purple-500/10 border-purple-500/20",
+    request: "text-blue-400 bg-blue-500/10 border-blue-500/20",
+    response: "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+    notification: "text-amber-400 bg-amber-500/10 border-amber-500/20",
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Button variant="ghost" size="sm" onClick={onBack}>
+            <ChevronRight className="w-4 h-4 rotate-180" />
+          </Button>
+          <h3 className="text-xl font-bold text-white flex items-center gap-2">
+            <Route className="w-5 h-5 text-purple-400" />
+            Agent Communication Hub
+          </h3>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={fetchMessages}>
+            <Activity className="w-4 h-4" />
+          </Button>
+          <Button
+            onClick={() => setDelegateOpen(!delegateOpen)}
+            className="bg-purple-500/20 hover:bg-purple-500/30 text-purple-400 border border-purple-500/30"
+            size="sm"
+          >
+            <Send className="w-4 h-4 mr-1.5" />
+            Delegate Task
+          </Button>
+        </div>
+      </div>
+
+      {delegateOpen && (
+        <div className="glass-panel rounded-xl border border-purple-500/20 p-4 space-y-3">
+          <h4 className="text-sm font-semibold text-purple-400">New Delegation</h4>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">From Agent</label>
+              <select
+                value={delegateForm.fromAgent}
+                onChange={e => setDelegateForm(f => ({ ...f, fromAgent: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-sm"
+              >
+                <option value="">Select source agent...</option>
+                {agents.map((a: any) => (
+                  <option key={a.agentId} value={a.agentId}>{a.emoji} {a.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground mb-1 block">To Agent</label>
+              <select
+                value={delegateForm.toAgent}
+                onChange={e => setDelegateForm(f => ({ ...f, toAgent: e.target.value }))}
+                className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-white text-sm"
+              >
+                <option value="">Select target agent...</option>
+                {agents.filter((a: any) => a.agentId !== delegateForm.fromAgent).map((a: any) => (
+                  <option key={a.agentId} value={a.agentId}>{a.emoji} {a.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <Input
+            placeholder="Task title"
+            value={delegateForm.title}
+            onChange={e => setDelegateForm(f => ({ ...f, title: e.target.value }))}
+            className="bg-black/40 border-white/10"
+          />
+          <Input
+            placeholder="Description (optional)"
+            value={delegateForm.description}
+            onChange={e => setDelegateForm(f => ({ ...f, description: e.target.value }))}
+            className="bg-black/40 border-white/10"
+          />
+          <div className="flex gap-2">
+            <Button onClick={handleDelegate} disabled={delegating} className="bg-purple-600 hover:bg-purple-700" size="sm">
+              {delegating ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <Send className="w-4 h-4 mr-1.5" />}
+              Delegate
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setDelegateOpen(false)}>Cancel</Button>
+          </div>
+        </div>
+      )}
+
+      {selectedTask && delegationChain && (
+        <div className="glass-panel rounded-xl border border-cyan-500/20 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+              <Route className="w-4 h-4" /> Delegation Chain — Task #{selectedTask}
+            </h4>
+            <Button variant="ghost" size="sm" onClick={() => { setSelectedTask(null); setDelegationChain(null); }}>
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto pb-2">
+            {delegationChain.chain.map((task: any, i: number) => (
+              <div key={task.id} className="flex items-center gap-2">
+                <div className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 min-w-[120px]">
+                  <div className="text-xs font-medium text-white">{task.title}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">
+                    {getAgentName(task.assignedAgentId)} • {task.status}
+                  </div>
+                </div>
+                {i < delegationChain.chain.length - 1 && (
+                  <ChevronRight className="w-4 h-4 text-cyan-400 shrink-0" />
+                )}
+              </div>
+            ))}
+          </div>
+          {delegationChain.subtasks.length > 0 && (
+            <div>
+              <p className="text-xs text-muted-foreground mb-2">Subtasks:</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {delegationChain.subtasks.map((st: any) => (
+                  <div key={st.id} className="px-3 py-2 rounded-lg bg-white/5 border border-white/10">
+                    <div className="text-xs font-medium text-white">{st.title}</div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {getAgentName(st.assignedAgentId)} • {st.status}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
+      ) : messages.length === 0 ? (
+        <div className="glass-panel rounded-xl border border-white/5 p-12 text-center">
+          <Route className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
+          <h3 className="text-lg font-semibold text-white mb-1">No Agent Messages Yet</h3>
+          <p className="text-sm text-muted-foreground">
+            Use the "Delegate Task" button to have agents communicate and delegate work to each other.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {messages.map((msg: any) => (
+            <div key={msg.id} className="glass-panel rounded-xl border border-white/5 p-4 hover:bg-white/[0.02] transition">
+              <div className="flex items-start justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 text-sm">
+                    <span className="font-medium text-white">{getAgentName(msg.fromAgentId)}</span>
+                    <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="font-medium text-white">{getAgentName(msg.toAgentId)}</span>
+                  </div>
+                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium border", messageTypeColors[msg.messageType] || "text-gray-400 bg-gray-500/10 border-gray-500/20")}>
+                    {msg.messageType}
+                  </span>
+                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full font-medium border",
+                    msg.status === "responded" ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" :
+                    msg.status === "pending" ? "text-amber-400 bg-amber-500/10 border-amber-500/20" :
+                    "text-gray-400 bg-gray-500/10 border-gray-500/20"
+                  )}>
+                    {msg.status}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {msg.taskId && (
+                    <button
+                      onClick={() => fetchDelegationChain(msg.taskId)}
+                      className="text-[10px] px-2 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20 transition"
+                    >
+                      View Chain
+                    </button>
+                  )}
+                  <span className="text-[10px] text-muted-foreground">
+                    {new Date(msg.createdAt).toLocaleString()}
+                  </span>
+                </div>
+              </div>
+              {msg.subject && <div className="text-sm font-medium text-white mt-2">{msg.subject}</div>}
+              <p className="text-xs text-muted-foreground mt-1">{msg.content}</p>
+            </div>
+          ))}
         </div>
       )}
     </div>

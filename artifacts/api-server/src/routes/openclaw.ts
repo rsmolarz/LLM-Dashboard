@@ -1296,6 +1296,17 @@ router.put("/agents/messages/:messageId/respond", async (req, res): Promise<void
   }
 });
 
+router.get("/agents/messages/all", async (_req, res): Promise<void> => {
+  try {
+    const messages = await db.select().from(agentMessagesTable)
+      .orderBy(desc(agentMessagesTable.createdAt))
+      .limit(100);
+    res.json(messages);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get("/agents/delegation-chain/:taskId", async (req, res): Promise<void> => {
   const taskId = parseInt(req.params.taskId);
   try {
