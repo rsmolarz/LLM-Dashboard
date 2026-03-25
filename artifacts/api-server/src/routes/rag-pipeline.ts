@@ -59,7 +59,7 @@ async function generateOllamaEmbedding(text: string, serverUrl: string): Promise
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "nomic-embed-text", prompt: text }),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
     const data = await res.json() as { embedding?: number[] };
@@ -92,10 +92,14 @@ async function getServerUrl(): Promise<string | null> {
 }
 
 async function getEmbedding(text: string): Promise<{ vector: number[]; model: string; dim: number }> {
+  if (lastOllamaEmbeddingCheck.checkedAt > 0 && !lastOllamaEmbeddingCheck.available && Date.now() - lastOllamaEmbeddingCheck.checkedAt < 60000) {
+    return { vector: simpleEmbedding(text), model: "keyword-hash", dim: EMBEDDING_DIM };
+  }
   const serverUrl = await getServerUrl();
   if (serverUrl) {
     const ollamaVec = await generateOllamaEmbedding(text, serverUrl);
     if (ollamaVec) {
+      lastOllamaEmbeddingCheck = { available: true, checkedAt: Date.now() };
       if (ollamaVec.length === EMBEDDING_DIM) {
         return { vector: ollamaVec, model: "nomic-embed-text", dim: ollamaVec.length };
       }
@@ -106,6 +110,8 @@ async function getEmbedding(text: string): Promise<{ vector: number[]; model: st
       }
       const mag = Math.sqrt(resized.reduce((s: number, v: number) => s + v * v, 0)) || 1;
       return { vector: resized.map((v: number) => v / mag), model: "nomic-embed-text-resized", dim: EMBEDDING_DIM };
+    } else {
+      lastOllamaEmbeddingCheck = { available: false, checkedAt: Date.now() };
     }
   }
 
@@ -503,7 +509,7 @@ router.post("/rag-pipeline/search", async (req, res) => {
       query,
       results: filtered,
       totalFound: filtered.length,
-      embeddingModel: (await getEmbedding("test")).model,
+      embeddingModel: lastOllamaEmbeddingCheck.available ? "nomic-embed-text" : "keyword-hash",
     });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
