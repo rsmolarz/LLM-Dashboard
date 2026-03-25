@@ -52,11 +52,15 @@ export default function RagKnowledgeBase() {
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
 
-  const ingest = async (type: "pubmed" | "knowledge" | "ent-training") => {
+  const ingest = async (type: "pubmed" | "knowledge" | "ent-training" | "all-training") => {
     setIngesting(type);
     setIngestResult(null);
     try {
-      const res = await fetch(`${API}/api/rag-pipeline/ingest/${type}`, { method: "POST" });
+      const res = await fetch(`${API}/api/rag-pipeline/ingest/${type}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ batchLimit: 5000 }),
+      });
       const data = await res.json();
       setIngestResult({ type, ...data });
       fetchStatus();
@@ -353,6 +357,13 @@ export default function RagKnowledgeBase() {
               icon={<Stethoscope className="w-6 h-6 text-emerald-400" />}
               loading={ingesting === "ent-training"}
               onClick={() => ingest("ent-training")}
+            />
+            <IngestCard
+              title="All Training Data"
+              description="Ingest all training data (SEC, ClinicalTrials, OpenAlex, etc.)"
+              icon={<Database className="w-6 h-6 text-orange-400" />}
+              loading={ingesting === "all-training"}
+              onClick={() => ingest("all-training")}
             />
           </div>
 

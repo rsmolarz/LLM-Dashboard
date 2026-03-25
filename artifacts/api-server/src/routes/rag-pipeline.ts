@@ -7,6 +7,7 @@ const router = Router();
 
 const EMBEDDING_DIM = 384;
 const CHUNK_SIZE = 500;
+let lastOllamaEmbeddingCheck = { available: false, checkedAt: 0 };
 const CHUNK_OVERLAP = 50;
 
 function chunkText(text: string, chunkSize = CHUNK_SIZE, overlap = CHUNK_OVERLAP): string[] {
@@ -163,18 +164,22 @@ router.get("/rag-pipeline/status", async (_req, res) => {
     );
     const sources = await db.select().from(entKnowledgeSourcesTable).orderBy(desc(entKnowledgeSourcesTable.createdAt));
 
-    const serverUrl = await getServerUrl();
-    let ollamaEmbeddingAvailable = false;
-    if (serverUrl) {
-      try {
-        const testRes = await fetch(`${serverUrl}/api/embeddings`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: "nomic-embed-text", prompt: "test" }),
-          signal: AbortSignal.timeout(5000),
-        });
-        ollamaEmbeddingAvailable = testRes.ok;
-      } catch {}
+    let ollamaEmbeddingAvailable = lastOllamaEmbeddingCheck.available;
+    const now = Date.now();
+    if (now - lastOllamaEmbeddingCheck.checkedAt > 60000) {
+      const serverUrl = await getServerUrl();
+      if (serverUrl) {
+        try {
+          const testRes = await fetch(`${serverUrl}/api/embeddings`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ model: "nomic-embed-text", prompt: "test" }),
+            signal: AbortSignal.timeout(3000),
+          });
+          ollamaEmbeddingAvailable = testRes.ok;
+        } catch {}
+      }
+      lastOllamaEmbeddingCheck = { available: ollamaEmbeddingAvailable, checkedAt: now };
     }
 
     res.json({
@@ -373,6 +378,81 @@ router.post("/rag-pipeline/ingest/ent-training", async (_req, res) => {
     }).where(eq(entKnowledgeSourcesTable.id, source.id));
 
     res.json({ ingested, skipped, total: ENDOSCOPY_TRAINING_KNOWLEDGE.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/rag-pipeline/ingest/all-training", async (req, res) => {
+  try {
+    const batchLimit = parseInt(req.body?.batchLimit) || 5000;
+    const articlesRes = await pool.query(
+      "SELECT id, input_text, output_text, source, category, quality FROM training_data LIMIT $1",
+      [batchLimit]
+    );
+
+    if (articlesRes.rows.length === 0) {
+      res.json({ ingested: 0, message: "No training data found" });
+      return;
+    }
+
+    const sourceMap: Record<string, number> = {};
+    for (const row of articlesRes.rows) {
+      const src = row.source || "unknown";
+      sourceMap[src] = (sourceMap[src] || 0) + 1;
+    }
+
+    let [source] = await db.select().from(entKnowledgeSourcesTable).where(eq(entKnowledgeSourcesTable.name, "all-training-data"));
+    if (!source) {
+      const [created] = await db.insert(entKnowledgeSourcesTable).values({
+        name: "all-training-data",
+        sourceType: "training-data",
+        status: "ingesting",
+      }).returning();
+      source = created;
+    } else {
+      await db.update(entKnowledgeSourcesTable).set({ status: "ingesting" }).where(eq(entKnowledgeSourcesTable.id, source.id));
+    }
+
+    let ingested = 0;
+    let skipped = 0;
+
+    for (const row of articlesRes.rows) {
+      const text = `${row.input_text || ""}\n\n${row.output_text || ""}`.trim();
+      if (!text || text.length < 20) { skipped++; continue; }
+
+      const sourceType = `training-${row.source || "unknown"}`;
+      const existing = await pool.query(
+        "SELECT id FROM ent_embeddings WHERE source_type = $1 AND source_ref = $2 LIMIT 1",
+        [sourceType, String(row.id)]
+      );
+      if (existing.rows.length > 0) { skipped++; continue; }
+
+      const chunks = chunkText(text);
+      for (let i = 0; i < chunks.length; i++) {
+        const embedding = await getEmbedding(chunks[i]);
+        await storeEmbedding(
+          sourceType,
+          String(row.id),
+          (row.input_text || "").substring(0, 200),
+          chunks[i],
+          i,
+          embedding,
+          source.id,
+          JSON.stringify({ source: row.source, category: row.category, quality: row.quality })
+        );
+        ingested++;
+      }
+    }
+
+    await db.update(entKnowledgeSourcesTable).set({
+      status: "completed",
+      totalChunks: ingested,
+      totalDocuments: articlesRes.rows.length - skipped,
+      lastIngestedAt: new Date(),
+    }).where(eq(entKnowledgeSourcesTable.id, source.id));
+
+    res.json({ ingested, skipped, total: articlesRes.rows.length, sourceBreakdown: sourceMap });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
