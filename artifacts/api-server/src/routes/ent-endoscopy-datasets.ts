@@ -4711,7 +4711,7 @@ const TRAINING_REPOSITORIES = [
   { id: "hf-4510", name: "medical-ENT/ent-ultimate-comprehensive-v7", source: "huggingface", category: "ent-dataset", url: "https://huggingface.co/datasets/ent-ultimate-v7", description: "Ultimate ENT AI comprehensive training bundle v7" },
 ];
 
-const ENDOSCOPY_TRAINING_KNOWLEDGE = [
+export const ENDOSCOPY_TRAINING_KNOWLEDGE = [
   {
     title: "Flexible Laryngoscopy - AI-Assisted Diagnosis Training",
     category: "ent-endoscopy-ai",

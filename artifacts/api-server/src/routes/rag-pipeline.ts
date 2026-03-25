@@ -191,10 +191,12 @@ router.get("/rag-pipeline/status", async (_req, res) => {
   }
 });
 
-router.post("/rag-pipeline/ingest/pubmed", async (_req, res) => {
+router.post("/rag-pipeline/ingest/pubmed", async (req, res) => {
   try {
+    const batchLimit = parseInt(req.body?.batchLimit) || 5000;
     const articlesRes = await pool.query(
-      "SELECT id, input_text, output_text, source, category, quality FROM training_data WHERE source LIKE '%pubmed%' OR source LIKE '%PubMed%' OR category LIKE '%ent%' LIMIT 5000"
+      "SELECT id, input_text, output_text, source, category, quality FROM training_data WHERE source LIKE '%pubmed%' OR source LIKE '%PubMed%' OR category LIKE '%ent%' LIMIT $1",
+      [batchLimit]
     );
 
     if (articlesRes.rows.length === 0) {
@@ -334,8 +336,11 @@ router.post("/rag-pipeline/ingest/ent-training", async (_req, res) => {
     let skipped = 0;
 
     for (const item of ENDOSCOPY_TRAINING_KNOWLEDGE) {
-      const text = `Topic: ${item.topic}\nCategory: ${item.category}\nDifficulty: ${item.difficulty}\n\n${item.content}`;
-      const ref = `ent-knowledge-${item.topic.substring(0, 50).replace(/\s+/g, "-").toLowerCase()}`;
+      const itemTitle = (item as any).title || (item as any).topic || "Untitled";
+      const itemCategory = (item as any).category || "ent";
+      const itemDifficulty = (item as any).difficulty || "";
+      const text = `Topic: ${itemTitle}\nCategory: ${itemCategory}${itemDifficulty ? `\nDifficulty: ${itemDifficulty}` : ""}\n\n${item.content}`;
+      const ref = `ent-knowledge-${itemTitle.substring(0, 50).replace(/\s+/g, "-").toLowerCase()}`;
 
       const existing = await pool.query(
         "SELECT id FROM ent_embeddings WHERE source_type = 'ent-training' AND source_ref = $1 LIMIT 1",
@@ -349,12 +354,12 @@ router.post("/rag-pipeline/ingest/ent-training", async (_req, res) => {
         await storeEmbedding(
           "ent-training",
           ref,
-          item.topic,
+          itemTitle,
           chunks[i],
           i,
           embedding,
           source.id,
-          JSON.stringify({ category: item.category, difficulty: item.difficulty })
+          JSON.stringify({ category: itemCategory, difficulty: itemDifficulty })
         );
         ingested++;
       }
