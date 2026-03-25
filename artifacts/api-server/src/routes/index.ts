@@ -44,6 +44,8 @@ import researchPipelineRouter from "./research-pipeline";
 import platformApiRouter from "./platform-api";
 import ragPipelineRouter from "./rag-pipeline";
 import exportRouter from "./export";
+import healthCheckRouter from "./health-check";
+import evaluationRouter from "./evaluation";
 
 const router: IRouter = Router();
 
@@ -93,5 +95,7 @@ router.use(researchPipelineRouter);
 router.use(platformApiRouter);
 router.use(ragPipelineRouter);
 router.use(exportRouter);
+router.use(healthCheckRouter);
+router.use(evaluationRouter);
 
 export default router;

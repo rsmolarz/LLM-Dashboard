@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { format } from "date-fns";
 import { 
   MessageSquare, Plus, Trash2, Send, Bot, User, 
   ChevronDown, HardDrive, ThumbsUp, ThumbsDown, BookOpen, Brain,
-  Download, FileText
+  Download, FileText, Search, Filter, X
 } from "lucide-react";
 import { 
   useListConversations, 
@@ -50,6 +50,22 @@ export default function Chat() {
 
   const [useRag, setUseRag] = useState(false);
   const [useBrain, setUseBrain] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [modelFilter, setModelFilter] = useState("all");
+  const [showFilters, setShowFilters] = useState(false);
+
+  const filteredConversations = useMemo(() => {
+    return conversations.filter((conv: any) => {
+      const matchesSearch = !searchQuery || conv.title.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesModel = modelFilter === "all" || conv.model === modelFilter;
+      return matchesSearch && matchesModel;
+    });
+  }, [conversations, searchQuery, modelFilter]);
+
+  const uniqueModels = useMemo(() => {
+    const models = new Set(conversations.map((c: any) => c.model));
+    return Array.from(models).sort();
+  }, [conversations]);
   
   const createConv = useCreateConversation();
   const deleteConv = useDeleteConversation();
@@ -205,19 +221,61 @@ export default function Chat() {
   return (
     <div className="flex-1 flex overflow-hidden h-full">
       <div className="w-80 border-r border-white/5 bg-background flex flex-col">
-        <div className="p-4 border-b border-white/5">
+        <div className="p-4 border-b border-white/5 space-y-2">
           <Button onClick={handleNewChat} className="w-full gap-2 justify-start bg-card/50 border border-white/10 text-foreground hover:bg-white/10 hover:text-white" variant="outline">
             <Plus className="w-4 h-4 text-primary" />
             New Chat
           </Button>
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Search chats..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-8 py-1.5 text-xs rounded-lg bg-white/5 border border-white/10 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+            />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2">
+                <X className="w-3 h-3 text-muted-foreground hover:text-white" />
+              </button>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={cn("flex items-center gap-1 px-2 py-1 text-[10px] rounded-md transition-colors", showFilters ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-white hover:bg-white/5")}
+            >
+              <Filter className="w-3 h-3" />
+              Filter
+            </button>
+            {modelFilter !== "all" && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/20 text-primary">
+                {modelFilter}
+                <button onClick={() => setModelFilter("all")} className="ml-1 hover:text-white"><X className="w-2.5 h-2.5 inline" /></button>
+              </span>
+            )}
+          </div>
+          {showFilters && (
+            <select
+              value={modelFilter}
+              onChange={e => setModelFilter(e.target.value)}
+              className="w-full text-xs py-1.5 px-2 rounded-lg bg-white/5 border border-white/10 text-foreground focus:outline-none"
+            >
+              <option value="all">All Models</option>
+              {uniqueModels.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
           {convsLoading ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">Loading...</div>
-          ) : conversations.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">No conversations yet</div>
+          ) : filteredConversations.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+              {conversations.length === 0 ? "No conversations yet" : "No matching conversations"}
+            </div>
           ) : (
-            conversations.map((conv) => (
+            filteredConversations.map((conv) => (
               <div 
                 key={conv.id}
                 onClick={() => {

@@ -39,12 +39,20 @@ export default function RagKnowledgeBase() {
   const [clearing, setClearing] = useState<string | null>(null);
   const [reEmbedding, setReEmbedding] = useState(false);
   const [reEmbedResult, setReEmbedResult] = useState<{ reEmbedded: number; failed: number; totalPending: number; message: string } | null>(null);
+  const [embeddingStats, setEmbeddingStats] = useState<{
+    total: number; semantic: number; keywordHash: number; semanticPct: number;
+    bySource: { source_type: string; total: string; semantic: string; keyword_hash: string }[];
+  } | null>(null);
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/api/rag-pipeline/status`);
-      const data = await res.json();
+      const [statusRes, statsRes] = await Promise.all([
+        fetch(`${API}/api/rag-pipeline/status`),
+        fetch(`${API}/api/rag-pipeline/embedding-stats`),
+      ]);
+      const data = await statusRes.json();
       setStatus(data);
+      if (statsRes.ok) setEmbeddingStats(await statsRes.json());
     } catch (e) {
       console.error("Failed to fetch RAG status:", e);
     } finally {
@@ -368,6 +376,37 @@ export default function RagKnowledgeBase() {
               onClick={() => ingest("all-training")}
             />
           </div>
+
+          {embeddingStats && (
+            <div className="glass-panel rounded-xl p-4 border border-purple-500/20 bg-purple-500/5">
+              <h3 className="text-sm font-medium text-purple-400 flex items-center gap-2 mb-3">
+                <Database className="w-4 h-4" /> Embedding Statistics
+              </h3>
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div className="text-center p-2 rounded-lg bg-white/5">
+                  <div className="text-lg font-bold text-white">{embeddingStats.total.toLocaleString()}</div>
+                  <div className="text-[10px] text-muted-foreground">Total Chunks</div>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-green-500/10">
+                  <div className="text-lg font-bold text-green-400">{embeddingStats.semantic.toLocaleString()}</div>
+                  <div className="text-[10px] text-muted-foreground">Semantic</div>
+                </div>
+                <div className="text-center p-2 rounded-lg bg-amber-500/10">
+                  <div className="text-lg font-bold text-amber-400">{embeddingStats.keywordHash.toLocaleString()}</div>
+                  <div className="text-[10px] text-muted-foreground">Keyword-Hash</div>
+                </div>
+              </div>
+              <div className="w-full bg-white/5 rounded-full h-3 overflow-hidden mb-2">
+                <div
+                  className="h-full bg-gradient-to-r from-green-500 to-emerald-400 rounded-full transition-all"
+                  style={{ width: `${embeddingStats.semanticPct}%` }}
+                />
+              </div>
+              <div className="text-xs text-muted-foreground text-center">
+                {embeddingStats.semanticPct}% upgraded to semantic embeddings
+              </div>
+            </div>
+          )}
 
           <div className="glass-panel rounded-xl p-4 border border-cyan-500/20 bg-cyan-500/5">
             <div className="flex items-center justify-between">

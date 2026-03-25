@@ -532,6 +532,36 @@ router.delete("/rag-pipeline/clear", async (req, res) => {
   }
 });
 
+router.get("/rag-pipeline/embedding-stats", async (_req, res) => {
+  try {
+    const total = await pool.query("SELECT COUNT(*) as total FROM ent_embeddings");
+    const semantic = await pool.query(
+      "SELECT COUNT(*) as total FROM ent_embeddings WHERE embedding IS NOT NULL AND char_length(embedding_type) > 0 AND embedding_type != 'keyword-hash'"
+    );
+    const keywordHash = await pool.query(
+      "SELECT COUNT(*) as total FROM ent_embeddings WHERE embedding_type = 'keyword-hash' OR embedding_type IS NULL"
+    );
+    const bySource = await pool.query(
+      `SELECT source_type, 
+        COUNT(*) as total,
+        COUNT(CASE WHEN embedding_type != 'keyword-hash' AND embedding_type IS NOT NULL THEN 1 END) as semantic,
+        COUNT(CASE WHEN embedding_type = 'keyword-hash' OR embedding_type IS NULL THEN 1 END) as keyword_hash
+       FROM ent_embeddings GROUP BY source_type ORDER BY total DESC`
+    );
+    res.json({
+      total: parseInt(total.rows[0].total),
+      semantic: parseInt(semantic.rows[0].total),
+      keywordHash: parseInt(keywordHash.rows[0].total),
+      semanticPct: parseInt(total.rows[0].total) > 0 
+        ? Math.round((parseInt(semantic.rows[0].total) / parseInt(total.rows[0].total)) * 100) 
+        : 0,
+      bySource: bySource.rows,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post("/rag-pipeline/re-embed", async (req, res): Promise<void> => {
   const { batchSize = 100, sourceType } = req.body || {};
 

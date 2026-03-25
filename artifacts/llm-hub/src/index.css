@@ -125,6 +125,42 @@
   --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / 1);
 }
 
+.light {
+  --background: 210 20% 98%;
+  --foreground: 240 10% 10%;
+  --border: 220 13% 87%;
+  --input: 220 13% 87%;
+  --ring: 190 90% 45%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 10%;
+  --card-border: 220 13% 87%;
+  --sidebar: 0 0% 100%;
+  --sidebar-foreground: 240 10% 10%;
+  --sidebar-border: 220 13% 87%;
+  --sidebar-primary: 190 90% 45%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 220 13% 93%;
+  --sidebar-accent-foreground: 240 10% 10%;
+  --sidebar-ring: 190 90% 45%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 10%;
+  --popover-border: 220 13% 87%;
+  --primary: 190 90% 40%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 220 13% 93%;
+  --secondary-foreground: 240 10% 10%;
+  --muted: 220 13% 93%;
+  --muted-foreground: 240 5% 46%;
+  --accent: 262 83% 58%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --elevate-1: rgba(0,0,0, .04);
+  --elevate-2: rgba(0,0,0, .08);
+  --button-outline: rgba(0,0,0, .10);
+  --badge-outline: rgba(0,0,0, .08);
+}
+
 @layer base {
   * {
     @apply border-border;
@@ -146,7 +182,8 @@
 
 @layer utilities {
   .glass-panel {
-    @apply bg-card/60 backdrop-blur-xl border border-white/5 shadow-xl;
+    @apply bg-card/60 backdrop-blur-xl shadow-xl;
+    border: 1px solid var(--badge-outline);
   }
   
   .glass-panel-hover {

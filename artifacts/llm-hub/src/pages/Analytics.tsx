@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { BarChart3, TrendingUp, MessageSquare, Star, Database, Brain, Activity } from "lucide-react";
+import { BarChart3, TrendingUp, MessageSquare, Star, Database, Brain, Activity, RefreshCw, Clock, Zap } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, CartesianGrid, Legend } from "recharts";
 
 interface AnalyticsData {
   conversations: number;
@@ -23,17 +24,35 @@ interface AnalyticsData {
 const BASE = import.meta.env.BASE_URL || "/";
 const api = (path: string) => `${BASE}api${path}`;
 
+const CHART_COLORS = ["#06b6d4", "#8b5cf6", "#10b981", "#f59e0b", "#ef4444", "#ec4899", "#6366f1", "#14b8a6"];
+
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-card border border-white/10 rounded-lg px-3 py-2 shadow-xl text-xs">
+      <p className="text-muted-foreground mb-1">{label}</p>
+      {payload.map((p: any, i: number) => (
+        <p key={i} className="text-white font-medium">{p.name}: {p.value}</p>
+      ))}
+    </div>
+  );
+};
+
 export default function Analytics() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    fetch(api("/analytics/overview"))
-      .then((r) => r.json())
-      .then(setData)
-      .catch(console.error)
-      .finally(() => setLoading(false));
-  }, []);
+  const fetchData = async (showRefresh = false) => {
+    if (showRefresh) setRefreshing(true);
+    try {
+      const r = await fetch(api("/analytics/overview"));
+      setData(await r.json());
+    } catch (err) { console.error(err); }
+    finally { setLoading(false); setRefreshing(false); }
+  };
+
+  useEffect(() => { fetchData(); }, []);
 
   if (loading) {
     return (
@@ -45,8 +64,16 @@ export default function Analytics() {
 
   if (!data) return <div className="p-6 text-red-400">Failed to load analytics</div>;
 
-  const maxDaily = data.dailyMessages.length > 0 ? Math.max(...data.dailyMessages.map((d) => d.count)) : 1;
-  const maxModelCount = data.modelUsage.length > 0 ? Math.max(...data.modelUsage.map((m) => m.count)) : 1;
+  const ratingData = [5, 4, 3, 2, 1].map(r => ({
+    rating: `${r}★`,
+    count: data.ratingDistribution[String(r)] || 0,
+  }));
+
+  const pieData = data.modelUsage.slice(0, 8).map((m, i) => ({
+    name: m.model,
+    value: m.count,
+    fill: CHART_COLORS[i % CHART_COLORS.length],
+  }));
 
   const benchmarksByModel: Record<string, { model: string; category: string; score: number }[]> = {};
   if (data.vpsStats?.benchmarks) {
@@ -56,16 +83,29 @@ export default function Analytics() {
     }
   }
 
+  const benchmarkChartData = Object.entries(benchmarksByModel).flatMap(([model, benches]) =>
+    benches.slice(0, 6).map(b => ({ model: model.split(":")[0], category: b.category, score: b.score }))
+  );
+
   return (
     <div className="h-full overflow-y-auto p-4 md:p-6 space-y-6">
-      <div className="flex items-center gap-3 mb-2">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
-          <BarChart3 className="w-5 h-5 text-white" />
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
+            <BarChart3 className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-white">Analytics Dashboard</h1>
+            <p className="text-sm text-muted-foreground">Usage metrics and performance insights</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-bold text-white">Analytics Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Usage metrics and performance insights</p>
-        </div>
+        <button
+          onClick={() => fetchData(true)}
+          className="p-2 rounded-lg hover:bg-white/5 text-muted-foreground hover:text-white transition-colors"
+          title="Refresh"
+        >
+          <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+        </button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -79,54 +119,57 @@ export default function Analytics() {
         <div className="glass-panel rounded-xl border border-white/5 p-4">
           <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-blue-400" />
-            Messages Over Time
+            Messages Over Time (30 days)
           </h3>
           {data.dailyMessages.length > 0 ? (
-            <div className="flex items-end gap-1 h-40">
-              {data.dailyMessages.slice(-30).map((d) => (
-                <div key={d.date} className="flex-1 flex flex-col items-center gap-1 group relative">
-                  <div className="hidden group-hover:block absolute -top-8 bg-black/80 text-xs text-white px-2 py-1 rounded whitespace-nowrap z-10">
-                    {d.date}: {d.count}
-                  </div>
-                  <div
-                    className="w-full rounded-t bg-gradient-to-t from-blue-500 to-cyan-400 min-h-[2px] transition-all"
-                    style={{ height: `${(d.count / maxDaily) * 100}%` }}
-                  />
-                </div>
-              ))}
-            </div>
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={data.dailyMessages.slice(-30)}>
+                <defs>
+                  <linearGradient id="msgGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.4} />
+                    <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#888" }} tickLine={false} axisLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: "#888" }} tickLine={false} axisLine={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Area type="monotone" dataKey="count" name="Messages" stroke="#06b6d4" fill="url(#msgGradient)" strokeWidth={2} />
+              </AreaChart>
+            </ResponsiveContainer>
           ) : (
-            <div className="h-40 flex items-center justify-center text-sm text-muted-foreground">No message data yet</div>
+            <div className="h-[200px] flex items-center justify-center text-sm text-muted-foreground">No message data yet</div>
           )}
-          <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-            <span>{data.dailyMessages[0]?.date || ""}</span>
-            <span>{data.dailyMessages[data.dailyMessages.length - 1]?.date || ""}</span>
-          </div>
         </div>
 
         <div className="glass-panel rounded-xl border border-white/5 p-4">
           <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
             <Activity className="w-4 h-4 text-purple-400" />
-            Model Usage
+            Model Usage Distribution
           </h3>
-          <div className="space-y-2">
-            {data.modelUsage.slice(0, 8).map((m) => (
-              <div key={m.model} className="flex items-center gap-3">
-                <span className="text-xs text-muted-foreground w-32 truncate">{m.model}</span>
-                <div className="flex-1 bg-white/5 rounded-full h-5 overflow-hidden">
-                  <div
-                    className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-end pr-2"
-                    style={{ width: `${(m.count / maxModelCount) * 100}%` }}
-                  >
-                    <span className="text-[10px] text-white font-medium">{m.count}</span>
+          {pieData.length > 0 ? (
+            <div className="flex items-center gap-4">
+              <ResponsiveContainer width="50%" height={180}>
+                <PieChart>
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={70} dataKey="value" paddingAngle={2}>
+                    {pieData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+                  </Pie>
+                  <Tooltip content={<CustomTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex-1 space-y-1.5">
+                {pieData.map((m, i) => (
+                  <div key={m.name} className="flex items-center gap-2 text-xs">
+                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: m.fill }} />
+                    <span className="text-muted-foreground truncate flex-1">{m.name}</span>
+                    <span className="text-white font-medium">{m.value}</span>
                   </div>
-                </div>
+                ))}
               </div>
-            ))}
-            {data.modelUsage.length === 0 && (
-              <div className="text-sm text-muted-foreground text-center py-4">No model usage data</div>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="h-[180px] flex items-center justify-center text-sm text-muted-foreground">No model usage data</div>
+          )}
         </div>
       </div>
 
@@ -137,25 +180,17 @@ export default function Analytics() {
             Message Ratings
           </h3>
           <div className="text-center mb-3">
-            <div className="text-3xl font-bold text-white">{data.averageRating ?? "—"}</div>
+            <div className="text-3xl font-bold text-white">{data.averageRating?.toFixed(1) ?? "—"}</div>
             <div className="text-xs text-muted-foreground">{data.totalRated} rated messages</div>
           </div>
-          <div className="space-y-1">
-            {[5, 4, 3, 2, 1].map((r) => {
-              const count = data.ratingDistribution[String(r)] || 0;
-              const pct = data.totalRated > 0 ? (count / data.totalRated) * 100 : 0;
-              return (
-                <div key={r} className="flex items-center gap-2 text-xs">
-                  <span className="w-4 text-right text-yellow-400">{r}</span>
-                  <Star className="w-3 h-3 text-yellow-400" />
-                  <div className="flex-1 bg-white/5 rounded-full h-3 overflow-hidden">
-                    <div className="h-full bg-yellow-500/60 rounded-full" style={{ width: `${pct}%` }} />
-                  </div>
-                  <span className="w-8 text-right text-muted-foreground">{count}</span>
-                </div>
-              );
-            })}
-          </div>
+          <ResponsiveContainer width="100%" height={120}>
+            <BarChart data={ratingData} layout="vertical">
+              <XAxis type="number" hide />
+              <YAxis type="category" dataKey="rating" tick={{ fontSize: 11, fill: "#facc15" }} width={35} tickLine={false} axisLine={false} />
+              <Tooltip content={<CustomTooltip />} />
+              <Bar dataKey="count" name="Ratings" fill="#facc15" radius={[0, 4, 4, 0]} barSize={14} fillOpacity={0.7} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
 
         <div className="glass-panel rounded-xl border border-white/5 p-4">
@@ -165,23 +200,11 @@ export default function Analytics() {
           </h3>
           {data.vpsStats ? (
             <div className="space-y-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Training Sources</span>
-                <span className="text-white font-medium">{data.vpsStats.trainingSources}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Brain Chunks</span>
-                <span className="text-white font-medium">{data.vpsStats.brainChunks}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Backups</span>
-                <span className="text-white font-medium">{data.vpsStats.backups}</span>
-              </div>
+              <MetricRow label="Training Sources" value={data.vpsStats.trainingSources} />
+              <MetricRow label="Brain Chunks" value={data.vpsStats.brainChunks} />
+              <MetricRow label="Backups" value={data.vpsStats.backups} />
               {data.vpsStats.brainSources.map((bs) => (
-                <div key={bs.status} className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Brain ({bs.status})</span>
-                  <span className="text-white font-medium">{bs.count}</span>
-                </div>
+                <MetricRow key={bs.status} label={`Brain (${bs.status})`} value={Number(bs.count)} />
               ))}
             </div>
           ) : (
@@ -191,24 +214,19 @@ export default function Analytics() {
 
         <div className="glass-panel rounded-xl border border-white/5 p-4">
           <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-cyan-400" />
+            <Zap className="w-4 h-4 text-cyan-400" />
             Model Benchmarks
           </h3>
-          {Object.keys(benchmarksByModel).length > 0 ? (
-            <div className="space-y-3 max-h-48 overflow-y-auto">
-              {Object.entries(benchmarksByModel).map(([model, benches]) => (
-                <div key={model}>
-                  <div className="text-xs font-medium text-white mb-1">{model}</div>
-                  <div className="flex flex-wrap gap-1">
-                    {benches.slice(0, 5).map((b, i) => (
-                      <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-muted-foreground">
-                        {b.category}: {b.score}%
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
+          {benchmarkChartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={160}>
+              <BarChart data={benchmarkChartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="category" tick={{ fontSize: 8, fill: "#888" }} tickLine={false} axisLine={false} angle={-45} textAnchor="end" height={50} />
+                <YAxis tick={{ fontSize: 10, fill: "#888" }} domain={[0, 100]} tickLine={false} axisLine={false} />
+                <Tooltip content={<CustomTooltip />} />
+                <Bar dataKey="score" name="Score" fill="#06b6d4" radius={[2, 2, 0, 0]} barSize={16} />
+              </BarChart>
+            </ResponsiveContainer>
           ) : (
             <div className="text-sm text-muted-foreground text-center py-4">No benchmark data</div>
           )}
@@ -226,10 +244,19 @@ function StatCard({ icon: Icon, label, value, color }: { icon: any; label: strin
           <Icon className="w-4 h-4 text-white" />
         </div>
         <div>
-          <div className="text-xl font-bold text-white">{value}</div>
+          <div className="text-xl font-bold text-white">{value.toLocaleString()}</div>
           <div className="text-xs text-muted-foreground">{label}</div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function MetricRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex justify-between text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-white font-medium">{typeof value === "number" ? value.toLocaleString() : value}</span>
     </div>
   );
 }

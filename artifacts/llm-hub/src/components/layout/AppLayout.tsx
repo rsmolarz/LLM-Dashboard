@@ -1,16 +1,39 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User, Stethoscope, Share2, TrendingUp, Database, Mic, HardDrive, BookOpen, Beaker, FlaskConical, Key, Library } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User, Stethoscope, Share2, TrendingUp, Database, Mic, HardDrive, BookOpen, Beaker, FlaskConical, Key, Library, Sun, Moon, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
 import { NotificationBell } from "@/components/NotificationBell";
 import { useAuth } from "@workspace/replit-auth-web";
+
+function useThemeToggle() {
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("llm-hub-theme") as "dark" | "light") || "dark";
+    }
+    return "dark";
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "light") {
+      root.classList.add("light");
+    } else {
+      root.classList.remove("light");
+    }
+    localStorage.setItem("llm-hub-theme", theme);
+  }, [theme]);
+
+  const toggle = () => setTheme(t => t === "dark" ? "light" : "dark");
+  return { theme, toggle };
+}
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { data: status } = useGetLlmStatus({ query: { refetchInterval: 15000 } as any });
   const { user, isLoading: authLoading, isAuthenticated, isAdmin, login, logout } = useAuth();
+  const { theme, toggle: toggleTheme } = useThemeToggle();
 
   const navItems = [
     { href: "/", label: "Local LLM", icon: Server, adminOnly: false },
@@ -31,6 +54,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/pipeline", label: "Pipeline", icon: Beaker, adminOnly: true },
     { href: "/platform-api", label: "Platform API", icon: Key, adminOnly: true },
     { href: "/rag", label: "RAG", icon: Library, adminOnly: false },
+    { href: "/evaluation", label: "Benchmarks", icon: Trophy, adminOnly: false },
     { href: "/research-pipeline", label: "Research", icon: FlaskConical, adminOnly: false },
     { href: "/monitor", label: "Monitor", icon: BarChart3, adminOnly: true },
     { href: "/admin", label: "Admin", icon: Shield, adminOnly: true },
@@ -64,6 +88,13 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-2 md:gap-4">
+            <button
+              onClick={toggleTheme}
+              className="p-1.5 rounded-lg hover:bg-white/5 text-muted-foreground hover:text-white transition-colors"
+              title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
             <NotificationBell />
             <div className="flex items-center gap-2 text-xs font-medium px-2 md:px-3 py-1.5 rounded-full bg-black/40 border border-white/5">
               <div className={cn(
