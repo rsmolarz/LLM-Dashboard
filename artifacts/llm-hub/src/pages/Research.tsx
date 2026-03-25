@@ -21,6 +21,8 @@ import {
   Trash2,
   Quote,
   X,
+  Download,
+  FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -353,12 +355,28 @@ export default function Research() {
                       </span>
                       <span>{s.followUps?.length || 0} follow-ups</span>
                     </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
-                      className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-300 transition-opacity"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); window.open(`${API_BASE}/export/research/${s.id}/markdown`, '_blank'); }}
+                        className="text-muted-foreground hover:text-white transition-colors"
+                        title="Export Markdown"
+                      >
+                        <FileText className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); window.open(`${API_BASE}/export/research/${s.id}/html`, '_blank'); }}
+                        className="text-muted-foreground hover:text-white transition-colors"
+                        title="Export HTML"
+                      >
+                        <Download className="w-3 h-3" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteSession(s.id); }}
+                        className="text-red-400 hover:text-red-300 transition-colors"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground/50 mt-1">
                     {new Date(s.createdAt).toLocaleDateString()}

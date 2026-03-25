@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { rateLimiter, requireAuth, requireAdmin } from "../middlewares/rateLimiter";
 import healthRouter from "./health";
 import authRouter from "./auth";
 import llmConfigRouter from "./llm-config";
@@ -42,23 +43,26 @@ import socialMediaPlatformRouter from "./social-media-platform";
 import researchPipelineRouter from "./research-pipeline";
 import platformApiRouter from "./platform-api";
 import ragPipelineRouter from "./rag-pipeline";
+import exportRouter from "./export";
 
 const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(authRouter);
 router.use(llmConfigRouter);
-router.use(llmProxyRouter);
+
+router.use(rateLimiter(30, 60000), llmProxyRouter);
 router.use(chatRouter);
 router.use(modelProfilesRouter);
-router.use(trainingDataRouter);
+
+router.use(rateLimiter(60, 60000), trainingDataRouter);
 router.use(ragRouter);
 router.use(openclawRouter);
 router.use(scanRouter);
 router.use(vpsDatabaseRouter);
 router.use(vpsTrainingRouter);
 router.use(autoCollectorRouter);
-router.use(deepResearchRouter);
+router.use(rateLimiter(10, 60000), deepResearchRouter);
 router.use(mediaRouter);
 router.use(backupRouter);
 router.use(entTrainingRouter);
@@ -88,5 +92,6 @@ router.use(socialMediaPlatformRouter);
 router.use(researchPipelineRouter);
 router.use(platformApiRouter);
 router.use(ragPipelineRouter);
+router.use(exportRouter);
 
 export default router;

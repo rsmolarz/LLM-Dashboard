@@ -532,4 +532,81 @@ router.delete("/rag-pipeline/clear", async (req, res) => {
   }
 });
 
+router.post("/rag-pipeline/re-embed", async (req, res): Promise<void> => {
+  const { batchSize = 100, sourceType } = req.body || {};
+
+  try {
+    const serverUrl = await getServerUrl();
+    if (!serverUrl) {
+      res.status(503).json({ error: "No Ollama server configured. Cannot generate semantic embeddings." });
+      return;
+    }
+
+    const testVec = await generateOllamaEmbedding("test", serverUrl);
+    if (!testVec) {
+      res.status(503).json({ error: "Ollama embedding model (nomic-embed-text) is not responding. Check VPS memory." });
+      return;
+    }
+
+    const condition = sourceType
+      ? "WHERE embedding_model = 'keyword-hash' AND source_type = $1"
+      : "WHERE embedding_model = 'keyword-hash'";
+    const countParams = sourceType ? [sourceType] : [];
+    const countResult = await pool.query(`SELECT COUNT(*) as total FROM ent_embeddings ${condition}`, countParams);
+    const totalPending = parseInt(countResult.rows[0].total);
+
+    if (totalPending === 0) {
+      res.json({ reEmbedded: 0, totalPending: 0, message: "All chunks already have semantic embeddings." });
+      return;
+    }
+
+    const fetchParams = sourceType ? [sourceType, batchSize] : [batchSize];
+    const fetchQuery = sourceType
+      ? `SELECT id, content FROM ent_embeddings WHERE embedding_model = 'keyword-hash' AND source_type = $1 ORDER BY id LIMIT $2`
+      : `SELECT id, content FROM ent_embeddings WHERE embedding_model = 'keyword-hash' ORDER BY id LIMIT $1`;
+    const rows = await pool.query(fetchQuery, fetchParams);
+
+    let reEmbedded = 0;
+    let failed = 0;
+
+    for (const row of rows.rows) {
+      try {
+        const vec = await generateOllamaEmbedding(row.content, serverUrl);
+        if (vec) {
+          let finalVec = vec;
+          if (vec.length !== EMBEDDING_DIM) {
+            const resized = new Array(EMBEDDING_DIM).fill(0);
+            for (let i = 0; i < EMBEDDING_DIM; i++) {
+              resized[i] = vec[Math.floor((i / EMBEDDING_DIM) * vec.length)];
+            }
+            const mag = Math.sqrt(resized.reduce((s, v) => s + v * v, 0)) || 1;
+            finalVec = resized.map(v => v / mag);
+          }
+          const vecStr = `[${finalVec.join(",")}]`;
+          await pool.query(
+            "UPDATE ent_embeddings SET embedding = $1::vector, embedding_model = 'nomic-embed-text', embedding_dim = $2 WHERE id = $3",
+            [vecStr, EMBEDDING_DIM, row.id]
+          );
+          reEmbedded++;
+        } else {
+          failed++;
+        }
+      } catch {
+        failed++;
+      }
+    }
+
+    lastOllamaEmbeddingCheck = { available: reEmbedded > 0, checkedAt: Date.now() };
+
+    res.json({
+      reEmbedded,
+      failed,
+      totalPending: totalPending - reEmbedded,
+      message: `Re-embedded ${reEmbedded}/${rows.rows.length} chunks with semantic vectors. ${totalPending - reEmbedded} remaining.`,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 export default router;

@@ -168,6 +168,7 @@ router.get("/callback", async (req: Request, res: Response) => {
       firstName: dbUser.firstName,
       lastName: dbUser.lastName,
       profileImageUrl: dbUser.profileImageUrl,
+      role: (dbUser as any).role || "user",
     },
     access_token: tokens.access_token,
     refresh_token: tokens.refresh_token,
@@ -236,6 +237,7 @@ router.post(
           firstName: dbUser.firstName,
           lastName: dbUser.lastName,
           profileImageUrl: dbUser.profileImageUrl,
+          role: (dbUser as any).role || "user",
         },
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
@@ -257,6 +259,44 @@ router.post("/mobile-auth/logout", async (req: Request, res: Response) => {
     await deleteSession(sid);
   }
   res.json({ success: true });
+});
+
+router.get("/auth/users", async (req: Request, res: Response) => {
+  if (!req.user || (req.user as any).role !== "admin") {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+  const users = await db.select({
+    id: usersTable.id,
+    email: usersTable.email,
+    firstName: usersTable.firstName,
+    lastName: usersTable.lastName,
+    profileImageUrl: usersTable.profileImageUrl,
+    role: usersTable.role,
+    createdAt: usersTable.createdAt,
+  }).from(usersTable);
+  res.json(users);
+});
+
+router.put("/auth/users/:userId/role", async (req: Request, res: Response) => {
+  if (!req.user || (req.user as any).role !== "admin") {
+    res.status(403).json({ error: "Admin access required" });
+    return;
+  }
+  const { role } = req.body;
+  if (!role || !["admin", "user"].includes(role)) {
+    res.status(400).json({ error: "Role must be 'admin' or 'user'" });
+    return;
+  }
+  const [updated] = await db.update(usersTable)
+    .set({ role })
+    .where(eq(usersTable.id, req.params.userId))
+    .returning();
+  if (!updated) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+  res.json({ id: updated.id, email: updated.email, role: updated.role });
 });
 
 export default router;

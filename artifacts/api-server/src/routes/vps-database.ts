@@ -15,7 +15,7 @@ router.get("/vps-database/config", async (_req, res): Promise<void> => {
 });
 
 router.put("/vps-database/config", async (req, res): Promise<void> => {
-  const { host, port, database, username, password, sslEnabled, isActive } = req.body;
+  const { host, port, database, username, password, sslEnabled, sslMode, sslCaCert, sslClientCert, sslClientKey, sslRejectUnauthorized, isActive } = req.body;
   let [config] = await db.select().from(vpsDatabaseConfigTable).limit(1);
 
   const updates: any = {};
@@ -25,6 +25,11 @@ router.put("/vps-database/config", async (req, res): Promise<void> => {
   if (username !== undefined) updates.username = username;
   if (password !== undefined && password !== "••••••••") updates.password = password;
   if (sslEnabled !== undefined) updates.sslEnabled = sslEnabled;
+  if (sslMode !== undefined) updates.sslMode = sslMode;
+  if (sslCaCert !== undefined) updates.sslCaCert = sslCaCert;
+  if (sslClientCert !== undefined) updates.sslClientCert = sslClientCert;
+  if (sslClientKey !== undefined) updates.sslClientKey = sslClientKey;
+  if (sslRejectUnauthorized !== undefined) updates.sslRejectUnauthorized = sslRejectUnauthorized;
   if (isActive !== undefined) updates.isActive = isActive;
 
   if (!config) {
@@ -44,11 +49,27 @@ router.post("/vps-database/test", async (_req, res): Promise<void> => {
     return;
   }
 
-  const connectionString = `postgresql://${encodeURIComponent(config.username)}:${encodeURIComponent(config.password)}@${config.host}:${config.port}/${config.database}${config.sslEnabled ? "?sslmode=require" : ""}`;
-
   try {
     const { default: pg } = await import("pg");
-    const client = new pg.Client({ connectionString, connectionTimeoutMillis: 10000 });
+    const clientOptions: any = {
+      host: config.host,
+      port: parseInt(config.port),
+      database: config.database,
+      user: config.username,
+      password: config.password,
+      connectionTimeoutMillis: 10000,
+    };
+
+    if (config.sslEnabled) {
+      clientOptions.ssl = {
+        rejectUnauthorized: config.sslRejectUnauthorized,
+      };
+      if (config.sslCaCert) clientOptions.ssl.ca = config.sslCaCert;
+      if (config.sslClientCert) clientOptions.ssl.cert = config.sslClientCert;
+      if (config.sslClientKey) clientOptions.ssl.key = config.sslClientKey;
+    }
+
+    const client = new pg.Client(clientOptions);
     await client.connect();
     const result = await client.query("SELECT version(), current_database(), current_user, pg_database_size(current_database()) as db_size");
     await client.end();

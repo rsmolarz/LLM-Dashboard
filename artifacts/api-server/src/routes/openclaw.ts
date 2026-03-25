@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { eq, sql, desc, and } from "drizzle-orm";
-import { db, openclawConfigTable, agentsTable, agentLogsTable, agentMemoriesTable, agentTasksTable } from "@workspace/db";
+import { db, openclawConfigTable, agentsTable, agentLogsTable, agentMemoriesTable, agentTasksTable, agentMessagesTable } from "@workspace/db";
 import {
   GetOpenclawConfigResponse,
   UpdateOpenclawConfigBody,
@@ -1184,6 +1184,138 @@ router.get("/openclaw/agents/:agentId/metrics", async (req, res): Promise<void> 
     lastActive: agent.lastActive,
     recentLogs: logs.slice(0, 20),
   });
+});
+
+router.post("/agents/:agentId/delegate", async (req, res): Promise<void> => {
+  const { agentId } = req.params;
+  const { targetAgentId, title, description, priority, category } = req.body;
+
+  if (!targetAgentId || !title) {
+    res.status(400).json({ error: "targetAgentId and title are required" });
+    return;
+  }
+
+  try {
+    const [sourceAgent] = await db.select().from(agentsTable).where(eq(agentsTable.agentId, agentId));
+    if (!sourceAgent) { res.status(404).json({ error: "Source agent not found" }); return; }
+
+    const [targetAgent] = await db.select().from(agentsTable).where(eq(agentsTable.agentId, targetAgentId));
+    if (!targetAgent) { res.status(404).json({ error: "Target agent not found" }); return; }
+
+    const [task] = await db.insert(agentTasksTable).values({
+      title,
+      description: description || "",
+      assignedAgentId: targetAgentId,
+      delegatedByAgentId: agentId,
+      priority: priority || "medium",
+      category: category || sourceAgent.category,
+    }).returning();
+
+    const [message] = await db.insert(agentMessagesTable).values({
+      fromAgentId: agentId,
+      toAgentId: targetAgentId,
+      messageType: "delegation",
+      subject: `Task delegated: ${title}`,
+      content: description || title,
+      taskId: task.id,
+    }).returning();
+
+    await db.insert(agentLogsTable).values({
+      agentId,
+      level: "info",
+      message: `Delegated task "${title}" to ${targetAgent.name}`,
+      metadata: JSON.stringify({ taskId: task.id, targetAgentId }),
+    });
+
+    res.json({ task, message });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/agents/:agentId/messages", async (req, res): Promise<void> => {
+  const { agentId } = req.params;
+  const { status } = req.query;
+  try {
+    let conditions = [eq(agentMessagesTable.toAgentId, agentId)];
+    if (status === "pending") {
+      conditions.push(eq(agentMessagesTable.status, "pending"));
+    }
+    const messages = await db.select().from(agentMessagesTable)
+      .where(conditions.length > 1 ? and(...conditions) : conditions[0]!)
+      .orderBy(desc(agentMessagesTable.createdAt))
+      .limit(50);
+    res.json(messages);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/agents/:agentId/messages", async (req, res): Promise<void> => {
+  const { agentId } = req.params;
+  const { toAgentId, messageType, subject, content, taskId } = req.body;
+
+  if (!toAgentId || !content) {
+    res.status(400).json({ error: "toAgentId and content are required" });
+    return;
+  }
+
+  try {
+    const [message] = await db.insert(agentMessagesTable).values({
+      fromAgentId: agentId,
+      toAgentId,
+      messageType: messageType || "request",
+      subject: subject || "",
+      content,
+      taskId: taskId || null,
+    }).returning();
+
+    res.json(message);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put("/agents/messages/:messageId/respond", async (req, res): Promise<void> => {
+  const messageId = parseInt(req.params.messageId);
+  const { response } = req.body;
+
+  try {
+    const [msg] = await db.select().from(agentMessagesTable).where(eq(agentMessagesTable.id, messageId));
+    if (!msg) { res.status(404).json({ error: "Message not found" }); return; }
+
+    const [updated] = await db.update(agentMessagesTable).set({
+      status: "responded",
+      respondedAt: new Date(),
+      metadata: JSON.stringify({ ...JSON.parse(msg.metadata), response }),
+    }).where(eq(agentMessagesTable.id, messageId)).returning();
+
+    res.json(updated);
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/agents/delegation-chain/:taskId", async (req, res): Promise<void> => {
+  const taskId = parseInt(req.params.taskId);
+  try {
+    const chain: any[] = [];
+    let currentId: number | null = taskId;
+
+    while (currentId !== null) {
+      const [task] = await db.select().from(agentTasksTable).where(eq(agentTasksTable.id, currentId));
+      if (!task) break;
+      chain.push(task);
+      currentId = task.parentTaskId;
+    }
+
+    const subtasks = await db.select().from(agentTasksTable)
+      .where(eq(agentTasksTable.parentTaskId, taskId));
+
+    res.json({ chain: chain.reverse(), subtasks });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 export default router;

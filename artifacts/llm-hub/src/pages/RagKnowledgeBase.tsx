@@ -37,6 +37,8 @@ export default function RagKnowledgeBase() {
   const [customContent, setCustomContent] = useState("");
   const [customIngesting, setCustomIngesting] = useState(false);
   const [clearing, setClearing] = useState<string | null>(null);
+  const [reEmbedding, setReEmbedding] = useState(false);
+  const [reEmbedResult, setReEmbedResult] = useState<{ reEmbedded: number; failed: number; totalPending: number; message: string } | null>(null);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -365,6 +367,50 @@ export default function RagKnowledgeBase() {
               loading={ingesting === "all-training"}
               onClick={() => ingest("all-training")}
             />
+          </div>
+
+          <div className="glass-panel rounded-xl p-4 border border-cyan-500/20 bg-cyan-500/5">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-medium text-cyan-400 flex items-center gap-2">
+                  <Zap className="w-4 h-4" /> Semantic Re-Embedding
+                </h3>
+                <p className="text-xs text-gray-400 mt-1">
+                  Upgrade keyword-hash embeddings to semantic vectors using Ollama nomic-embed-text.
+                  {status && !status.ollamaEmbeddingAvailable && " (VPS embedding model currently offline — will retry when available)"}
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  setReEmbedding(true);
+                  setReEmbedResult(null);
+                  try {
+                    const res = await fetch(`${API}/api/rag-pipeline/re-embed`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ batchSize: 200 }),
+                    });
+                    const data = await res.json();
+                    setReEmbedResult(data);
+                    fetchStatus();
+                  } catch (e: any) {
+                    setReEmbedResult({ reEmbedded: 0, failed: 0, totalPending: 0, message: e.message });
+                  } finally {
+                    setReEmbedding(false);
+                  }
+                }}
+                disabled={reEmbedding}
+                className="px-4 py-2 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400 text-sm font-medium transition disabled:opacity-50 flex items-center gap-2"
+              >
+                {reEmbedding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                {reEmbedding ? "Re-embedding..." : "Upgrade Batch"}
+              </button>
+            </div>
+            {reEmbedResult && (
+              <div className="mt-3 p-3 rounded-lg bg-white/5 text-sm text-gray-300">
+                {reEmbedResult.message}
+              </div>
+            )}
           </div>
 
           {ingestResult && (

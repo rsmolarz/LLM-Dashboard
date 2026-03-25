@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { format } from "date-fns";
 import { 
   MessageSquare, Plus, Trash2, Send, Bot, User, 
-  ChevronDown, HardDrive, ThumbsUp, ThumbsDown, BookOpen, Brain
+  ChevronDown, HardDrive, ThumbsUp, ThumbsDown, BookOpen, Brain,
+  Download, FileText
 } from "lucide-react";
 import { 
   useListConversations, 
@@ -264,9 +265,25 @@ export default function Chat() {
               <h3 className="font-medium text-white">
                 {conversations.find(c => c.id === selectedConvId)?.title}
               </h3>
-              <div className="px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-xs text-muted-foreground flex items-center gap-2">
-                <HardDrive className="w-3.5 h-3.5" />
-                {conversations.find(c => c.id === selectedConvId)?.model}
+              <div className="flex items-center gap-2">
+                <div className="px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-xs text-muted-foreground flex items-center gap-2">
+                  <HardDrive className="w-3.5 h-3.5" />
+                  {conversations.find(c => c.id === selectedConvId)?.model}
+                </div>
+                <button
+                  onClick={() => window.open(`${BASE}api/export/conversation/${selectedConvId}/markdown`, '_blank')}
+                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
+                  title="Export as Markdown"
+                >
+                  <FileText className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => window.open(`${BASE}api/export/conversation/${selectedConvId}/html`, '_blank')}
+                  className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-muted-foreground hover:text-white transition-colors"
+                  title="Export as HTML"
+                >
+                  <Download className="w-4 h-4" />
+                </button>
               </div>
             </div>
 

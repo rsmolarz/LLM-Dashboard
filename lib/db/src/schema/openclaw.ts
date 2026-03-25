@@ -72,6 +72,8 @@ export const agentTasksTable = pgTable("agent_tasks", {
   title: text("title").notNull(),
   description: text("description").notNull().default(""),
   assignedAgentId: text("assigned_agent_id"),
+  delegatedByAgentId: text("delegated_by_agent_id"),
+  parentTaskId: integer("parent_task_id"),
   status: text("status").notNull().default("pending"),
   priority: text("priority").notNull().default("medium"),
   category: text("category").notNull().default("general"),
@@ -80,6 +82,20 @@ export const agentTasksTable = pgTable("agent_tasks", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
+});
+
+export const agentMessagesTable = pgTable("agent_messages", {
+  id: serial("id").primaryKey(),
+  fromAgentId: text("from_agent_id").notNull(),
+  toAgentId: text("to_agent_id").notNull(),
+  messageType: text("message_type").notNull().default("request"),
+  subject: text("subject").notNull().default(""),
+  content: text("content").notNull(),
+  metadata: text("metadata").notNull().default("{}"),
+  taskId: integer("task_id"),
+  status: text("status").notNull().default("pending"),
+  respondedAt: timestamp("responded_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const insertAgentTaskSchema = createInsertSchema(agentTasksTable).omit({ id: true, completedAt: true, createdAt: true, updatedAt: true });
