@@ -501,6 +501,77 @@ export default function Compliance() {
             </div>
           </div>
 
+          <div className="bg-gradient-to-br from-card to-card/80 border border-amber-700/50 rounded-xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-amber-700/30 bg-amber-950/20 flex items-center gap-3">
+              <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0" />
+              <div>
+                <h3 className="font-semibold">HIPAA Compliance Requirements Checklist</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">Complete these steps to achieve full HIPAA compliance. Templates alone are not sufficient.</p>
+              </div>
+            </div>
+            <div className="divide-y divide-border">
+              <div className="px-5 py-3">
+                <div className="font-semibold text-sm text-blue-400 mb-2 flex items-center gap-2"><FileText className="h-4 w-4" /> Step 1: Complete the Templates</div>
+                <div className="space-y-1.5 ml-6 text-sm">
+                  <div className="flex gap-2"><span className="text-muted-foreground">1.</span> Replace all <code className="text-xs bg-accent px-1.5 py-0.5 rounded">[BRACKETED FIELDS]</code> in every document with your organization's actual information</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">2.</span> Fill in contact details, responsible parties, dates, and location-specific info</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">3.</span> Customize the Risk Assessment vulnerability scores based on your actual environment</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">4.</span> Add your real emergency contacts to the Incident Response Plan escalation matrix</div>
+                </div>
+              </div>
+              <div className="px-5 py-3">
+                <div className="font-semibold text-sm text-violet-400 mb-2 flex items-center gap-2"><Shield className="h-4 w-4" /> Step 2: Legal Review</div>
+                <div className="space-y-1.5 ml-6 text-sm">
+                  <div className="flex gap-2"><span className="text-muted-foreground">1.</span> Have a <strong className="text-foreground">healthcare attorney</strong> review the completed BAA before signing</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">2.</span> Have legal review the Notice of Privacy Practices before distributing to patients</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">3.</span> Ensure all policies align with your state's health privacy laws (some states have stricter rules than HIPAA)</div>
+                </div>
+              </div>
+              <div className="px-5 py-3">
+                <div className="font-semibold text-sm text-emerald-400 mb-2 flex items-center gap-2"><CheckCircle className="h-4 w-4" /> Step 3: Execute Agreements</div>
+                <div className="space-y-1.5 ml-6 text-sm">
+                  <div className="flex gap-2"><span className="text-muted-foreground">1.</span> Sign a <strong className="text-foreground">BAA with OpenAI</strong> (if using voice agent / TTS / STT features with PHI)</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">2.</span> Sign a <strong className="text-foreground">BAA with Google</strong> (if using Google Drive / Gmail integrations with PHI)</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">3.</span> Sign a <strong className="text-foreground">BAA with your VPS hosting provider</strong> (server at 72.60.167.64)</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">4.</span> Sign a <strong className="text-foreground">BAA with Replit</strong> (if hosting the platform on Replit in production)</div>
+                </div>
+              </div>
+              <div className="px-5 py-3">
+                <div className="font-semibold text-sm text-orange-400 mb-2 flex items-center gap-2"><Users className="h-4 w-4" /> Step 4: Workforce Training</div>
+                <div className="space-y-1.5 ml-6 text-sm">
+                  <div className="flex gap-2"><span className="text-muted-foreground">1.</span> Deliver HIPAA training to all team members within <strong className="text-foreground">30 days</strong> of hire</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">2.</span> Collect signed Training Acknowledgment Forms from every workforce member</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">3.</span> Include platform-specific training on LLM Hub (session timeouts, audit logging, PHI handling)</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">4.</span> Retain training records for a minimum of <strong className="text-foreground">6 years</strong></div>
+                </div>
+              </div>
+              <div className="px-5 py-3">
+                <div className="font-semibold text-sm text-red-400 mb-2 flex items-center gap-2"><Activity className="h-4 w-4" /> Step 5: Ongoing Obligations</div>
+                <div className="space-y-1.5 ml-6 text-sm">
+                  <div className="flex gap-2"><span className="text-muted-foreground">1.</span> Conduct a <strong className="text-foreground">Security Risk Assessment annually</strong> (update the template with new findings)</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">2.</span> Deliver <strong className="text-foreground">annual refresher training</strong> to all workforce members</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">3.</span> <strong className="text-foreground">Review audit logs regularly</strong> (use the Audit Log tab — the platform logs everything automatically)</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">4.</span> <strong className="text-foreground">Review PHI access reports monthly</strong> (use the PHI Access tab to monitor who's accessing what)</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">5.</span> Update the Incident Response Plan after any security incident</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">6.</span> Re-sign BAAs whenever vendor relationships change</div>
+                  <div className="flex gap-2"><span className="text-muted-foreground">7.</span> Keep all policies current — review and update at least annually</div>
+                </div>
+              </div>
+              <div className="px-5 py-3 bg-emerald-950/20">
+                <div className="font-semibold text-sm text-emerald-400 mb-2 flex items-center gap-2"><CheckCircle className="h-4 w-4" /> Already Handled by the Platform</div>
+                <div className="space-y-1.5 ml-6 text-sm text-muted-foreground">
+                  <div className="flex gap-2"><span>&#10003;</span> Encryption in transit (TLS/SSL)</div>
+                  <div className="flex gap-2"><span>&#10003;</span> Audit logging of all API access with PHI flagging</div>
+                  <div className="flex gap-2"><span>&#10003;</span> Automatic session timeout (15 minutes)</div>
+                  <div className="flex gap-2"><span>&#10003;</span> Role-based access control (admin/user)</div>
+                  <div className="flex gap-2"><span>&#10003;</span> Unique user identification and authentication</div>
+                  <div className="flex gap-2"><span>&#10003;</span> PHI access monitoring and reporting</div>
+                  <div className="flex gap-2"><span>&#10003;</span> Activity timeline and breach detection support</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 gap-3">
             {documents.map(doc => (
               <div key={doc.id} className="bg-card border border-border rounded-xl overflow-hidden">
