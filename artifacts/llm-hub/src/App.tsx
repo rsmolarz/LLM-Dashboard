@@ -26,6 +26,13 @@ import PlatformApi from "@/pages/PlatformApi";
 import RagKnowledgeBase from "@/pages/RagKnowledgeBase";
 import Evaluation from "@/pages/Evaluation";
 import AgentFlow from "@/pages/AgentFlow";
+import Prompts from "@/pages/Prompts";
+import ModelCompare from "@/pages/ModelCompare";
+import Reports from "@/pages/Reports";
+import Playground from "@/pages/Playground";
+import Memory from "@/pages/Memory";
+import Costs from "@/pages/Costs";
+import Team from "@/pages/Team";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -64,6 +71,13 @@ function Router() {
         <Route path="/rag" component={RagKnowledgeBase} />
         <Route path="/evaluation" component={Evaluation} />
         <Route path="/agentflow" component={AgentFlow} />
+        <Route path="/prompts" component={Prompts} />
+        <Route path="/compare" component={ModelCompare} />
+        <Route path="/reports" component={Reports} />
+        <Route path="/playground" component={Playground} />
+        <Route path="/memory" component={Memory} />
+        <Route path="/costs" component={Costs} />
+        <Route path="/team" component={Team} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

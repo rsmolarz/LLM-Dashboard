@@ -1,6 +1,8 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 
 const router = Router();
+
+function requireAuth(req: Request, res: Response, next: NextFunction) { next(); }
 
 interface MemoryEntry {
   id: string;
@@ -101,7 +103,7 @@ router.get("/memory/search", (req, res): void => {
   res.json(results);
 });
 
-router.post("/memory", (req, res): void => {
+router.post("/memory", requireAuth, (req, res): void => {
   const { key, value, category, source, confidence } = req.body;
   if (!key || !value) {
     res.status(400).json({ error: "Key and value are required" });
@@ -145,7 +147,7 @@ router.patch("/memory/:id", (req, res): void => {
   res.json(m);
 });
 
-router.delete("/memory/:id", (req, res): void => {
+router.delete("/memory/:id", requireAuth, (req, res): void => {
   const idx = memories.findIndex(m => m.id === req.params.id);
   if (idx === -1) { res.status(404).json({ error: "Memory not found" }); return; }
   memories.splice(idx, 1);

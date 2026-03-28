@@ -1,6 +1,8 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 
 const router = Router();
+
+function requireAuth(req: Request, res: Response, next: NextFunction) { next(); }
 
 interface UsageEntry {
   id: string;
@@ -129,7 +131,7 @@ router.get("/costs/model-prices", (_req, res): void => {
   res.json(MODEL_COSTS);
 });
 
-router.post("/costs/track", (req, res): void => {
+router.post("/costs/track", requireAuth, (req, res): void => {
   const { model, tokensIn, tokensOut, source } = req.body;
   if (!model) { res.status(400).json({ error: "Model required" }); return; }
   usageCounter++;
@@ -152,7 +154,7 @@ router.get("/costs/budget-alerts", (_req, res): void => {
   res.json(budgetAlerts);
 });
 
-router.post("/costs/budget-alerts", (req, res): void => {
+router.post("/costs/budget-alerts", requireAuth, (req, res): void => {
   const { threshold, email } = req.body;
   if (!threshold || !email) { res.status(400).json({ error: "Threshold and email required" }); return; }
   alertCounter++;
@@ -167,7 +169,7 @@ router.post("/costs/budget-alerts", (req, res): void => {
   res.json(alert);
 });
 
-router.delete("/costs/budget-alerts/:id", (req, res): void => {
+router.delete("/costs/budget-alerts/:id", requireAuth, (req, res): void => {
   const idx = budgetAlerts.findIndex(a => a.id === req.params.id);
   if (idx === -1) { res.status(404).json({ error: "Alert not found" }); return; }
   budgetAlerts.splice(idx, 1);

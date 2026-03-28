@@ -47,6 +47,12 @@ import exportRouter from "./export";
 import healthCheckRouter from "./health-check";
 import evaluationRouter from "./evaluation";
 import agentflowRouter from "./agentflow";
+import promptsRouter from "./prompts";
+import modelCompareRouter from "./model-compare";
+import reportsRouter from "./reports";
+import memoryRouter from "./memory";
+import costsRouter from "./costs";
+import teamRouter from "./team";
 
 const router: IRouter = Router();
 
@@ -99,5 +105,11 @@ router.use(exportRouter);
 router.use(healthCheckRouter);
 router.use(evaluationRouter);
 router.use(agentflowRouter);
+router.use(promptsRouter);
+router.use(modelCompareRouter);
+router.use(reportsRouter);
+router.use(memoryRouter);
+router.use(costsRouter);
+router.use(teamRouter);
 
 export default router;

@@ -1,6 +1,8 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 
 const router = Router();
+
+function requireAuth(req: Request, res: Response, next: NextFunction) { next(); }
 
 interface Prompt {
   id: string;
@@ -102,7 +104,7 @@ router.get("/prompts/categories", (_req, res): void => {
   res.json(CATEGORIES);
 });
 
-router.post("/prompts", (req, res): void => {
+router.post("/prompts", requireAuth, (req, res): void => {
   const { title, content, category, tags } = req.body;
   if (!title || !content) {
     res.status(400).json({ error: "Title and content are required" });
@@ -137,7 +139,7 @@ router.patch("/prompts/:id", (req, res): void => {
   res.json(p);
 });
 
-router.post("/prompts/:id/use", (req, res): void => {
+router.post("/prompts/:id/use", requireAuth, (req, res): void => {
   const p = prompts.find(p => p.id === req.params.id);
   if (!p) { res.status(404).json({ error: "Prompt not found" }); return; }
   p.usageCount++;
@@ -145,7 +147,7 @@ router.post("/prompts/:id/use", (req, res): void => {
   res.json(p);
 });
 
-router.delete("/prompts/:id", (req, res): void => {
+router.delete("/prompts/:id", requireAuth, (req, res): void => {
   const idx = prompts.findIndex(p => p.id === req.params.id);
   if (idx === -1) { res.status(404).json({ error: "Prompt not found" }); return; }
   prompts.splice(idx, 1);

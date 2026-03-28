@@ -1,6 +1,8 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 
 const router = Router();
+
+function requireAuth(req: Request, res: Response, next: NextFunction) { next(); }
 
 const OLLAMA_HOST = "http://72.60.167.64:11434";
 
@@ -20,7 +22,7 @@ interface CompareResult {
 const compareHistory: CompareResult[] = [];
 let compareCounter = 0;
 
-router.post("/model-compare/run", async (req, res): Promise<void> => {
+router.post("/model-compare/run", requireAuth, async (req, res): Promise<void> => {
   const { prompt, models } = req.body;
   if (!prompt || !models || !Array.isArray(models) || models.length < 2) {
     res.status(400).json({ error: "Prompt and at least 2 models required" });
@@ -70,7 +72,7 @@ router.post("/model-compare/run", async (req, res): Promise<void> => {
   res.json(result);
 });
 
-router.post("/model-compare/:id/rate", (req, res): void => {
+router.post("/model-compare/:id/rate", requireAuth, (req, res): void => {
   const { model, rating } = req.body;
   const cmp = compareHistory.find(c => c.id === req.params.id);
   if (!cmp) { res.status(404).json({ error: "Comparison not found" }); return; }

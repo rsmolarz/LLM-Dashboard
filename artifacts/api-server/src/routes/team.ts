@@ -1,6 +1,8 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 
 const router = Router();
+
+function requireAuth(req: Request, res: Response, next: NextFunction) { next(); }
 
 interface SharedConversation {
   id: string;
@@ -102,7 +104,7 @@ router.get("/team/shared", (_req, res): void => {
   res.json(sharedConversations);
 });
 
-router.post("/team/share", (req, res): void => {
+router.post("/team/share", requireAuth, (req, res): void => {
   const { conversationId, title, sharedWith, permissions } = req.body;
   if (!conversationId || !title) { res.status(400).json({ error: "conversationId and title required" }); return; }
   shareCounter++;
@@ -119,7 +121,7 @@ router.post("/team/share", (req, res): void => {
   res.json(shared);
 });
 
-router.delete("/team/shared/:id", (req, res): void => {
+router.delete("/team/shared/:id", requireAuth, (req, res): void => {
   const idx = sharedConversations.findIndex(s => s.id === req.params.id);
   if (idx === -1) { res.status(404).json({ error: "Share not found" }); return; }
   sharedConversations.splice(idx, 1);
@@ -130,7 +132,7 @@ router.get("/team/tasks", (_req, res): void => {
   res.json(tasks);
 });
 
-router.post("/team/tasks", (req, res): void => {
+router.post("/team/tasks", requireAuth, (req, res): void => {
   const { title, description, assignee, priority, dueDate } = req.body;
   if (!title) { res.status(400).json({ error: "Title required" }); return; }
   taskCounter++;
@@ -164,14 +166,14 @@ router.patch("/team/tasks/:id", (req, res): void => {
   res.json(t);
 });
 
-router.delete("/team/tasks/:id", (req, res): void => {
+router.delete("/team/tasks/:id", requireAuth, (req, res): void => {
   const idx = tasks.findIndex(t => t.id === req.params.id);
   if (idx === -1) { res.status(404).json({ error: "Task not found" }); return; }
   tasks.splice(idx, 1);
   res.json({ success: true });
 });
 
-router.post("/team/tasks/:id/comments", (req, res): void => {
+router.post("/team/tasks/:id/comments", requireAuth, (req, res): void => {
   const t = tasks.find(t => t.id === req.params.id);
   if (!t) { res.status(404).json({ error: "Task not found" }); return; }
   const { content } = req.body;

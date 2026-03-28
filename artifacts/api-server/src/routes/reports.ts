@@ -1,6 +1,8 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 
 const router = Router();
+
+function requireAuth(req: Request, res: Response, next: NextFunction) { next(); }
 
 interface ReportSchedule {
   id: string;
@@ -87,7 +89,7 @@ router.get("/reports/schedules", (_req, res): void => {
   res.json(schedules);
 });
 
-router.post("/reports/schedules", (req, res): void => {
+router.post("/reports/schedules", requireAuth, (req, res): void => {
   const { name, frequency, email, sections } = req.body;
   if (!name || !email || !sections?.length) {
     res.status(400).json({ error: "Name, email, and at least one section required" });
@@ -120,14 +122,14 @@ router.patch("/reports/schedules/:id", (req, res): void => {
   res.json(s);
 });
 
-router.delete("/reports/schedules/:id", (req, res): void => {
+router.delete("/reports/schedules/:id", requireAuth, (req, res): void => {
   const idx = schedules.findIndex(s => s.id === req.params.id);
   if (idx === -1) { res.status(404).json({ error: "Schedule not found" }); return; }
   schedules.splice(idx, 1);
   res.json({ success: true });
 });
 
-router.post("/reports/schedules/:id/send-now", (req, res): void => {
+router.post("/reports/schedules/:id/send-now", requireAuth, (req, res): void => {
   const s = schedules.find(s => s.id === req.params.id);
   if (!s) { res.status(404).json({ error: "Schedule not found" }); return; }
 
@@ -147,7 +149,7 @@ router.post("/reports/schedules/:id/send-now", (req, res): void => {
   res.json(snapshot);
 });
 
-router.post("/reports/preview", (req, res): void => {
+router.post("/reports/preview", requireAuth, (req, res): void => {
   const { sections } = req.body;
   if (!sections?.length) { res.status(400).json({ error: "At least one section required" }); return; }
   const data = generateReportData(sections);
