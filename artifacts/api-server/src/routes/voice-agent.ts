@@ -2,10 +2,9 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { voiceAgentProvidersTable, voiceConversationsTable, voiceBenchmarksTable, voiceFlowsTable } from "@workspace/db/schema";
 import { eq, desc } from "drizzle-orm";
+import { requireAuth } from "../middlewares/rateLimiter";
 
 const router = Router();
-
-function requireAuth(req: any, res: any, next: any) { next(); }
 
 function sanitizeProvider(p: any) {
   const { apiKey, ...rest } = p;
@@ -29,6 +28,42 @@ async function queryOllama(serverUrl: string, model: string, prompt: string): Pr
   return data.response || "";
 }
 
+let audioClient: any = null;
+async function getAudioClient() {
+  if (audioClient) return audioClient;
+  try {
+    audioClient = await import("@workspace/integrations-openai-ai-server/audio");
+    return audioClient;
+  } catch (e) {
+    console.log("[voice-agent] OpenAI audio client not available:", (e as Error).message);
+    return null;
+  }
+}
+
+async function queryOpenAIChat(message: string): Promise<string> {
+  try {
+    const { default: OpenAI } = await import("openai");
+    const client = new OpenAI({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+    });
+    const response = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: "You are a helpful voice assistant. Respond conversationally and concisely. Keep responses natural and suitable for text-to-speech." },
+        { role: "user", content: message },
+      ],
+      max_tokens: 500,
+    });
+    return response.choices[0]?.message?.content || "";
+  } catch (e: any) {
+    throw new Error(`OpenAI chat error: ${e.message}`);
+  }
+}
+
+const VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"] as const;
+type Voice = typeof VOICES[number];
+
 const PROVIDERS_REGISTRY = [
   { name: "Amazon Lex", provider: "amazon_lex", category: "cloud", capabilities: ["NLU", "ASR", "Dialog Management", "Multi-language", "Lambda Integration"], model: "lex-v2" },
   { name: "ElevenLabs", provider: "elevenlabs", category: "cloud", capabilities: ["TTS", "Voice Cloning", "Multi-language", "Emotion Control", "Real-time Streaming"], model: "eleven_multilingual_v2" },
@@ -51,6 +86,10 @@ router.get("/voice-agent/providers", async (_req, res): Promise<void> => {
 
 router.get("/voice-agent/registry", async (_req, res): Promise<void> => {
   res.json(PROVIDERS_REGISTRY);
+});
+
+router.get("/voice-agent/voices", (_req, res): void => {
+  res.json({ voices: VOICES, default: "alloy" });
 });
 
 router.post("/voice-agent/providers", requireAuth, async (req, res): Promise<void> => {
@@ -97,8 +136,97 @@ router.delete("/voice-agent/providers/:id", requireAuth, async (req, res): Promi
   res.json({ success: true });
 });
 
+router.post("/voice-agent/tts", requireAuth, async (req, res): Promise<void> => {
+  const { text, voice = "alloy", format = "mp3" } = req.body;
+  if (!text) { res.status(400).json({ error: "text is required" }); return; }
+
+  try {
+    const audio = await getAudioClient();
+    if (!audio) { res.status(503).json({ error: "Audio service not available" }); return; }
+
+    const audioBuffer = await audio.textToSpeech(text, voice as Voice, format);
+    const mimeType = format === "wav" ? "audio/wav" : format === "mp3" ? "audio/mpeg" : "audio/ogg";
+    res.setHeader("Content-Type", mimeType);
+    res.setHeader("Content-Length", audioBuffer.length.toString());
+    res.send(audioBuffer);
+  } catch (e: any) {
+    console.error("[voice-agent] TTS error:", e.message);
+    res.status(500).json({ error: `TTS failed: ${e.message}` });
+  }
+});
+
+router.post("/voice-agent/stt", requireAuth, async (req, res): Promise<void> => {
+  try {
+    const audio = await getAudioClient();
+    if (!audio) { res.status(503).json({ error: "Audio service not available" }); return; }
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) {
+      chunks.push(Buffer.from(chunk));
+    }
+    const audioBuffer = Buffer.concat(chunks);
+
+    if (audioBuffer.length === 0) {
+      res.status(400).json({ error: "No audio data received" });
+      return;
+    }
+
+    const { buffer: compatible, format } = await audio.ensureCompatibleFormat(audioBuffer);
+    const transcript = await audio.speechToText(compatible, format);
+    res.json({ transcript, format, size: audioBuffer.length });
+  } catch (e: any) {
+    console.error("[voice-agent] STT error:", e.message);
+    res.status(500).json({ error: `STT failed: ${e.message}` });
+  }
+});
+
+router.post("/voice-agent/voice-chat", requireAuth, async (req, res): Promise<void> => {
+  try {
+    const audio = await getAudioClient();
+    if (!audio) { res.status(503).json({ error: "Audio service not available" }); return; }
+
+    const chunks: Buffer[] = [];
+    const voice = (req.query.voice as Voice) || "alloy";
+    for await (const chunk of req) {
+      chunks.push(Buffer.from(chunk));
+    }
+    const audioBuffer = Buffer.concat(chunks);
+
+    if (audioBuffer.length === 0) {
+      res.status(400).json({ error: "No audio data received" });
+      return;
+    }
+
+    const startTime = Date.now();
+    const { buffer: compatible, format } = await audio.ensureCompatibleFormat(audioBuffer);
+    const result = await audio.voiceChat(compatible, voice, format as "wav" | "mp3", "mp3");
+    const responseTimeMs = Date.now() - startTime;
+
+    const userTranscript = result.transcript || "[audio input]";
+    const agentText = result.audioResponse.length > 0 ? `[Voice response - ${result.audioResponse.length} bytes]` : result.transcript;
+
+    const [conversation] = await db.insert(voiceConversationsTable).values({
+      providerName: "openai_voice",
+      userMessage: userTranscript,
+      agentResponse: agentText,
+      responseTimeMs,
+      intentDetected: "voice-chat",
+      confidence: 1.0,
+    }).returning();
+
+    res.json({
+      transcript: result.transcript,
+      audioBase64: result.audioResponse.toString("base64"),
+      conversationId: conversation.id,
+    });
+  } catch (e: any) {
+    console.error("[voice-agent] Voice chat error:", e.message);
+    res.status(500).json({ error: `Voice chat failed: ${e.message}` });
+  }
+});
+
 router.post("/voice-agent/chat", requireAuth, async (req, res): Promise<void> => {
-  const { providerId, providerName, message, model } = req.body;
+  const { providerId, providerName, message, model, voice = "alloy", includeTts = false } = req.body;
   if (!message) { res.status(400).json({ error: "message required" }); return; }
 
   const provider = providerName || "ollama_local";
@@ -106,6 +234,7 @@ router.post("/voice-agent/chat", requireAuth, async (req, res): Promise<void> =>
   let agentResponse = "";
   let intentDetected = "";
   let confidence = 0;
+  let audioBase64: string | null = null;
 
   try {
     if (provider === "ollama_local" || provider === "Local LLM (Ollama)") {
@@ -116,10 +245,26 @@ router.post("/voice-agent/chat", requireAuth, async (req, res): Promise<void> =>
       agentResponse = await queryOllama(serverUrl, useModel, prompt);
       intentDetected = "conversation";
       confidence = 0.9;
+    } else if (provider === "openai_voice" || provider === "OpenAI Voice") {
+      agentResponse = await queryOpenAIChat(message);
+      intentDetected = "openai-chat";
+      confidence = 0.95;
     } else {
       agentResponse = `[${provider}] This provider requires API configuration. Please set up the endpoint and API key in the Providers tab to enable live responses. Simulated response for: "${message}"`;
       intentDetected = "simulated";
       confidence = 0.5;
+    }
+
+    if (includeTts && agentResponse && !agentResponse.startsWith("[") && !agentResponse.startsWith("Error")) {
+      try {
+        const audio = await getAudioClient();
+        if (audio) {
+          const ttsBuffer = await audio.textToSpeech(agentResponse.slice(0, 4000), voice as Voice, "mp3");
+          audioBase64 = ttsBuffer.toString("base64");
+        }
+      } catch (ttsErr: any) {
+        console.error("[voice-agent] TTS for chat response failed:", ttsErr.message);
+      }
     }
   } catch (e: any) {
     agentResponse = `Error: ${e.message}`;
@@ -134,7 +279,7 @@ router.post("/voice-agent/chat", requireAuth, async (req, res): Promise<void> =>
     responseTimeMs, intentDetected, confidence,
   }).returning();
 
-  res.json(conversation);
+  res.json({ ...conversation, audioBase64 });
 });
 
 router.get("/voice-agent/conversations", async (req, res): Promise<void> => {
@@ -168,6 +313,8 @@ router.post("/voice-agent/benchmark", requireAuth, async (req, res): Promise<voi
             const ollamaPrompt = "You are a helpful voice assistant. Respond concisely.\n\nUser: " + prompt + "\n\nAssistant:";
             response = await queryOllama(serverUrl, prov.model || "qwen2.5:7b", ollamaPrompt);
           }
+        } else if (prov.provider === "openai_voice") {
+          response = await queryOpenAIChat(prompt);
         } else {
           response = `[Simulated ${prov.name}] Response to: "${prompt}"`;
         }
@@ -265,6 +412,12 @@ router.get("/voice-agent/dashboard", async (_req, res): Promise<void> => {
     ? Math.round(conversations.reduce((s, c) => s + (c.responseTimeMs || 0), 0) / conversations.length)
     : 0;
 
+  let audioAvailable = false;
+  try {
+    const audio = await getAudioClient();
+    audioAvailable = !!audio;
+  } catch { }
+
   res.json({
     totalProviders: providers.length,
     cloudProviders: cloudProviders.length,
@@ -275,6 +428,8 @@ router.get("/voice-agent/dashboard", async (_req, res): Promise<void> => {
     totalFlows: flows.length,
     recentConversations: conversations.slice(0, 5),
     providers: providers.map(sanitizeProvider),
+    audioAvailable,
+    voices: VOICES,
   });
 });
 
