@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User, Stethoscope, Share2, TrendingUp, Database, Mic, HardDrive, BookOpen, Beaker, FlaskConical, Key, Library, Sun, Moon, Trophy } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User, Stethoscope, Share2, TrendingUp, Database, Mic, HardDrive, BookOpen, Beaker, FlaskConical, Key, Library, Sun, Moon, Trophy, Workflow } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -44,6 +44,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/agents", label: "Agents", icon: Bot, adminOnly: false },
     { href: "/analytics", label: "Analytics", icon: LineChart, adminOnly: false },
     { href: "/automations", label: "Automations", icon: Zap, adminOnly: false },
+    { href: "/agentflow", label: "AgentFlow", icon: Workflow, adminOnly: false },
     { href: "/clinical", label: "Clinical", icon: Stethoscope, adminOnly: false },
     { href: "/social", label: "Social", icon: Share2, adminOnly: false },
     { href: "/finance", label: "Finance", icon: TrendingUp, adminOnly: false },

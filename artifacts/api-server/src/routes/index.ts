@@ -46,6 +46,7 @@ import ragPipelineRouter from "./rag-pipeline";
 import exportRouter from "./export";
 import healthCheckRouter from "./health-check";
 import evaluationRouter from "./evaluation";
+import agentflowRouter from "./agentflow";
 
 const router: IRouter = Router();
 
@@ -97,5 +98,6 @@ router.use(ragPipelineRouter);
 router.use(exportRouter);
 router.use(healthCheckRouter);
 router.use(evaluationRouter);
+router.use(agentflowRouter);
 
 export default router;
