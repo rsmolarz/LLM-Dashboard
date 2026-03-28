@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { useSessionTimeout } from "@/hooks/useSessionTimeout";
+import { useAuth } from "@workspace/replit-auth-web";
 import LocalLlm from "@/pages/LocalLlm";
 import Chat from "@/pages/Chat";
 import Training from "@/pages/Training";
@@ -33,6 +35,7 @@ import Playground from "@/pages/Playground";
 import Memory from "@/pages/Memory";
 import Costs from "@/pages/Costs";
 import Team from "@/pages/Team";
+import Compliance from "@/pages/Compliance";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -78,9 +81,33 @@ function Router() {
         <Route path="/memory" component={Memory} />
         <Route path="/costs" component={Costs} />
         <Route path="/team" component={Team} />
+        <Route path="/compliance" component={Compliance} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
+  );
+}
+
+function SessionTimeoutOverlay() {
+  const { user } = useAuth();
+  const { showWarning, remainingSeconds, extendSession } = useSessionTimeout(!!user);
+
+  if (!showWarning) return null;
+
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-card border border-border rounded-xl p-6 max-w-md mx-4 shadow-2xl">
+        <h2 className="text-lg font-bold text-amber-400 mb-2">Session Expiring</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Your session will expire in <span className="font-bold text-foreground">{remainingSeconds}</span> seconds
+          due to inactivity. This is required for HIPAA compliance.
+        </p>
+        <button onClick={extendSession}
+          className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors">
+          Continue Session
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -90,6 +117,7 @@ function App() {
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
           <Router />
+          <SessionTimeoutOverlay />
         </WouterRouter>
         <Toaster />
       </TooltipProvider>

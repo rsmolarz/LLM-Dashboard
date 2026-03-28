@@ -1,7 +1,7 @@
 # LLM Hub — AI Agent Orchestration Platform
 
 ## Overview
-LLM Hub is a full-stack monorepo designed to be a comprehensive AI agent orchestration platform. It manages a self-hosted Ollama LLM server, offering functionalities ranging from local LLM management and multi-conversation chat to advanced AI training pipelines, deep research capabilities, and specialized AI agents for various domains like clinical ENT, social media, and hedge funds. The platform aims to provide a robust, scalable, and customizable environment for developing, deploying, and monitoring AI solutions.
+LLM Hub is a full-stack monorepo serving as an AI agent orchestration platform. It manages a self-hosted Ollama LLM server and provides functionalities for local LLM management, multi-conversation chat, advanced AI training pipelines, deep research capabilities, and specialized AI agents for various domains (e.g., clinical ENT, social media, hedge funds). The platform aims to offer a robust, scalable, and customizable environment for developing, deploying, and monitoring AI solutions, addressing the growing demand for flexible and powerful AI integration across diverse industries.
 
 ## User Preferences
 I want iterative development.
@@ -11,75 +11,57 @@ Do not make changes to the folder `Z`.
 Do not make changes to the file `Y`.
 
 ## System Architecture
-The project is structured as a pnpm monorepo with distinct artifacts for the frontend and backend, and shared libraries.
+The project is structured as a pnpm monorepo with distinct artifacts for the frontend, backend, and shared libraries.
 
--   **Frontend**: Built with React and Vite (`artifacts/llm-hub`). It features a mobile-responsive design with a hamburger menu, responsive grid layouts, and touch-friendly controls. UI/UX includes various specialized dashboards and studios (e.g., Vision Studio, Analytics Dashboard, Agent Orchestration, Clinical AI, Social Media AI, Hedge Fund AI).
--   **Backend**: An Express.js server (`artifacts/api-server`).
--   **Database**: Utilizes Drizzle ORM with PostgreSQL.
--   **API Design**: Zod schemas for API validation (`lib/api-zod`) and React Query hooks for client-side data fetching (`lib/api-client-react`) are generated using Orval.
+-   **Frontend**: React and Vite-based (`artifacts/llm-hub`) with a mobile-responsive design and specialized dashboards (Vision Studio, Analytics, Agent Orchestration, Clinical AI, Social Media AI, Hedge Fund AI).
+-   **Backend**: Express.js server (`artifacts/api-server`).
+-   **Database**: PostgreSQL with Drizzle ORM.
+-   **API Design**: Zod schemas for validation (`lib/api-zod`) and Orval-generated React Query hooks (`lib/api-client-react`).
 -   **Core Features**:
-    -   **LLM Management**: Connects to a self-hosted Ollama server on a VPS for model management (pull/delete), chat interactions, and streaming responses.
-    -   **Chat System**: Supports multi-conversation chats, model selection, message rating, and integrates "Model Profiles" to inject system prompts for specialized AI coaches.
-    -   **Training & Customization**: Comprehensive suite of tools across 10 tabs including Model Profiles, Training Data management, Knowledge Base, fine-tuning, and Project Brain.
-    -   **Deep Research Engine**: Facilitates multi-model research, fanning out queries to local Ollama models ("Deep" mode) and external services like Claude and GPT ("Extensive" mode), with session saving and source citations.
-    -   **Vision Studio**: Integrates image generation (GPT-Image-1) and vision analysis (llava:13b) with domain-specific presets (Medical/ENT, Finance, Social Media, Real Estate).
-    -   **Agent Orchestration**: Manages AI agents with fleet management, task routing, memories, tool definitions, and category filtering. Features step-by-step execution logs.
-    -   **RAG (Retrieval Augmented Generation)**: Vector-powered knowledge retrieval using pgvector on PostgreSQL. 28,178 embedded chunks across 13 source categories (PubMed 19,436 / SEC Edgar 2,824 / ClinicalTrials 2,343 / OpenAlex Finance 1,881 / PMC 789 / OpenAlex 363 / Knowledge Base 263 / auto-generated 133 / HF Synthetic 64 / FRED Macro 46 / ENT Training 35 / Custom 1). Supports Ollama nomic-embed-text with keyword-hash fallback (cached Ollama availability check, 60s TTL). HNSW index for fast cosine similarity search. Integrated into chat via `prepareRagMessages`. Management UI at `/rag` with 3 tabs (Knowledge Sources, Test Search, Ingest Data).
-    -   **Analytics & Monitoring**: Interactive Recharts-powered dashboard with area charts (Messages Over Time), pie charts (Model Usage Distribution), bar charts (Ratings, Benchmarks). Stat cards for Conversations, Messages, RAG Documents, RAG Chunks. Refresh button. VPS training data panel.
-    -   **Model Evaluation Benchmarks**: `/evaluation` page for benchmarking LLM models across 5 categories (General, Coding, Reasoning, Medical, Finance). Run benchmarks, view latency/tokens-per-second metrics, score responses 1-10, compare models with charts. Backend: `GET /api/evaluation/categories`, `POST /api/evaluation/run`, `POST /api/evaluation/score`, `GET /api/evaluation/history`.
-    -   **Health Check Monitoring**: Background health monitor checking Ollama, VPS DB, and local DB every 60 seconds. SSE alerts via `/api/health/events` when services go down or recover. Status endpoint: `GET /api/health/status`, history: `GET /api/health/history`.
-    -   **Dark/Light Theme Toggle**: Sun/Moon icon in header. Theme persisted in localStorage. CSS variables for both themes defined in `index.css`. `.light` class applied to `<html>`.
-    -   **Conversation Search & Filter**: Search bar and model filter in Chat sidebar. Filters conversations by title text and model name. Clear button and active filter badge.
-    -   **RAG Embedding Statistics**: `GET /api/rag-pipeline/embedding-stats` shows semantic vs keyword-hash breakdown with progress bar. Displayed in RAG Ingest tab above re-embedding section.
-    -   **Workflow Automations**: Upgraded UI with type-specific config forms (Research prompt/mode, Training domain, Agent Task details, Backup target, Benchmark prompt), execution history timeline (success/error/running status with duration), live countdown timers to next run, stat cards (active, total runs, succeeded, failed), expandable automation cards with config/schedule details. Auto-refreshes every 15 seconds. Backend: `GET/POST /api/automations`, `PATCH/DELETE /api/automations/:id`, `POST /api/automations/:id/run`, `GET /api/automations/history`.
-    -   **Voice Agent Hub (Real Integration)**: 12 voice providers (6 cloud, 6 local). **OpenAI Voice** and **Local LLM (Ollama)** provide live responses. Real OpenAI TTS/STT via `@workspace/integrations-openai-ai-server/audio` client. Endpoints: `POST /api/voice-agent/tts` (text-to-speech with 6 voices: alloy/echo/fable/onyx/nova/shimmer), `POST /api/voice-agent/stt` (speech-to-text with format auto-detection), `POST /api/voice-agent/voice-chat` (audio-in/audio-out). Frontend: microphone recording (MediaRecorder API/WebM), auto-transcription for non-OpenAI providers, full voice chat mode for OpenAI (audio in → audio response out), TTS button on each agent response, inline audio playback, voice/provider/model selectors. 8 tabs: Dashboard, Providers, Cloud/Local, Voice Chat, History, Benchmark, Dialog Flows.
+    -   **LLM Management**: Connects to a self-hosted Ollama server for model management and chat interactions.
+    -   **Chat System**: Multi-conversation chat with model selection, message rating, and "Model Profiles" for specialized AI coaches.
+    -   **Training & Customization**: Tools for Model Profiles, Training Data, Knowledge Base, fine-tuning, and Project Brain.
+    -   **Deep Research Engine**: Multi-model research across local Ollama models and external services (Claude, GPT) with session saving and citations.
+    -   **Vision Studio**: Integrates image generation (GPT-Image-1) and vision analysis (llava:13b) with domain-specific presets.
+    -   **Agent Orchestration**: Manages AI agents with fleet management, task routing, memories, tool definitions, and step-by-step execution logs. Supports agent-to-agent communication via delegation.
+    -   **RAG (Retrieval Augmented Generation)**: Vector-powered knowledge retrieval using pgvector on PostgreSQL (28,178 embedded chunks across 13 categories). Uses Ollama nomic-embed-text for embeddings with keyword-hash fallback. Management UI available.
+    -   **Analytics & Monitoring**: Recharts-powered dashboard for usage metrics, model performance, and RAG statistics.
+    -   **Model Evaluation Benchmarks**: Benchmarking page for LLM models across various categories with metrics and historical comparisons.
+    -   **Health Check Monitoring**: Background monitoring of Ollama, VPS DB, and local DB with SSE alerts.
+    -   **Theme Toggle**: Dark/Light theme with persistence.
+    -   **Conversation Search & Filter**: Search and filter capabilities for chat conversations.
+    -   **Workflow Automations**: UI for configuring and managing automated tasks with execution history and real-time status updates.
+    -   **Voice Agent Hub**: Integrates 12 voice providers (6 cloud, 6 local) including OpenAI Voice and Local LLM (Ollama) for live audio interactions (TTS/STT, voice chat).
     -   **Real-time Notifications**: SSE-based system for user notifications and health alerts.
-    -   **AgentFlow Integration**: `/agentflow` page connecting to external AgentFlow platform (omni-agent-core.replit.app). 7 tabs: Overview, Agents, Workflows, Executions, Templates, Knowledge, Settings. Proxied API routes: `GET /api/agentflow/status|agents|workflows|executions|templates|knowledge-bases|settings` (public read), `POST /api/agentflow/agents|workflows` + `POST /api/agentflow/workflows/:id/execute` + `POST /api/agentflow/templates/:id/apply` (admin-only). Create agents/workflows, execute workflows, apply templates (10 available: Customer Support, Data Analysis, Content Writer, Code Review, Deep Research, Content Pipeline, Lead Qualifier, Email Automation, Chatbot, RAG Pipeline). 15s timeout with AbortController. Error banners for failed actions.
-    -   **Prompt Library**: `/prompts` page — CRUD prompt management with categories (Development, Research, Analytics, Writing, Medical, Finance, Creative, Custom), tags, favorites, search/filter, one-click copy, usage tracking. Seeded with 6 starter prompts. Backend: `GET /api/prompts`, `GET /api/prompts/categories`, `POST /api/prompts`, `POST /api/prompts/:id/use`, `DELETE /api/prompts/:id`. Route: `routes/prompts.ts`.
-    -   **Model Compare**: `/compare` page — send one prompt to multiple Ollama models simultaneously and compare responses side-by-side. Shows latency, token count, and supports per-model rating. History tab tracks past comparisons. Backend: `POST /api/model-compare/run`, `GET /api/model-compare/history`, `POST /api/model-compare/:id/rate`. Route: `routes/model-compare.ts`.
-    -   **Reports & Digests**: `/reports` page — configure daily/weekly/monthly email digest schedules. 3 tabs: Schedules, History, Preview. Create schedules with section selection, send-now capability, report snapshot history. Backend: `GET/POST /api/reports/schedules`, `PUT /api/reports/schedules/:id`, `DELETE /api/reports/schedules/:id`, `POST /api/reports/schedules/:id/send-now`, `GET /api/reports/history`, `POST /api/reports/preview`. Route: `routes/reports.ts`.
-    -   **API Playground**: `/playground` page — interactive API endpoint tester (frontend-only). Left sidebar lists all platform endpoints grouped by category (LLM, Chat, Prompts, Compare, Memory, Costs, Team, Reports, Automations, AgentFlow, System, Analytics, Evaluation). Select endpoint, fill params/body, send request, view response with syntax highlighting. Supports GET/POST/PUT/DELETE with configurable request bodies.
-    -   **Conversation Memory**: `/memory` page — persistent key-value memory store for long-term context. Categories (preference, context, fact, instruction), source tracking (user/inferred/system), confidence scores, access counting. Seeded with 5 starter memories. Upserts on duplicate key. Backend: `GET /api/memory`, `POST /api/memory`, `DELETE /api/memory/:id`. Route: `routes/memory.ts`.
-    -   **Cost & Usage Tracker**: `/costs` page — token usage analytics with estimated costs per model. 4 tabs: Overview (summary cards + source bar chart), By Model (per-model breakdown), Trends (30-day line chart), Budget Alerts (threshold management). Seeds 30 days of mock usage data. Model pricing table for 8 models. Backend: `GET /api/costs/usage|summary|by-model|trends|model-prices|budget-alerts`, `POST /api/costs/track|budget-alerts`, `DELETE /api/costs/budget-alerts/:id`. Route: `routes/costs.ts`.
-    -   **Team Collaboration**: `/team` page — shared conversations, task management, activity feed. 3 tabs: Tasks (with status cards for Pending/In Progress/In Review/Completed, priority labels, due dates, comments), Shared (shared conversation links with permissions), Activity (team activity timeline). Seeded with 3 starter tasks. Backend: `GET /api/team/members|shared|tasks|activity`, `POST /api/team/share|tasks`, `PUT /api/team/tasks/:id`, `DELETE /api/team/shared/:id|tasks/:id`, `POST /api/team/tasks/:id/comments`. Route: `routes/team.ts`.
-    -   **Specialized AI Domains**: Dedicated modules for Clinical ENT AI (15 tabs), Social Media AI (11 tabs), Hedge Fund AI (14 tabs), Database Training Agent (5 tabs) with comprehensive features tailored to each domain.
-    -   **LLM Training Pipeline**: Includes features like fine-tuning, RLHF feedback loops from chat ratings, knowledge distillation, few-shot prompt libraries, and evaluation/benchmarking.
--   **Authentication & Authorization**: Replit Auth (OIDC PKCE) with role-based access control (admin/user roles). `requireAuth` and `requireAdmin` middleware for protected routes. Admin user management endpoints (`GET /api/auth/users`, `PUT /api/auth/users/:id/role`). First user should be promoted to admin via SQL. Admin-only pages (Monitor, Admin) have both frontend `isAdmin` guards and backend `requireAdmin` middleware. Admin-only nav tabs: Databases, Pipeline, Platform API, Monitor, Admin.
--   **Rate Limiting**: Per-user sliding window rate limiter middleware with different tiers: LLM chat (30 req/min), deep research (10 req/min), training (60 req/min). Returns 429 with `Retry-After` and `X-RateLimit-*` headers.
--   **Agent-to-Agent Communication**: Agents can delegate subtasks to specialized agents via `POST /api/agents/:agentId/delegate`. Inter-agent message bus (`agent_messages` table) with request/response pattern. Delegation chain tracking via `parentTaskId` and `delegatedByAgentId` fields.
--   **Export System**: Conversation and research session export in Markdown and HTML formats. Routes: `GET /api/export/conversation/:id/(markdown|html)`, `GET /api/export/research/:id/(markdown|html)`. Export buttons in Chat header and Research session list.
--   **SSL/TLS for VPS PostgreSQL**: Full SSL configuration for VPS database connections including CA cert, client cert/key, SSL mode, and `rejectUnauthorized` options. Stored in `vps_database_config` table.
--   **Semantic RAG Re-Embedding**: `POST /api/rag-pipeline/re-embed` endpoint to batch-upgrade keyword-hash embeddings to semantic vectors using Ollama nomic-embed-text. UI button in RAG Ingest tab.
--   **Auto-Collector & Continuous Training Pipeline**: An in-memory scheduler for data collection (Gmail, Google Drive, chat conversations, etc.) and continuous training data generation across specific domains (ENT, Social, Hedge Fund) using model rotation and sub-topic rotation. It handles streaming API responses and robust JSON parsing.
--   **Domain-Specific Training Pipelines**:
-    -   **ENT Training Pipeline**: Collects data from PubMed, PMC, ClinicalTrials.gov, OpenAlex, and internal VPS training, categorizing it across 20 ENT categories for fine-tuning Meditron-based models. Includes 10 built-in knowledge modules for RAG.
-    -   **Hedge Fund Training Pipeline**: Gathers data from SEC EDGAR, OpenAlex Finance, FRED Macro, and synthetic scenarios, categorized across 18 finance categories to train deepseek-r1-based models.
+    -   **AgentFlow Integration**: Connects to an external AgentFlow platform for managing agents, workflows, and templates.
+    -   **Prompt Library**: CRUD management for prompts with categories, tags, search, and usage tracking.
+    -   **Model Compare**: Side-by-side comparison of Ollama model responses to a single prompt, including latency and token counts.
+    -   **Reports & Digests**: Configuration for scheduled email digests with content selection and historical views.
+    -   **API Playground**: Interactive frontend tool for testing platform API endpoints.
+    -   **Conversation Memory**: Persistent key-value memory store for long-term context with categories and confidence scores.
+    -   **Cost & Usage Tracker**: Token usage analytics, estimated costs, and budget alerts per model.
+    -   **Team Collaboration**: Features for shared conversations, task management, and activity feeds.
+    -   **HIPAA Compliance Dashboard**: Admin-only `/compliance` page with 3 tabs: Overview (13 compliance checks across Technical/Administrative/Physical safeguards, scored as compliant/warning/action-required), Audit Log (paginated, filterable by PHI-only, shows user/action/status/IP), PHI Access Report (30-day user-level PHI access summary). Backend: `GET /api/compliance/status|audit-logs|audit-stats|phi-access-report|activity-timeline` (all admin-only). Route: `routes/compliance.ts`.
+    -   **HIPAA Audit Logging**: Global middleware (`middlewares/auditLog.ts`) logging every API request to `audit_logs` PostgreSQL table. Captures: user_id, user_email, action (method+path), resource, IP address, user_agent, PHI flag (auto-detected from route path), status code, duration. PHI routes: `/api/clinical`, `/api/voice-agent`, `/api/memory`, `/api/chat`, `/api/rag`, `/api/research`, `/api/data-agent`. Skips SSE/health-check endpoints. Non-blocking (async insert, errors logged not thrown).
+    -   **Session Timeout**: Auto-logout after 15 minutes of inactivity (HIPAA requirement). Warning dialog appears at 13 minutes with countdown timer and "Continue Session" button. Resets on mouse/keyboard/scroll/touch activity (throttled to 5s). Hook: `hooks/useSessionTimeout.ts`.
+    -   **Database Persistence**: Prompts, Memory, and Costs data now stored in PostgreSQL (not in-memory). Tables: `prompts`, `memory_entries`, `cost_usage`, `budget_alerts`, `audit_logs`. Drizzle schema: `lib/db/src/schema/hipaa.ts`. Data survives server restarts. Seed functions populate initial data only on first run.
+    -   **Specialized AI Domains**: Dedicated modules for Clinical ENT AI, Social Media AI, Hedge Fund AI, and Database Training Agent with tailored functionalities.
+    -   **LLM Training Pipeline**: Includes fine-tuning, RLHF, knowledge distillation, and evaluation features.
+-   **Authentication & Authorization**: Replit Auth (OIDC PKCE) with role-based access control (admin/user roles).
+-   **Rate Limiting**: Per-user sliding window rate limiting for different API tiers.
+-   **Export System**: Conversation and research session export in Markdown and HTML.
+-   **SSL/TLS**: Full SSL configuration for VPS PostgreSQL.
+-   **Auto-Collector & Continuous Training Pipeline**: In-memory scheduler for data collection and continuous training data generation across specific domains using model rotation.
+-   **Domain-Specific Training Pipelines**: Dedicated pipelines for ENT and Hedge Fund, collecting and categorizing data from various sources for model fine-tuning.
+-   **Platform API Gateway**: OpenAI-compatible API gateway (`/platform-api`) with key management, rate limiting, and usage tracking for external applications to access VPS LLM models.
 
 ## External Dependencies
--   **Ollama**: Self-hosted LLM server (VPS IP: 72.60.167.64, port 11434, v0.18.0). 12 models including nomic-embed-text for embeddings. Model creation uses new `from`/`system`/`parameters` API format (not legacy `modelfile` string).
--   **PostgreSQL**: Database hosted on Replit (VPS IP: 72.60.167.64, port 5432).
--   **OpenClaw**: (VPS IP: 72.60.167.64, port 18789) for conversation history handling.
--   **OpenAI**: Integrated for advanced AI capabilities (e.g., gpt-5.2, GPT-Image-1) via Replit AI Integrations proxy.
--   **Anthropic**: Integrated for advanced AI capabilities (e.g., claude-sonnet-4-6) via Replit AI Integrations proxy.
--   **NCBI PubMed**: Free API for automated literature collection.
+-   **Ollama**: Self-hosted LLM server (v0.18.0) for local models and embeddings.
+-   **PostgreSQL**: Database hosted on Replit.
+-   **OpenClaw**: For conversation history handling.
+-   **OpenAI**: Integrated for advanced AI capabilities (e.g., gpt-5.2, GPT-Image-1).
+-   **Anthropic**: Integrated for advanced AI capabilities (e.g., claude-sonnet-4-6).
+-   **NCBI PubMed**: API for automated literature collection.
 -   **Google Drive**: Used by the Auto-Collector for data ingestion.
--   **Alpha Factory (Market Inefficiency Agents)**: External platform integrated via API for trading signals, dashboard KPIs, HF analytics, agent status, and market data (proxied from `marketinefficiencyagents.com`).
--   **Various Voice AI Providers**: Integrated and benchmarked in the Voice Agent Hub (e.g., Amazon Lex, ElevenLabs, OpenAI Voice, Google Dialogflow, Azure Speech, IBM Watson, Rasa, DeepPavlov, OpenVoice/OVO, Mycroft, Coqui TTS).
-
-## Platform API Gateway
-OpenAI-compatible API gateway (`/platform-api`) enabling external applications to access VPS LLM models:
--   **OpenAI-Compatible Endpoints**: `GET /api/v1/models` (list models), `POST /api/v1/chat/completions` (chat with streaming support) — works with any OpenAI SDK by pointing `base_url` at this server.
--   **API Key Management**: Generate, activate/deactivate, and delete API keys. Keys use SHA-256 hashing (only shown once on creation). Stored in `api_keys` PostgreSQL table.
--   **Rate Limiting**: Per-key configurable rate limits (requests/minute) with in-memory sliding window.
--   **Usage Tracking**: Atomic SQL-increment counters for total requests and tokens per key.
--   **Management UI**: 3-tab interface (API Keys, Documentation, Usage) with key creation form, copy-to-clipboard, toggle/delete controls, and auto-generated code examples (Python, JS/TS, curl).
--   **Route**: `artifacts/api-server/src/routes/platform-api.ts`; DB schema: `lib/db/src/schema/api-keys.ts`; Frontend: `artifacts/llm-hub/src/pages/PlatformApi.tsx`.
-
-## Research Pipeline
-The ENT Clinical AI Research Pipeline (`/research-pipeline`) is a comprehensive clinical research management section sourced from 4 uploaded DOCX documents:
--   **REDCap Data Schema**: 6 instruments (Enrollment, Clinical Presentation, Diagnosis, Imaging, Voice Data, Treatment Outcomes) with 55+ fields using canonical REDCap data dictionary types (`text`, `radio`, `checkbox`, `dropdown`, `slider`, `file`) and coded choices (e.g., `1, Male | 2, Female`). Exportable as REDCap-importable CSV.
--   **IRB Protocol**: 8 protocol sections covering Title, Background, Aims, Design, Population, Data Management, Risk Assessment, and Consent. Editable status tracking (draft/review/approved/submitted).
--   **Outreach Email Templates**: 3 pre-written templates for recruiting ML collaborators (Faculty, Informatics Team, Grad Student/Postdoc).
--   **Patient Consent Addendum**: 6-section HIPAA-compliant consent form template.
--   **Task Tracker**: 17 tasks across 6 phases (IRB & Compliance, Infrastructure, Data Collection, Collaboration, ML Development, Publication) with status management.
--   **API Routes**: All under `/api/research-pipeline/*` with input validation on PUT endpoints. Data is in-memory (resets on server restart).
+-   **Alpha Factory**: External platform integrated via API for trading signals and market data.
+-   **Various Voice AI Providers**: Integrated in the Voice Agent Hub (e.g., Amazon Lex, ElevenLabs, OpenAI Voice, Google Dialogflow, Azure Speech).

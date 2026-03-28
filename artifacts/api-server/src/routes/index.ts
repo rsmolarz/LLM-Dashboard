@@ -53,6 +53,7 @@ import reportsRouter from "./reports";
 import memoryRouter from "./memory";
 import costsRouter from "./costs";
 import teamRouter from "./team";
+import complianceRouter from "./compliance";
 
 const router: IRouter = Router();
 
@@ -111,5 +112,6 @@ router.use(reportsRouter);
 router.use(memoryRouter);
 router.use(costsRouter);
 router.use(teamRouter);
+router.use(complianceRouter);
 
 export default router;

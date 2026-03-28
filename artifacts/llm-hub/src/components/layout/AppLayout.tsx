@@ -64,6 +64,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/rag", label: "RAG", icon: Library, adminOnly: false },
     { href: "/evaluation", label: "Benchmarks", icon: Trophy, adminOnly: false },
     { href: "/research-pipeline", label: "Research", icon: FlaskConical, adminOnly: false },
+    { href: "/compliance", label: "HIPAA", icon: Shield, adminOnly: true },
     { href: "/monitor", label: "Monitor", icon: BarChart3, adminOnly: true },
     { href: "/admin", label: "Admin", icon: Shield, adminOnly: true },
   ];
