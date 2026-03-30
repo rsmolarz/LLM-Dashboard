@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Shield, Activity, Eye, AlertTriangle, CheckCircle, XCircle, Clock, Users, FileText, RefreshCw, Download, ChevronDown, ChevronRight, Copy, Check } from "lucide-react";
+import { Shield, Activity, Eye, AlertTriangle, CheckCircle, XCircle, Clock, Users, FileText, RefreshCw, Download, ChevronDown, ChevronRight, Copy, Check, Calendar, CalendarCheck } from "lucide-react";
 
 const API = `${import.meta.env.BASE_URL}api`;
 
@@ -47,8 +47,24 @@ interface HIPAADocument {
   sections: DocSection[];
 }
 
+interface ScheduleItem {
+  id: string;
+  scheduleId: string;
+  title: string;
+  category: string;
+  frequency: string;
+  description: string;
+  tasks: string[];
+  dueDate: string;
+  status: string;
+  urgency: string;
+  quarter?: string;
+  month?: number;
+  year: number;
+}
+
 export default function Compliance() {
-  const [tab, setTab] = useState<"overview" | "audit-log" | "phi-report" | "documents">("overview");
+  const [tab, setTab] = useState<"overview" | "audit-log" | "phi-report" | "documents" | "schedule">("overview");
   const [status, setStatus] = useState<ComplianceStatus | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [auditTotal, setAuditTotal] = useState(0);
@@ -60,6 +76,8 @@ export default function Compliance() {
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState<string | null>(null);
+  const [schedule, setSchedule] = useState<ScheduleItem[]>([]);
+  const [scheduleFilter, setScheduleFilter] = useState<"all" | "overdue" | "due-now" | "upcoming">("all");
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -97,10 +115,21 @@ export default function Compliance() {
     } catch {}
   }, []);
 
+  const fetchSchedule = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/compliance/schedule`, { credentials: "include" });
+      if (res.ok) {
+        const data = await res.json();
+        setSchedule(data.schedule);
+      }
+    } catch {}
+  }, []);
+
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
   useEffect(() => { if (tab === "audit-log") fetchAuditLogs(); }, [tab, fetchAuditLogs]);
   useEffect(() => { if (tab === "phi-report") fetchPHIReport(); }, [tab, fetchPHIReport]);
   useEffect(() => { if (tab === "documents") fetchDocuments(); }, [tab, fetchDocuments]);
+  useEffect(() => { if (tab === "schedule") fetchSchedule(); }, [tab, fetchSchedule]);
 
   const statusIcon = (s: string) => {
     if (s === "compliant") return <CheckCircle className="h-4 w-4 text-green-400" />;
@@ -284,21 +313,22 @@ export default function Compliance() {
             <p className="text-sm text-muted-foreground">Security controls, audit logs, and PHI access monitoring</p>
           </div>
         </div>
-        <button onClick={() => { fetchStatus(); if (tab === "audit-log") fetchAuditLogs(); if (tab === "phi-report") fetchPHIReport(); if (tab === "documents") fetchDocuments(); }}
+        <button onClick={() => { fetchStatus(); if (tab === "audit-log") fetchAuditLogs(); if (tab === "phi-report") fetchPHIReport(); if (tab === "documents") fetchDocuments(); if (tab === "schedule") fetchSchedule(); }}
           className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border hover:bg-accent transition-colors">
           <RefreshCw className="h-4 w-4" /> Refresh
         </button>
       </div>
 
       <div className="flex gap-2 flex-wrap">
-        {(["overview", "audit-log", "phi-report", "documents"] as const).map(t => (
+        {(["overview", "audit-log", "phi-report", "documents", "schedule"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? "bg-emerald-600 text-white" : "bg-card border border-border hover:bg-accent"}`}>
             {t === "overview" && <Shield className="h-4 w-4" />}
             {t === "audit-log" && <Activity className="h-4 w-4" />}
             {t === "phi-report" && <Eye className="h-4 w-4" />}
             {t === "documents" && <FileText className="h-4 w-4" />}
-            {t === "overview" ? "Overview" : t === "audit-log" ? "Audit Log" : t === "phi-report" ? "PHI Access" : "Documents"}
+            {t === "schedule" && <Calendar className="h-4 w-4" />}
+            {t === "overview" ? "Overview" : t === "audit-log" ? "Audit Log" : t === "phi-report" ? "PHI Access" : t === "documents" ? "Documents" : "Schedule"}
           </button>
         ))}
       </div>
@@ -661,6 +691,188 @@ export default function Compliance() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {tab === "schedule" && (
+        <div className="space-y-4">
+          {(() => {
+            const now = new Date();
+            const overdue = schedule.filter(s => s.status === "overdue");
+            const dueNow = schedule.filter(s => s.status === "due-now" || s.status === "due-soon");
+            const upcoming = schedule.filter(s => s.status === "upcoming");
+            const filtered = scheduleFilter === "all" ? schedule : scheduleFilter === "overdue" ? overdue : scheduleFilter === "due-now" ? dueNow : upcoming;
+
+            const frequencyBadge = (f: string) => {
+              const c: Record<string, string> = {
+                monthly: "bg-blue-900/50 text-blue-300 border-blue-700",
+                quarterly: "bg-violet-900/50 text-violet-300 border-violet-700",
+                annual: "bg-amber-900/50 text-amber-300 border-amber-700",
+              };
+              return <span className={`text-xs px-2 py-0.5 rounded border ${c[f] || "bg-gray-900/50 text-gray-300 border-gray-700"}`}>{f}</span>;
+            };
+
+            const urgencyBadge = (s: string) => {
+              if (s === "overdue") return <span className="text-xs px-2 py-0.5 rounded border bg-red-900/50 text-red-300 border-red-700 animate-pulse">Overdue</span>;
+              if (s === "due-now" || s === "due-soon") return <span className="text-xs px-2 py-0.5 rounded border bg-amber-900/50 text-amber-300 border-amber-700">Due Now</span>;
+              return <span className="text-xs px-2 py-0.5 rounded border bg-green-900/50 text-green-300 border-green-700">Upcoming</span>;
+            };
+
+            const daysUntil = (date: string) => {
+              const diff = Math.ceil((new Date(date).getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+              if (diff < 0) return `${Math.abs(diff)} days overdue`;
+              if (diff === 0) return "Due today";
+              if (diff === 1) return "Due tomorrow";
+              return `${diff} days`;
+            };
+
+            const currentQuarter = `Q${Math.floor(now.getMonth() / 3) + 1}`;
+
+            return (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="bg-card border border-border rounded-xl p-4">
+                    <div className="text-sm text-muted-foreground flex items-center gap-1"><Calendar className="h-3 w-3" /> Current Period</div>
+                    <div className="text-2xl font-bold mt-1">{currentQuarter} {now.getFullYear()}</div>
+                    <div className="text-xs text-muted-foreground mt-1">{schedule.length} scheduled reviews</div>
+                  </div>
+                  <div className={`bg-card border rounded-xl p-4 cursor-pointer transition-colors ${scheduleFilter === "overdue" ? "border-red-500 bg-red-950/20" : "border-border hover:border-red-700"}`} onClick={() => setScheduleFilter(scheduleFilter === "overdue" ? "all" : "overdue")}>
+                    <div className="text-sm text-muted-foreground flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Overdue</div>
+                    <div className={`text-2xl font-bold mt-1 ${overdue.length > 0 ? "text-red-400" : "text-green-400"}`}>{overdue.length}</div>
+                    <div className="text-xs text-muted-foreground mt-1">{overdue.length > 0 ? "Action required" : "All clear"}</div>
+                  </div>
+                  <div className={`bg-card border rounded-xl p-4 cursor-pointer transition-colors ${scheduleFilter === "due-now" ? "border-amber-500 bg-amber-950/20" : "border-border hover:border-amber-700"}`} onClick={() => setScheduleFilter(scheduleFilter === "due-now" ? "all" : "due-now")}>
+                    <div className="text-sm text-muted-foreground flex items-center gap-1"><Clock className="h-3 w-3" /> Due This Period</div>
+                    <div className="text-2xl font-bold mt-1 text-amber-400">{dueNow.length}</div>
+                    <div className="text-xs text-muted-foreground mt-1">Current quarter/month</div>
+                  </div>
+                  <div className={`bg-card border rounded-xl p-4 cursor-pointer transition-colors ${scheduleFilter === "upcoming" ? "border-green-500 bg-green-950/20" : "border-border hover:border-green-700"}`} onClick={() => setScheduleFilter(scheduleFilter === "upcoming" ? "all" : "upcoming")}>
+                    <div className="text-sm text-muted-foreground flex items-center gap-1"><CalendarCheck className="h-3 w-3" /> Upcoming</div>
+                    <div className="text-2xl font-bold mt-1 text-green-400">{upcoming.length}</div>
+                    <div className="text-xs text-muted-foreground mt-1">Scheduled ahead</div>
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-br from-card to-card/80 border border-violet-700/50 rounded-xl overflow-hidden">
+                  <div className="px-5 py-4 border-b border-violet-700/30 bg-violet-950/20 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Calendar className="h-5 w-5 text-violet-400" />
+                      <div>
+                        <h3 className="font-semibold">HIPAA Key Dates & Deadlines</h3>
+                        <p className="text-sm text-muted-foreground">Critical compliance deadlines from HIPAA regulations</p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="divide-y divide-border">
+                    <div className="px-5 py-3">
+                      <div className="font-semibold text-sm text-red-400 mb-2">Breach Notification Deadlines</div>
+                      <div className="space-y-1.5 ml-4 text-sm">
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">60 days</span> Notify affected individuals after discovering a breach of unsecured PHI</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">60 days</span> Notify HHS if breach affects 500+ individuals</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">60 days</span> Notify media if 500+ individuals in a state are affected</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">Year-end</span> Notify HHS of breaches affecting fewer than 500 (by end of calendar year)</div>
+                      </div>
+                    </div>
+                    <div className="px-5 py-3">
+                      <div className="font-semibold text-sm text-amber-400 mb-2">BAA & Vendor Deadlines</div>
+                      <div className="space-y-1.5 ml-4 text-sm">
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">Before use</span> BAA must be signed before any business associate handles PHI</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">30 days</span> Cure period for business associate to fix BAA violations before termination</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">On termination</span> Business associate must return or destroy all PHI upon BAA termination</div>
+                      </div>
+                    </div>
+                    <div className="px-5 py-3">
+                      <div className="font-semibold text-sm text-blue-400 mb-2">Workforce & Training Deadlines</div>
+                      <div className="space-y-1.5 ml-4 text-sm">
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">30 days</span> New hire HIPAA training after start date</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">Annual</span> Refresher training for all workforce members</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">24 hours</span> Revoke access for terminated employees</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">30 days</span> Retrain when job function changes to include PHI access</div>
+                      </div>
+                    </div>
+                    <div className="px-5 py-3">
+                      <div className="font-semibold text-sm text-emerald-400 mb-2">Documentation Retention</div>
+                      <div className="space-y-1.5 ml-4 text-sm">
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">6 years</span> All HIPAA policies, procedures, and documentation (45 CFR 164.530(j))</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">6 years</span> Audit logs and access records</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">6 years</span> Training records and acknowledgment forms</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">6 years</span> Risk assessment documentation</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">6 years</span> BAA agreements (from last effective date)</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">6 years</span> Sanctions records</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">7-10 years</span> Patient medical records (varies by state)</div>
+                      </div>
+                    </div>
+                    <div className="px-5 py-3">
+                      <div className="font-semibold text-sm text-violet-400 mb-2">Patient Rights Response Deadlines</div>
+                      <div className="space-y-1.5 ml-4 text-sm">
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">30 days</span> Respond to patient request for access to their records (one 30-day extension allowed)</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">60 days</span> Respond to patient request to amend their records (one 30-day extension allowed)</div>
+                        <div className="flex gap-2"><span className="font-bold text-foreground w-28 flex-shrink-0">60 days</span> Provide accounting of disclosures upon request</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-card border border-border rounded-xl overflow-hidden">
+                  <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+                    <div>
+                      <h3 className="font-semibold">Quarterly Review Schedule — {now.getFullYear()}</h3>
+                      <p className="text-sm text-muted-foreground mt-0.5">
+                        {scheduleFilter === "all" ? `${filtered.length} total scheduled items` : `Showing ${filtered.length} ${scheduleFilter} items`}
+                        {scheduleFilter !== "all" && <button onClick={() => setScheduleFilter("all")} className="ml-2 text-emerald-400 hover:underline">Show all</button>}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="divide-y divide-border">
+                    {filtered.map(item => (
+                      <div key={item.scheduleId} className={`px-5 py-3 hover:bg-accent/30 transition-colors ${item.status === "overdue" ? "bg-red-950/10" : item.status === "due-now" || item.status === "due-soon" ? "bg-amber-950/10" : ""}`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className={`p-1.5 rounded ${item.status === "overdue" ? "bg-red-600" : item.status === "due-now" || item.status === "due-soon" ? "bg-amber-600" : "bg-emerald-600"}`}>
+                              <CalendarCheck className="h-4 w-4 text-white" />
+                            </div>
+                            <div>
+                              <div className="font-medium text-sm flex items-center gap-2">
+                                {item.title}
+                                {item.quarter && <span className="text-xs text-muted-foreground">({item.quarter})</span>}
+                                {item.month && <span className="text-xs text-muted-foreground">(Month {item.month})</span>}
+                              </div>
+                              <div className="text-xs text-muted-foreground mt-0.5">{item.description}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 flex-shrink-0">
+                            {frequencyBadge(item.frequency)}
+                            {urgencyBadge(item.status)}
+                            <div className="text-right">
+                              <div className="text-xs font-medium">{new Date(item.dueDate).toLocaleDateString()}</div>
+                              <div className={`text-xs ${item.status === "overdue" ? "text-red-400" : "text-muted-foreground"}`}>{daysUntil(item.dueDate)}</div>
+                            </div>
+                          </div>
+                        </div>
+                        {item.tasks && item.tasks.length > 0 && (
+                          <div className="mt-2 ml-10 grid grid-cols-1 md:grid-cols-2 gap-1">
+                            {item.tasks.map((task, ti) => (
+                              <div key={ti} className="flex items-start gap-2 text-xs text-muted-foreground">
+                                <input type="checkbox" className="mt-0.5 rounded border-border" readOnly />
+                                <span>{task}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    {filtered.length === 0 && (
+                      <div className="px-5 py-12 text-center text-muted-foreground">
+                        <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <h3 className="text-lg font-medium">{schedule.length === 0 ? "Loading Schedule..." : "No items match this filter"}</h3>
+                        <p className="text-sm mt-1">{schedule.length === 0 ? "Admin access required" : "Try a different filter"}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

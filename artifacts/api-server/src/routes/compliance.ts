@@ -785,7 +785,867 @@ Phone: 1-877-696-6775`
       },
     ],
   },
+  {
+    id: "data-backup-recovery",
+    title: "Data Backup & Disaster Recovery Plan",
+    category: "Technical Safeguards",
+    description: "Procedures for data backup, retention, and disaster recovery to ensure ePHI availability",
+    lastUpdated: "2026-03-30",
+    status: "template",
+    sections: [
+      {
+        title: "1. Purpose and Scope",
+        content: `**Purpose**: This plan establishes procedures for creating and maintaining retrievable exact copies of electronic protected health information (ePHI), and for restoring any loss of data, in compliance with 45 CFR § 164.308(a)(7) (Contingency Plan) and 45 CFR § 164.312(a)(2)(ii) (Data Backup Plan).
+
+**Scope**: All systems containing ePHI including:
+- LLM Hub PostgreSQL database (audit logs, prompts, memory, cost data)
+- Ollama LLM server configuration and model data (VPS 72.60.167.64)
+- Application configuration and environment variables
+- RAG knowledge base and embeddings
+- Voice agent recordings and transcripts
+- Clinical AI data and research sessions`
+      },
+      {
+        title: "2. Backup Schedule",
+        content: `| Data Type | Backup Method | Frequency | Retention | Storage Location | Encryption |
+|-----------|--------------|-----------|-----------|-----------------|------------|
+| PostgreSQL Database | Automated pg_dump | Daily | 90 days | [BACKUP LOCATION] | AES-256 |
+| Audit Logs | Database backup + log export | Daily | 6 years (HIPAA req) | [BACKUP LOCATION] | AES-256 |
+| Application Code | Git repository | On every change | Indefinite | Git remote | TLS in transit |
+| Ollama Models | Model export | Weekly | 30 days | [BACKUP LOCATION] | AES-256 |
+| RAG Embeddings | Database backup | Daily | 90 days | [BACKUP LOCATION] | AES-256 |
+| Configuration/Secrets | Encrypted export | Weekly | 90 days | [SECURE LOCATION] | AES-256 |
+| Voice Recordings | File system backup | Daily | Per retention policy | [BACKUP LOCATION] | AES-256 |
+
+**Backup Verification**: Test backup restoration at least **quarterly** to ensure backups are complete and usable.`
+      },
+      {
+        title: "3. Recovery Time and Point Objectives",
+        content: `**Recovery Time Objective (RTO)**: Maximum acceptable downtime before systems must be restored.
+
+| System | RTO | Priority |
+|--------|-----|----------|
+| LLM Hub Application | 4 hours | Critical |
+| PostgreSQL Database | 2 hours | Critical |
+| Audit Log System | 4 hours | Critical |
+| Ollama LLM Server | 8 hours | High |
+| RAG Knowledge Base | 12 hours | Medium |
+| Voice Agent | 8 hours | High |
+
+**Recovery Point Objective (RPO)**: Maximum acceptable data loss measured in time.
+
+| System | RPO | Justification |
+|--------|-----|---------------|
+| PostgreSQL Database | 24 hours | Daily backups |
+| Audit Logs | 24 hours | Daily backups, 6-year retention requirement |
+| Application Config | 0 (no loss) | Version controlled |
+| Ollama Models | 7 days | Weekly backups, models can be re-downloaded |`
+      },
+      {
+        title: "4. Disaster Recovery Procedures",
+        content: `**Scenario 1: Database Corruption or Loss**
+1. Identify the extent of data loss from audit logs and monitoring
+2. Stop application services to prevent further data writes
+3. Restore PostgreSQL from most recent verified backup
+4. Verify data integrity: row counts, audit log continuity, PHI data intact
+5. Restart application services
+6. Document the incident and recovery in the Incident Report
+
+**Scenario 2: VPS Server Failure (72.60.167.64)**
+1. Provision replacement VPS with same security configuration
+2. Install Ollama and restore model configurations from backup
+3. Update DNS/IP references in LLM Hub configuration
+4. Verify Ollama connectivity and model availability
+5. Run test queries to confirm functionality
+
+**Scenario 3: Complete Platform Failure**
+1. Activate incident response team
+2. Deploy application from Git repository to backup environment
+3. Restore database from most recent backup
+4. Restore Ollama server (Scenario 2 procedure)
+5. Verify all integrations (OpenAI, Google, AgentFlow)
+6. Conduct full system test before restoring user access
+7. Notify affected users per incident response plan
+
+**Scenario 4: Ransomware Attack**
+1. Immediately isolate affected systems from network
+2. Do NOT pay ransom — contact law enforcement
+3. Assess scope using audit logs (check for PHI breach)
+4. Wipe and rebuild affected systems from clean backups
+5. Follow Incident Response Plan for breach notification if PHI involved`
+      },
+      {
+        title: "5. Testing and Maintenance",
+        content: `**Quarterly Backup Restoration Test**:
+1. Select a random backup from the past quarter
+2. Restore to an isolated test environment
+3. Verify data integrity and completeness
+4. Document test results and any issues discovered
+5. Update procedures if problems are found
+
+| Test Date | Backup Date | Restore Successful? | Issues Found | Tester |
+|-----------|-------------|--------------------|--------------| -------|
+| [DATE] | [DATE] | ☐ Yes ☐ No | ____________ | ______ |
+| [DATE] | [DATE] | ☐ Yes ☐ No | ____________ | ______ |
+| [DATE] | [DATE] | ☐ Yes ☐ No | ____________ | ______ |
+| [DATE] | [DATE] | ☐ Yes ☐ No | ____________ | ______ |
+
+**Annual Plan Review**: This plan must be reviewed and updated annually or after any significant infrastructure change.
+
+Reviewed By: _______________
+Date: _______________
+Next Review Date: _______________`
+      },
+    ],
+  },
+  {
+    id: "encryption-policy",
+    title: "Encryption & Data Protection Policy",
+    category: "Technical Safeguards",
+    description: "Standards for encrypting ePHI at rest and in transit per HIPAA Security Rule",
+    lastUpdated: "2026-03-30",
+    status: "template",
+    sections: [
+      {
+        title: "1. Policy Statement",
+        content: `**Purpose**: This policy establishes requirements for encrypting electronic protected health information (ePHI) to guard against unauthorized access, in compliance with 45 CFR § 164.312(a)(2)(iv) (Encryption and Decryption) and 45 CFR § 164.312(e)(2)(ii) (Transmission Security — Encryption).
+
+**Scope**: All ePHI created, received, maintained, or transmitted by [ORGANIZATION NAME] through the LLM Hub platform and associated systems.
+
+**Policy**: All ePHI must be encrypted both in transit and at rest using industry-standard encryption algorithms. Unencrypted ePHI is considered "unsecured PHI" under the HIPAA Breach Notification Rule, meaning any unauthorized access constitutes a reportable breach.`
+      },
+      {
+        title: "2. Encryption Standards",
+        content: `**2.1 Data in Transit**
+| Connection | Protocol | Minimum Standard | Current Status |
+|-----------|----------|-----------------|---------------|
+| User ↔ LLM Hub | HTTPS (TLS 1.2+) | AES-128-GCM or higher | ✓ Enforced |
+| LLM Hub ↔ PostgreSQL | TLS 1.2+ | AES-256 | ✓ Enforced |
+| LLM Hub ↔ Ollama VPS | HTTPS or SSH tunnel | AES-256 | [VERIFY] |
+| LLM Hub ↔ OpenAI API | HTTPS (TLS 1.2+) | AES-128-GCM | ✓ Enforced |
+| LLM Hub ↔ Google APIs | HTTPS (TLS 1.2+) | AES-128-GCM | ✓ Enforced |
+| Internal API calls | HTTPS | AES-128-GCM | ✓ Enforced |
+
+**2.2 Data at Rest**
+| Data Store | Encryption Method | Key Management | Status |
+|-----------|------------------|---------------|--------|
+| PostgreSQL Database | Transparent Data Encryption | Provider-managed | [VERIFY] |
+| PHI Database Columns | Column-level encryption | Application-managed | [IMPLEMENT] |
+| Backup Files | AES-256 file encryption | Dedicated backup key | [IMPLEMENT] |
+| Audit Logs | Database encryption | Provider-managed | [VERIFY] |
+| Ollama Model Data | Disk encryption | OS-level | [VERIFY] |
+| Voice Recordings | AES-256 file encryption | Application-managed | [IMPLEMENT] |
+
+**2.3 Approved Algorithms**
+- Symmetric: AES-128, AES-256 (preferred)
+- Hashing: SHA-256, SHA-384, SHA-512
+- Key Exchange: RSA-2048+, ECDHE
+- TLS: Version 1.2 minimum, 1.3 preferred
+- **Prohibited**: DES, 3DES, RC4, MD5, SHA-1, TLS 1.0/1.1`
+      },
+      {
+        title: "3. Key Management",
+        content: `**3.1 Key Generation**
+- Encryption keys must be generated using cryptographically secure random number generators
+- Key length must meet or exceed algorithm requirements (AES-256 = 256-bit key)
+- Keys must never be hardcoded in source code or stored in plaintext
+
+**3.2 Key Storage**
+- Production encryption keys stored in: [KEY MANAGEMENT SYSTEM — e.g., AWS KMS, HashiCorp Vault, environment secrets]
+- API keys and secrets stored in Replit Secrets (environment variables)
+- Never store keys in version control, log files, or unencrypted configuration files
+
+**3.3 Key Rotation Schedule**
+| Key Type | Rotation Frequency | Last Rotated | Next Rotation |
+|----------|-------------------|-------------|---------------|
+| Database encryption key | Annual | [DATE] | [DATE] |
+| TLS certificates | Annual (or on expiry) | [DATE] | [DATE] |
+| API keys (OpenAI, etc.) | Annual or on compromise | [DATE] | [DATE] |
+| Backup encryption key | Annual | [DATE] | [DATE] |
+| Application signing keys | Annual | [DATE] | [DATE] |
+
+**3.4 Key Revocation**
+- Immediately revoke and rotate any key suspected of compromise
+- Document the reason for revocation and the replacement key details
+- Re-encrypt affected data with the new key if feasible`
+      },
+      {
+        title: "4. Compliance Verification",
+        content: `**Quarterly Encryption Audit Checklist**:
+
+☐ All external connections use TLS 1.2 or higher
+☐ No plaintext PHI transmitted over unencrypted channels
+☐ Database encryption is active and verified
+☐ Backup files are encrypted before storage
+☐ Key rotation schedule is current
+☐ No encryption keys stored in source code or logs
+☐ TLS certificates are valid and not near expiration
+☐ Deprecated algorithms (DES, RC4, SHA-1, TLS 1.0/1.1) are not in use
+☐ Mobile/remote access uses encrypted connections
+☐ Third-party vendor encryption compliance verified
+
+**Audit Performed By**: _______________
+**Date**: _______________
+**Findings**: _______________
+**Corrective Actions**: _______________`
+      },
+    ],
+  },
+  {
+    id: "sanctions-policy",
+    title: "Sanctions Policy",
+    category: "Administrative Safeguards",
+    description: "Policy for disciplinary actions against workforce members who violate HIPAA policies",
+    lastUpdated: "2026-03-30",
+    status: "template",
+    sections: [
+      {
+        title: "1. Policy Statement",
+        content: `**Purpose**: To establish a sanctions policy for workforce members who fail to comply with the security policies and procedures of [ORGANIZATION NAME], in compliance with 45 CFR § 164.308(a)(1)(ii)(C) (Sanction Policy).
+
+**Scope**: This policy applies to all workforce members, including employees, contractors, volunteers, and any individual whose conduct in the performance of work for [ORGANIZATION NAME] is under the direct control of the entity.
+
+**Policy**: [ORGANIZATION NAME] shall apply appropriate sanctions against workforce members who fail to comply with its HIPAA privacy and security policies and procedures. Sanctions shall be applied consistently and proportionally to the severity of the violation.`
+      },
+      {
+        title: "2. Violation Categories and Sanctions",
+        content: `**Level 1 — Minor Violation (Unintentional/First Offense)**
+Examples:
+- Failing to log out of LLM Hub session before leaving workstation
+- Leaving PHI visible on screen in a shared area
+- Forgetting to use encrypted email for PHI transmission (no actual breach)
+
+Sanctions:
+- Verbal warning with documentation
+- Mandatory refresher training within 14 days
+- Notation in personnel file
+
+---
+
+**Level 2 — Moderate Violation (Negligence/Repeated Minor)**
+Examples:
+- Repeated failure to follow session timeout procedures
+- Sharing login credentials with another workforce member
+- Accessing PHI beyond minimum necessary for job function
+- Failure to complete required HIPAA training on time
+
+Sanctions:
+- Written warning
+- Mandatory re-training within 7 days
+- Increased monitoring of system access (audit log review)
+- Possible suspension of PHI access privileges
+
+---
+
+**Level 3 — Serious Violation (Knowing/Pattern of Negligence)**
+Examples:
+- Unauthorized disclosure of PHI to unauthorized persons
+- Accessing patient records without legitimate purpose (snooping)
+- Failure to report a known security incident
+- Disabling or circumventing security controls
+
+Sanctions:
+- Final written warning or suspension without pay
+- Mandatory comprehensive HIPAA re-training
+- Revocation of PHI access privileges
+- Possible termination of employment
+
+---
+
+**Level 4 — Severe Violation (Willful/Malicious)**
+Examples:
+- Intentional unauthorized disclosure of PHI for personal gain
+- Selling or distributing PHI
+- Deliberate sabotage of security systems
+- Identity theft using patient information
+
+Sanctions:
+- Immediate termination of employment
+- Referral to law enforcement
+- Report to applicable licensing boards
+- Civil and criminal prosecution as applicable`
+      },
+      {
+        title: "3. Investigation and Due Process",
+        content: `**3.1 Reporting Violations**
+- Any workforce member who becomes aware of a potential HIPAA violation must report it to the Privacy Officer or Security Officer immediately
+- Reports may be made anonymously
+- No retaliation shall be taken against individuals who report violations in good faith
+
+**3.2 Investigation Process**
+1. Privacy/Security Officer receives and documents the report
+2. Preliminary review to determine if investigation is warranted (within 48 hours)
+3. Formal investigation if warranted:
+   a. Review relevant audit logs from the LLM Hub platform
+   b. Interview involved parties
+   c. Gather and preserve evidence
+   d. Determine whether a violation occurred and its severity level
+4. Investigation findings documented in writing
+5. Sanctions determination made in consultation with HR and legal counsel
+6. Workforce member notified of findings and sanctions
+7. Appeal process (if applicable per employment agreement)
+
+**3.3 Documentation Requirements**
+All sanctions must be documented, including:
+- Date of violation and date of discovery
+- Description of the violation
+- Evidence reviewed (including audit log references)
+- Sanction applied
+- Corrective actions required
+- Follow-up verification dates
+
+Records retained for minimum **6 years** per HIPAA requirements.`
+      },
+      {
+        title: "4. Sanctions Log",
+        content: `**SANCTIONS TRACKING LOG**
+
+| Date | Employee | Violation Level | Description | Sanction Applied | Training Required | Follow-up Date | Resolved |
+|------|----------|----------------|-------------|-----------------|------------------|----------------|----------|
+| ____ | ________ | ☐1 ☐2 ☐3 ☐4 | ____________ | ____________ | ☐ Yes ☐ No | _________ | ☐ Yes ☐ No |
+| ____ | ________ | ☐1 ☐2 ☐3 ☐4 | ____________ | ____________ | ☐ Yes ☐ No | _________ | ☐ Yes ☐ No |
+| ____ | ________ | ☐1 ☐2 ☐3 ☐4 | ____________ | ____________ | ☐ Yes ☐ No | _________ | ☐ Yes ☐ No |
+
+**Annual Review**: This policy and all sanctions records shall be reviewed annually by the Privacy Officer.
+
+Reviewed By: _______________
+Date: _______________
+Next Review: _______________`
+      },
+    ],
+  },
+  {
+    id: "contingency-plan",
+    title: "Contingency Plan",
+    category: "Administrative Safeguards",
+    description: "Emergency mode operation and procedures for responding to system failures or disasters",
+    lastUpdated: "2026-03-30",
+    status: "template",
+    sections: [
+      {
+        title: "1. Purpose and Scope",
+        content: `**Purpose**: To establish procedures for responding to an emergency or other occurrence (e.g., fire, vandalism, system failure, natural disaster) that damages systems containing ePHI, in compliance with 45 CFR § 164.308(a)(7)(i) (Contingency Plan).
+
+**Required Components** (per HIPAA Security Rule):
+- Data Backup Plan — 45 CFR § 164.308(a)(7)(ii)(A)
+- Disaster Recovery Plan — 45 CFR § 164.308(a)(7)(ii)(B)
+- Emergency Mode Operation Plan — 45 CFR § 164.308(a)(7)(ii)(C)
+- Testing and Revision Procedures — 45 CFR § 164.308(a)(7)(ii)(D)
+- Applications and Data Criticality Analysis — 45 CFR § 164.308(a)(7)(ii)(E)`
+      },
+      {
+        title: "2. Applications and Data Criticality Analysis",
+        content: `| Application/Data | Criticality | Contains ePHI? | Recovery Priority | Max Downtime |
+|-----------------|------------|---------------|-------------------|-------------|
+| LLM Hub Web Application | Critical | Yes | 1 | 4 hours |
+| PostgreSQL Database | Critical | Yes | 1 | 2 hours |
+| Audit Logging System | Critical | Yes (metadata) | 1 | 4 hours |
+| Authentication System | Critical | No | 1 | 1 hour |
+| Clinical AI Module | High | Yes | 2 | 8 hours |
+| Voice Agent System | High | Yes (audio) | 2 | 8 hours |
+| Ollama LLM Server | High | Yes (in prompts) | 2 | 8 hours |
+| RAG Knowledge Base | Medium | Potentially | 3 | 24 hours |
+| Analytics Dashboard | Medium | No | 3 | 24 hours |
+| AgentFlow Integration | Low | No | 4 | 48 hours |
+| Training Pipeline | Low | No | 4 | 48 hours |`
+      },
+      {
+        title: "3. Emergency Mode Operation Plan",
+        content: `**When to Activate**: Emergency mode is activated when normal system operations cannot be maintained and there is a risk to ePHI availability, integrity, or confidentiality.
+
+**Emergency Operations Procedures**:
+
+1. **Immediate Actions** (First 30 minutes):
+   - Incident Commander assesses the situation and declares emergency mode
+   - Notify all workforce members of emergency status
+   - Activate backup communication channels (phone tree, personal email)
+   - Begin incident documentation
+
+2. **System Triage** (30 minutes - 2 hours):
+   - Assess which systems are affected
+   - Prioritize restoration based on criticality analysis above
+   - If database is compromised: activate read-only mode if possible
+   - If authentication is down: disable all external access until restored
+
+3. **Interim Operations** (During downtime):
+   - Critical clinical functions: Revert to manual/paper-based processes
+   - Document all PHI handled manually during emergency
+   - Maintain paper audit trail of all PHI access
+   - No new user accounts or access changes until systems restored
+
+4. **Communication Protocol**:
+   - Internal updates: Every 2 hours to affected workforce members
+   - External updates: As needed to affected patients/partners
+   - Regulatory notifications: As required (see Incident Response Plan)
+
+5. **Return to Normal Operations**:
+   - Verify all systems operational and data integrity confirmed
+   - Enter any manual records into electronic systems
+   - Conduct post-emergency review within 7 days
+   - Update contingency plan based on lessons learned`
+      },
+      {
+        title: "4. Testing Schedule",
+        content: `Contingency plan testing must be conducted at least **annually**, with tabletop exercises **quarterly**.
+
+**Testing Types**:
+- **Tabletop Exercise**: Walk through scenarios verbally (quarterly)
+- **Functional Test**: Actually restore from backup and verify (annually)
+- **Full-Scale Test**: Simulate complete system failure and recovery (every 2 years)
+
+| Test Type | Scheduled Date | Completed Date | Results | Issues Found | Corrective Actions |
+|-----------|---------------|---------------|---------|-------------|-------------------|
+| Tabletop — Q1 | [DATE] | _______ | _______ | _______ | _______ |
+| Tabletop — Q2 | [DATE] | _______ | _______ | _______ | _______ |
+| Tabletop — Q3 | [DATE] | _______ | _______ | _______ | _______ |
+| Tabletop — Q4 | [DATE] | _______ | _______ | _______ | _______ |
+| Functional Test | [DATE] | _______ | _______ | _______ | _______ |
+| Full-Scale Test | [DATE] | _______ | _______ | _______ | _______ |
+
+**Plan Review and Update**:
+This plan must be reviewed and revised:
+- Annually (at minimum)
+- After any emergency activation
+- After any significant infrastructure change
+- After contingency plan testing reveals deficiencies
+
+Last Reviewed: _______________
+Reviewed By: _______________
+Next Review: _______________`
+      },
+    ],
+  },
+  {
+    id: "disposal-policy",
+    title: "Data Disposal & Media Sanitization Policy",
+    category: "Physical Safeguards",
+    description: "Procedures for secure disposal of ePHI when no longer needed",
+    lastUpdated: "2026-03-30",
+    status: "template",
+    sections: [
+      {
+        title: "1. Policy Statement",
+        content: `**Purpose**: To establish procedures for the final disposition of ePHI and the hardware or electronic media on which it is stored, in compliance with 45 CFR § 164.310(d)(2)(i) (Disposal) and 45 CFR § 164.310(d)(2)(ii) (Media Re-use).
+
+**Policy**: All ePHI must be rendered unreadable, indecipherable, and otherwise irretrievable before disposal or re-use of electronic media. [ORGANIZATION NAME] shall use NIST SP 800-88 (Guidelines for Media Sanitization) as the baseline standard for all data destruction activities.`
+      },
+      {
+        title: "2. Sanitization Methods by Media Type",
+        content: `| Media Type | Sanitization Method | Standard | Verification |
+|-----------|-------------------|---------|-------------|
+| Hard Disk Drives (HDD) | Degaussing + physical destruction OR 3-pass overwrite | NIST SP 800-88 (Purge) | Certificate of destruction |
+| Solid State Drives (SSD) | Cryptographic erase OR physical destruction | NIST SP 800-88 (Purge) | Certificate of destruction |
+| USB Flash Drives | Cryptographic erase OR physical destruction | NIST SP 800-88 (Purge) | Certificate of destruction |
+| Optical Media (CD/DVD) | Physical destruction (shredding) | NIST SP 800-88 (Destroy) | Witnessed destruction |
+| Paper Records | Cross-cut shredding (DIN 66399 Level P-4+) | Cross-cut ≤ 2mm x 15mm | Witnessed or contracted |
+| Cloud/Virtual Storage | Cryptographic deletion + provider certification | Cloud provider SLA | Written confirmation |
+| Database Records | Secure DELETE + VACUUM (PostgreSQL) | Application-level | Audit log verification |
+| Backup Tapes | Degaussing OR physical destruction | NIST SP 800-88 (Purge) | Certificate of destruction |
+| Mobile Devices | Factory reset + cryptographic erase | NIST SP 800-88 (Clear) | Verification scan |
+| Photocopiers/Fax | Clear internal storage/hard drive | Manufacturer guidelines | Service documentation |
+
+**Important**: Simple file deletion or formatting is NOT sufficient for HIPAA compliance. Data must be rendered irretrievable.`
+      },
+      {
+        title: "3. Data Retention Schedule",
+        content: `| Data Type | Minimum Retention | Legal Basis | Disposal Method |
+|-----------|------------------|------------|----------------|
+| HIPAA Audit Logs | **6 years** | 45 CFR § 164.530(j) | Secure database deletion |
+| HIPAA Policies & Procedures | **6 years** from last effective date | 45 CFR § 164.530(j) | Secure file deletion |
+| Training Records | **6 years** | 45 CFR § 164.530(j) | Secure file deletion |
+| BAA Agreements | **6 years** after termination | 45 CFR § 164.530(j) | Cross-cut shredding / secure deletion |
+| Patient Medical Records | Per state law (typically **7-10 years**) | State medical records retention law | Certified destruction |
+| Risk Assessments | **6 years** | 45 CFR § 164.530(j) | Secure file deletion |
+| Incident Response Records | **6 years** | 45 CFR § 164.530(j) | Secure file deletion |
+| Sanctions Records | **6 years** | 45 CFR § 164.530(j) | Secure file deletion |
+| LLM Conversation Logs | [DEFINE based on business need] | Business policy | Secure database deletion |
+| Voice Agent Recordings | [DEFINE based on business need] | Business policy | Secure file deletion |
+| Backup Media | Until superseded by retention schedule | Business continuity | Certified destruction |`
+      },
+      {
+        title: "4. Disposal Documentation",
+        content: `**DATA DISPOSAL RECORD**
+
+| Date | Media Type | Description | Serial #/ID | Sanitization Method | Performed By | Witnessed By | Certificate # |
+|------|-----------|-------------|------------|-------------------|-------------|-------------|---------------|
+| ____ | _________ | ___________ | __________ | _________________ | ___________ | ___________ | ____________ |
+| ____ | _________ | ___________ | __________ | _________________ | ___________ | ___________ | ____________ |
+| ____ | _________ | ___________ | __________ | _________________ | ___________ | ___________ | ____________ |
+
+**Third-Party Destruction Services**: If using an external vendor for media destruction:
+- Vendor must sign a BAA
+- Vendor must provide Certificates of Destruction
+- Verify vendor's NAID AAA certification (preferred)
+
+Vendor Name: _______________
+BAA on File: ☐ Yes ☐ No
+NAID Certified: ☐ Yes ☐ No
+Contract Expiration: _______________`
+      },
+    ],
+  },
+  {
+    id: "access-management",
+    title: "Access Management & Termination Procedures",
+    category: "Administrative Safeguards",
+    description: "Procedures for granting, modifying, and revoking access to ePHI systems",
+    lastUpdated: "2026-03-30",
+    status: "template",
+    sections: [
+      {
+        title: "1. Access Authorization Policy",
+        content: `**Purpose**: To establish procedures for authorizing access to ePHI based on job function (minimum necessary standard), in compliance with 45 CFR § 164.308(a)(4) (Information Access Management) and 45 CFR § 164.312(a)(1) (Access Control).
+
+**Principle of Minimum Necessary Access**: Workforce members shall only be granted access to the ePHI that is minimally necessary to perform their job functions. Access beyond minimum necessary requires documented justification and supervisory approval.
+
+**LLM Hub Role Definitions**:
+| Role | Access Level | PHI Access | Modules Accessible |
+|------|------------|-----------|-------------------|
+| Admin | Full platform access | Full | All modules including Compliance, Admin panel |
+| Clinical User | Clinical modules only | Clinical data | Clinical AI, Voice Agent, Chat, Memory |
+| Research User | Research modules only | De-identified only | Research, RAG, PubMed, Benchmarks |
+| Standard User | General features | None | Chat, Prompts, Compare, Playground, Team |
+| API Consumer | API endpoints only | As configured | Platform API with scoped keys |
+| Read-Only | View access only | As role permits | View-only access to assigned modules |`
+      },
+      {
+        title: "2. Access Request and Provisioning",
+        content: `**ACCESS REQUEST FORM**
+
+**Requestor Information**:
+Name: _______________
+Title/Position: _______________
+Department: _______________
+Start Date: _______________
+Supervisor: _______________
+
+**Access Requested**:
+☐ Admin ☐ Clinical User ☐ Research User ☐ Standard User ☐ API Consumer ☐ Read-Only
+
+**Specific Module Access** (check all that apply):
+☐ Clinical AI ☐ Voice Agent ☐ Research ☐ RAG Knowledge Base
+☐ Chat ☐ Memory ☐ Analytics ☐ Training Pipeline
+☐ Agents ☐ Automations ☐ AgentFlow ☐ Platform API
+☐ Prompts ☐ Compare ☐ Costs ☐ Team Collaboration
+☐ Data Agent ☐ Social AI ☐ Finance AI ☐ Compliance (Admin only)
+
+**Justification for Access**:
+________________________________________
+
+**Approvals**:
+Supervisor: _________________ Date: _______
+Security Officer: _________________ Date: _______
+Privacy Officer (if PHI access): _________________ Date: _______
+
+**Provisioning**:
+Account Created By: _________________ Date: _______
+Access Verified By: _________________ Date: _______`
+      },
+      {
+        title: "3. Access Modification and Review",
+        content: `**Access Modification Triggers**:
+- Job role or department change
+- Project assignment change
+- Promotion or demotion
+- Return from extended leave
+- Security incident involving the user's account
+
+**Quarterly Access Review**:
+Every quarter, the Security Officer must review all user access to ensure:
+1. Each user's access matches their current job function
+2. No orphaned accounts (former employees/contractors still active)
+3. No excessive privileges beyond minimum necessary
+4. All admin accounts are justified and documented
+5. API keys are still needed and properly scoped
+
+| Review Period | Reviewer | Users Reviewed | Issues Found | Actions Taken | Date Completed |
+|--------------|----------|---------------|-------------|---------------|---------------|
+| Q1 20__ | ________ | _____ | _________ | _________ | _________ |
+| Q2 20__ | ________ | _____ | _________ | _________ | _________ |
+| Q3 20__ | ________ | _____ | _________ | _________ | _________ |
+| Q4 20__ | ________ | _____ | _________ | _________ | _________ |`
+      },
+      {
+        title: "4. Access Termination Procedures",
+        content: `**Immediate Termination Checklist** (complete within 24 hours of separation):
+
+☐ Disable LLM Hub user account
+☐ Revoke all API keys issued to the individual
+☐ Remove from all team collaboration workspaces
+☐ Change any shared passwords the individual had access to
+☐ Revoke VPN/remote access credentials
+☐ Collect and sanitize all company devices (see Disposal Policy)
+☐ Remove from email distribution lists
+☐ Revoke access to third-party services (OpenAI, Google, AgentFlow)
+☐ Review audit logs for the individual's last 30 days of access
+☐ Transfer ownership of any shared resources/agents/automations
+☐ Update the access roster and notify affected team members
+☐ If involuntary termination: complete all above BEFORE notifying the employee
+
+**Termination Record**:
+Employee Name: _______________
+Termination Date: _______________
+Termination Type: ☐ Voluntary ☐ Involuntary
+All Access Revoked By: _______________
+Date Access Revoked: _______________
+Devices Returned: ☐ Yes ☐ No ☐ N/A
+Audit Log Review Completed: ☐ Yes — No issues ☐ Yes — Issues found (document) ☐ Pending
+
+Signed: _______________ Date: _______________`
+      },
+    ],
+  },
+  {
+    id: "minimum-necessary",
+    title: "Minimum Necessary Standard Policy",
+    category: "Administrative Safeguards",
+    description: "Policy ensuring PHI access and disclosure is limited to the minimum necessary for job function",
+    lastUpdated: "2026-03-30",
+    status: "template",
+    sections: [
+      {
+        title: "1. Policy Statement",
+        content: `**Purpose**: To establish procedures ensuring that when using or disclosing PHI, or when requesting PHI from another covered entity or business associate, [ORGANIZATION NAME] makes reasonable efforts to limit PHI to the minimum necessary to accomplish the intended purpose, in compliance with 45 CFR § 164.502(b) and 45 CFR § 164.514(d).
+
+**Exceptions** (Minimum Necessary does NOT apply to):
+- Disclosures to or requests by a health care provider for treatment purposes
+- Disclosures to the individual who is the subject of the information
+- Uses or disclosures made pursuant to a valid authorization
+- Disclosures required by law
+- Disclosures to HHS for compliance investigations`
+      },
+      {
+        title: "2. Implementation in LLM Hub Platform",
+        content: `**2.1 Role-Based Access Controls**
+The LLM Hub platform enforces minimum necessary through role-based access:
+- Standard users cannot access Clinical AI or patient data modules
+- Research users receive de-identified data only
+- API consumers receive scoped access based on their API key permissions
+- Audit logging tracks all access for accountability review
+
+**2.2 PHI in AI Prompts and Responses**
+- Users must not include more PHI in AI prompts than is necessary for the clinical task
+- The platform flags PHI-containing routes for enhanced monitoring
+- Clinical AI module should use structured inputs to limit unnecessary PHI exposure
+- Users must not copy/paste full patient records into general chat or research modules
+
+**2.3 Internal Requests for PHI**
+When requesting PHI for operational purposes:
+1. Identify the specific PHI elements needed (not entire records)
+2. Document the purpose for the request
+3. Obtain supervisor approval for bulk PHI access
+4. Use de-identified data when the purpose can be achieved without identifiers
+
+**2.4 Disclosures to Third Parties**
+- Verify the identity and authority of any person requesting PHI
+- Limit disclosure to the specific PHI requested (no more)
+- Document all external disclosures in the audit log
+- When in doubt, consult the Privacy Officer before disclosing`
+      },
+      {
+        title: "3. Annual Minimum Necessary Review",
+        content: `**Annual Review Checklist**:
+
+☐ Review each role's access level against current job descriptions
+☐ Verify that role assignments in LLM Hub match approved access levels
+☐ Review audit logs for access patterns that suggest excessive access
+☐ Identify any new modules or features that need access restrictions
+☐ Update role definitions if job functions have changed
+☐ Verify that API key scopes match their intended purpose
+☐ Review any exceptions granted and determine if they are still justified
+☐ Update this policy as needed
+
+**Review Record**:
+| Year | Reviewer | Roles Reviewed | Changes Made | Date |
+|------|----------|---------------|-------------|------|
+| 20__ | ________ | _____________ | ___________ | ____ |
+| 20__ | ________ | _____________ | ___________ | ____ |
+| 20__ | ________ | _____________ | ___________ | ____ |`
+      },
+    ],
+  },
 ];
+
+const COMPLIANCE_DEADLINES = [
+  {
+    id: "q-review",
+    title: "Quarterly Compliance Review",
+    category: "Administrative",
+    frequency: "quarterly",
+    description: "Comprehensive review of all HIPAA controls, access rights, audit logs, and policy compliance",
+    tasks: [
+      "Review all user access rights (minimum necessary verification)",
+      "Audit PHI access logs for anomalies",
+      "Verify all BAAs are current and signed",
+      "Test backup restoration from a random backup",
+      "Review and update risk assessment scores",
+      "Verify encryption standards are maintained",
+      "Check for any unresolved sanctions or incidents",
+      "Update compliance documentation as needed",
+      "Review API key access and scoping",
+      "Conduct contingency plan tabletop exercise",
+    ],
+  },
+  {
+    id: "annual-risk",
+    title: "Annual Security Risk Assessment",
+    category: "Administrative",
+    frequency: "annual",
+    description: "Full security risk assessment per 45 CFR § 164.308(a)(1)(ii)(A)",
+    tasks: [
+      "Update asset inventory with any new systems",
+      "Re-evaluate all threats and vulnerabilities",
+      "Score all risks with current likelihood and impact",
+      "Create/update remediation plan with owners and deadlines",
+      "Document assessment findings and get executive sign-off",
+      "Archive previous year's assessment for 6-year retention",
+    ],
+  },
+  {
+    id: "annual-training",
+    title: "Annual Workforce HIPAA Training",
+    category: "Administrative",
+    frequency: "annual",
+    description: "Mandatory refresher training for all workforce members per 45 CFR § 164.530(b)",
+    tasks: [
+      "Schedule training sessions for all workforce members",
+      "Update training materials with any policy changes",
+      "Include platform-specific updates (new features, security changes)",
+      "Collect signed acknowledgment forms from all attendees",
+      "Document completion rates and follow up on non-compliance",
+      "File training records (retain for 6 years minimum)",
+    ],
+  },
+  {
+    id: "annual-policy",
+    title: "Annual Policy Review & Update",
+    category: "Administrative",
+    frequency: "annual",
+    description: "Review and update all HIPAA policies and procedures",
+    tasks: [
+      "Review all 12 HIPAA template documents for accuracy",
+      "Update policies to reflect any regulatory changes",
+      "Update policies to reflect any platform/infrastructure changes",
+      "Get legal review of any material policy changes",
+      "Distribute updated policies to workforce members",
+      "Update the Notice of Privacy Practices if needed",
+      "Archive previous versions (retain for 6 years)",
+    ],
+  },
+  {
+    id: "annual-contingency",
+    title: "Annual Contingency Plan Functional Test",
+    category: "Technical",
+    frequency: "annual",
+    description: "Full functional test of disaster recovery procedures",
+    tasks: [
+      "Perform full backup restoration to test environment",
+      "Verify data integrity after restoration",
+      "Test emergency mode operation procedures",
+      "Verify communication chain works correctly",
+      "Document test results and update plan as needed",
+      "Update RTO/RPO targets based on test results",
+    ],
+  },
+  {
+    id: "monthly-audit",
+    title: "Monthly Audit Log Review",
+    category: "Technical",
+    frequency: "monthly",
+    description: "Regular review of audit logs for suspicious activity and PHI access patterns",
+    tasks: [
+      "Review PHI access report for unusual patterns",
+      "Check for failed authentication attempts",
+      "Review admin-level actions for appropriateness",
+      "Verify no orphaned or unauthorized accounts exist",
+      "Document findings and any corrective actions taken",
+    ],
+  },
+  {
+    id: "annual-baa",
+    title: "Annual BAA Review",
+    category: "Administrative",
+    frequency: "annual",
+    description: "Review all Business Associate Agreements for currency and compliance",
+    tasks: [
+      "Inventory all business associates handling PHI",
+      "Verify BAA is in place and current for each",
+      "Check for any new vendors that need BAAs",
+      "Verify vendor compliance certifications are current",
+      "Terminate or update BAAs for changed relationships",
+    ],
+  },
+  {
+    id: "key-rotation",
+    title: "Annual Encryption Key Rotation",
+    category: "Technical",
+    frequency: "annual",
+    description: "Rotate all encryption keys and certificates per encryption policy",
+    tasks: [
+      "Rotate database encryption keys",
+      "Renew TLS certificates",
+      "Rotate API keys (OpenAI, Google, AgentFlow)",
+      "Rotate backup encryption keys",
+      "Update key management records",
+      "Verify all systems function after rotation",
+    ],
+  },
+];
+
+function generateSchedule() {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const currentQuarter = Math.floor(currentMonth / 3) + 1;
+  const schedule: any[] = [];
+
+  COMPLIANCE_DEADLINES.forEach(deadline => {
+    if (deadline.frequency === "quarterly") {
+      for (let q = 1; q <= 4; q++) {
+        const month = (q * 3) - 1;
+        const dueDate = new Date(currentYear, month, 15);
+        const isPast = dueDate < now;
+        schedule.push({
+          ...deadline,
+          scheduleId: `${deadline.id}-Q${q}-${currentYear}`,
+          quarter: `Q${q}`,
+          year: currentYear,
+          dueDate: dueDate.toISOString(),
+          status: isPast ? (q < currentQuarter ? "overdue" : "due-now") : "upcoming",
+          urgency: isPast ? "high" : (q === currentQuarter ? "medium" : "low"),
+        });
+      }
+    } else if (deadline.frequency === "monthly") {
+      for (let m = 0; m < 12; m++) {
+        const dueDate = new Date(currentYear, m, 28);
+        const isPast = dueDate < now;
+        const isCurrentMonth = m === currentMonth;
+        schedule.push({
+          ...deadline,
+          scheduleId: `${deadline.id}-M${m + 1}-${currentYear}`,
+          month: m + 1,
+          year: currentYear,
+          dueDate: dueDate.toISOString(),
+          status: isPast && !isCurrentMonth ? "overdue" : isCurrentMonth ? "due-now" : "upcoming",
+          urgency: isPast && !isCurrentMonth ? "high" : isCurrentMonth ? "medium" : "low",
+        });
+      }
+    } else if (deadline.frequency === "annual") {
+      const dueDate = new Date(currentYear, 11, 31);
+      const isPast = dueDate < now;
+      schedule.push({
+        ...deadline,
+        scheduleId: `${deadline.id}-${currentYear}`,
+        year: currentYear,
+        dueDate: dueDate.toISOString(),
+        status: isPast ? "overdue" : currentMonth >= 9 ? "due-soon" : "upcoming",
+        urgency: isPast ? "high" : currentMonth >= 9 ? "medium" : "low",
+      });
+    }
+  });
+
+  return schedule.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+}
 
 router.get("/compliance/audit-logs", requireAdmin, async (req, res): Promise<void> => {
   try {
@@ -979,6 +1839,86 @@ router.get("/compliance/activity-timeline", requireAdmin, async (req, res): Prom
       ORDER BY hour ASC
     `, [hours]);
     res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/compliance/schedule", requireAdmin, (_req, res): void => {
+  res.json({
+    deadlines: COMPLIANCE_DEADLINES,
+    schedule: generateSchedule(),
+  });
+});
+
+router.get("/compliance/reviews", requireAdmin, async (req, res): Promise<void> => {
+  try {
+    const year = parseInt(req.query.year as string) || new Date().getFullYear();
+    const result = await pool.query(
+      `SELECT * FROM compliance_reviews WHERE year = $1 ORDER BY due_date ASC`,
+      [year]
+    );
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/compliance/reviews", requireAdmin, async (req, res): Promise<void> => {
+  try {
+    const { review_type, title, description, due_date, quarter, year, notes } = req.body;
+    const result = await pool.query(
+      `INSERT INTO compliance_reviews (review_type, title, description, due_date, quarter, year, notes, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending') RETURNING *`,
+      [review_type, title, description, due_date, quarter, year, notes]
+    );
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch("/compliance/reviews/:id", requireAdmin, async (req, res): Promise<void> => {
+  try {
+    const { status, notes, completed_by } = req.body;
+    const updates: string[] = [];
+    const values: any[] = [];
+    let idx = 1;
+    if (status) { updates.push(`status = $${idx++}`); values.push(status); }
+    if (notes !== undefined) { updates.push(`notes = $${idx++}`); values.push(notes); }
+    if (completed_by) { updates.push(`completed_by = $${idx++}`); values.push(completed_by); }
+    if (status === "completed") { updates.push(`completed_date = NOW()`); }
+    updates.push(`updated_at = NOW()`);
+    values.push(req.params.id);
+    const result = await pool.query(
+      `UPDATE compliance_reviews SET ${updates.join(", ")} WHERE id = $${idx} RETURNING *`,
+      values
+    );
+    if (result.rows.length === 0) { res.status(404).json({ error: "Review not found" }); return; }
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/compliance/schedule/seed", requireAdmin, async (_req, res): Promise<void> => {
+  try {
+    const existing = await pool.query(`SELECT COUNT(*) FROM compliance_reviews`);
+    if (parseInt(existing.rows[0].count) > 0) {
+      res.json({ message: "Schedule already seeded", count: parseInt(existing.rows[0].count) });
+      return;
+    }
+    const schedule = generateSchedule();
+    let count = 0;
+    for (const item of schedule) {
+      await pool.query(
+        `INSERT INTO compliance_reviews (review_type, title, description, due_date, quarter, year, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [item.id, item.title, item.description, item.dueDate, item.quarter || null, item.year, "pending"]
+      );
+      count++;
+    }
+    res.json({ message: "Schedule seeded", count });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
