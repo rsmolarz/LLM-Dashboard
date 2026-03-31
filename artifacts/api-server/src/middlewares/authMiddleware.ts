@@ -9,6 +9,8 @@ import {
   updateSession,
   type SessionData,
 } from "../lib/auth";
+import { db, usersTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 declare global {
   namespace Express {
@@ -82,6 +84,15 @@ export async function authMiddleware(
     return;
   }
 
-  req.user = refreshed.user;
+  const sessionUser = refreshed.user;
+  if (sessionUser?.id) {
+    try {
+      const [freshUser] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, String(sessionUser.id))).limit(1);
+      if (freshUser) {
+        sessionUser.role = freshUser.role || "user";
+      }
+    } catch {}
+  }
+  req.user = sessionUser;
   next();
 }

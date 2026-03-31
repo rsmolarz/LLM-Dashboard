@@ -88,10 +88,24 @@ async function upsertUser(claims: Record<string, unknown>) {
   return user;
 }
 
-router.get("/auth/user", (req: Request, res: Response) => {
-  res.json({
-    user: req.isAuthenticated() ? req.user : null,
-  });
+router.get("/auth/user", async (req: Request, res: Response) => {
+  if (!req.isAuthenticated() || !req.user) {
+    res.json({ user: null });
+    return;
+  }
+  const userId = (req.user as any).id;
+  if (userId) {
+    const [freshUser] = await db.select().from(usersTable).where(eq(usersTable.id, String(userId))).limit(1);
+    if (freshUser) {
+      const merged = {
+        ...(req.user as any),
+        role: freshUser.role || "user",
+      };
+      res.json({ user: merged });
+      return;
+    }
+  }
+  res.json({ user: req.user });
 });
 
 router.get("/login", async (req: Request, res: Response) => {
