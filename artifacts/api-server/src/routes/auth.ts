@@ -63,9 +63,20 @@ async function upsertUser(claims: Record<string, unknown>) {
       | null,
   };
 
+  const existing = await db.select().from(usersTable).where(eq(usersTable.id, userData.id)).limit(1);
+  const isNewUser = existing.length === 0;
+
+  let assignRole: string | undefined;
+  if (isNewUser) {
+    const allUsers = await db.select({ id: usersTable.id }).from(usersTable).limit(1);
+    if (allUsers.length === 0) {
+      assignRole = "admin";
+    }
+  }
+
   const [user] = await db
     .insert(usersTable)
-    .values(userData)
+    .values({ ...userData, ...(assignRole ? { role: assignRole } : {}) })
     .onConflictDoUpdate({
       target: usersTable.id,
       set: {
