@@ -57,16 +57,16 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/finance", label: "Finance", icon: TrendingUp, adminOnly: false },
     { href: "/data-agent", label: "Data Agent", icon: Database, adminOnly: false },
     { href: "/voice-agent", label: "Voice Agent", icon: Mic, adminOnly: false },
-    { href: "/databases", label: "Databases", icon: HardDrive, adminOnly: true },
+    { href: "/databases", label: "Databases", icon: HardDrive, adminOnly: false },
     { href: "/pubmed", label: "PubMed", icon: BookOpen, adminOnly: false },
-    { href: "/pipeline", label: "Pipeline", icon: Beaker, adminOnly: true },
-    { href: "/platform-api", label: "Platform API", icon: Key, adminOnly: true },
+    { href: "/pipeline", label: "Pipeline", icon: Beaker, adminOnly: false },
+    { href: "/platform-api", label: "Platform API", icon: Key, adminOnly: false },
     { href: "/rag", label: "RAG", icon: Library, adminOnly: false },
     { href: "/evaluation", label: "Benchmarks", icon: Trophy, adminOnly: false },
     { href: "/research-pipeline", label: "Research", icon: FlaskConical, adminOnly: false },
-    { href: "/compliance", label: "HIPAA", icon: Shield, adminOnly: true },
-    { href: "/monitor", label: "Monitor", icon: BarChart3, adminOnly: true },
-    { href: "/admin", label: "Admin", icon: Shield, adminOnly: true },
+    { href: "/compliance", label: "HIPAA", icon: Shield, adminOnly: false },
+    { href: "/monitor", label: "Monitor", icon: BarChart3, adminOnly: false },
+    { href: "/admin", label: "Admin", icon: Shield, adminOnly: false },
   ];
 
   const visibleNavItems = navItems.filter(item => !item.adminOnly || isAdmin);
