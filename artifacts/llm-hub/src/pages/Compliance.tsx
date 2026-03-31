@@ -391,8 +391,8 @@ export default function Compliance() {
       {tab === "overview" && !status && (
         <div className="bg-card border border-border rounded-xl p-12 text-center">
           <Shield className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-          <h3 className="text-lg font-medium">Admin Access Required</h3>
-          <p className="text-sm text-muted-foreground mt-1">Sign in as an admin to view compliance status</p>
+          <h3 className="text-lg font-medium">Loading Compliance Status...</h3>
+          <p className="text-sm text-muted-foreground mt-1">Sign in to view compliance status</p>
         </div>
       )}
 

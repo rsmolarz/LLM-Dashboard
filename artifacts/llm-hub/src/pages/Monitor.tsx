@@ -212,16 +212,7 @@ export default function Monitor() {
     } catch {}
   };
 
-  if (!isAdmin) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <Shield className="w-12 h-12 text-red-400 mx-auto" />
-          <h2 className="text-xl font-bold text-white">Admin Access Required</h2>
-          <p className="text-sm text-muted-foreground">You need admin privileges to view this page.</p>
-        </div>
-      </div>
-    );
+  if (false) {
   }
 
   if (loading) {

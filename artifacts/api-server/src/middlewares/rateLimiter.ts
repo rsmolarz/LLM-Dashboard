@@ -114,10 +114,21 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+export async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
     res.status(401).json({ error: "Authentication required" });
     return;
+  }
+  const { db, usersTable } = await import("@workspace/db");
+  const { eq } = await import("drizzle-orm");
+  const userId = (req.user as any).id;
+  if (userId) {
+    try {
+      const [freshUser] = await db.select({ role: usersTable.role }).from(usersTable).where(eq(usersTable.id, String(userId))).limit(1);
+      if (freshUser) {
+        (req.user as any).role = freshUser.role || "user";
+      }
+    } catch {}
   }
   if ((req.user as any).role !== "admin") {
     res.status(403).json({ error: "Admin access required" });
