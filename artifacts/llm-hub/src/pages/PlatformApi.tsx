@@ -5,7 +5,7 @@ import {
   AlertCircle
 } from "lucide-react";
 
-const API = import.meta.env.VITE_API_URL || "";
+const API = import.meta.env.BASE_URL ? import.meta.env.BASE_URL.replace(/\/$/, "") : "";
 
 interface ApiKeyItem {
   id: string;
