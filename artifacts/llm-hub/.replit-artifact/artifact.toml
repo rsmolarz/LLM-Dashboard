@@ -20,12 +20,3 @@ run = "pnpm --filter @workspace/llm-hub run dev"
 [services.env]
 PORT = "18237"
 BASE_PATH = "/"
-
-[services.production]
-build = ["pnpm", "--filter", "@workspace/llm-hub", "run", "build"]
-publicDir = "artifacts/llm-hub/dist/public"
-serve = "static"
-
-[[services.production.rewrites]]
-from = "/*"
-to = "/index.html"
