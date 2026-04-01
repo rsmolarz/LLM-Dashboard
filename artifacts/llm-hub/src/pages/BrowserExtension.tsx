@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Chrome, Download, Key, Copy, Check, ExternalLink, Puzzle,
   Server, Shield, BarChart3, Zap, Globe, Settings, ArrowRight,
-  MonitorSmartphone, Loader2, Plus, RefreshCw
+  MonitorSmartphone, Loader2, Plus, RefreshCw, Star, MessageSquare
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL ? import.meta.env.BASE_URL.replace(/\/$/, "") : "";
@@ -15,6 +15,44 @@ interface ApiKeyItem {
   createdAt: string;
 }
 
+interface VpsModel {
+  name: string;
+  size: number;
+  parameterSize?: string | null;
+  family?: string | null;
+}
+
+const COMPATIBLE_EXTENSIONS = [
+  {
+    name: "Page Assist",
+    desc: "Built for local/self-hosted LLMs. Best Ollama companion — auto-detects models, supports custom endpoints, sidebar + popup modes.",
+    chrome: "https://chromewebstore.google.com/detail/page-assist/jfgfiigpkhlkbnfnbobbkinehhfdhndo",
+    firefox: "https://addons.mozilla.org/en-US/firefox/addon/page-assist/",
+    recommended: true,
+  },
+  {
+    name: "Chatbox",
+    desc: "Full-featured AI client. Supports custom OpenAI-compatible API base URL. Available as extension and desktop app.",
+    chrome: "https://chromewebstore.google.com/detail/chatbox/kdnahhmjfhbinoidjdhcbhpnbjjknmcm",
+    firefox: null,
+    recommended: true,
+  },
+  {
+    name: "Smart Sidebar",
+    desc: "AI sidebar supporting ChatGPT, Claude, and custom OpenAI-compatible endpoints. Set your Base URL and API key in settings.",
+    chrome: "https://chromewebstore.google.com/detail/smart-sidebar/eiacnkgginjlofehicmaecaifcmbelf",
+    firefox: null,
+    recommended: false,
+  },
+  {
+    name: "LLM-X",
+    desc: "Open-source browser extension built specifically for self-hosted LLMs. Supports OpenAI-compatible connections.",
+    chrome: "https://chromewebstore.google.com/detail/llm-x/pimhfannlnodahkaiajlbpnmagjdmhoe",
+    firefox: "https://addons.mozilla.org/en-US/firefox/addon/llm-x/",
+    recommended: false,
+  },
+];
+
 export default function BrowserExtension() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [keys, setKeys] = useState<ApiKeyItem[]>([]);
@@ -22,6 +60,8 @@ export default function BrowserExtension() {
   const [creating, setCreating] = useState(false);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [step, setStep] = useState(1);
+  const [vpsModels, setVpsModels] = useState<VpsModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
 
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
   const apiEndpoint = `${baseUrl}/api/v1`;
@@ -36,7 +76,23 @@ export default function BrowserExtension() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchKeys(); }, [fetchKeys]);
+  const fetchModels = useCallback(async () => {
+    setModelsLoading(true);
+    try {
+      const res = await fetch(`${API}/api/llm/models`);
+      const data = await res.json();
+      const list = (data.models || data || []).map((m: any) => ({
+        name: m.name || m.id,
+        size: m.size || 0,
+        parameterSize: m.parameterSize || null,
+        family: m.family || null,
+      }));
+      setVpsModels(list);
+    } catch {}
+    setModelsLoading(false);
+  }, []);
+
+  useEffect(() => { fetchKeys(); fetchModels(); }, [fetchKeys, fetchModels]);
 
   const copyText = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -120,27 +176,53 @@ export default function BrowserExtension() {
           <div className={`glass-panel rounded-xl border p-5 transition-all ${step === 1 ? "border-orange-500/30 bg-orange-500/[0.03]" : "border-white/5"}`}>
             <div className="flex items-center gap-3 mb-3">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold ${step === 1 ? "bg-orange-500 text-white" : "bg-white/10 text-muted-foreground"}`}>1</div>
-              <h3 className="text-base font-semibold text-white">Install LLM-X Extension</h3>
+              <h3 className="text-base font-semibold text-white">Install a Compatible Extension</h3>
             </div>
             <div className="ml-11 space-y-3">
-              <p className="text-sm text-muted-foreground">Download and install the LLM-X browser extension:</p>
-              <div className="flex flex-wrap gap-2">
-                <a href="https://chromewebstore.google.com/detail/llm-x/pimhfannlnodahkaiajlbpnmagjdmhoe" target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-sm text-white">
-                  <Chrome className="w-4 h-4 text-blue-400" /> Chrome Web Store <ExternalLink className="w-3 h-3 text-muted-foreground" />
-                </a>
-                <a href="https://addons.mozilla.org/en-US/firefox/addon/llm-x/" target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-sm text-white">
-                  <Globe className="w-4 h-4 text-orange-400" /> Firefox Add-ons <ExternalLink className="w-3 h-3 text-muted-foreground" />
-                </a>
-                <a href="https://github.com/mrdjohnson/llm-x" target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-sm text-white">
-                  <Download className="w-4 h-4 text-gray-400" /> GitHub Source <ExternalLink className="w-3 h-3 text-muted-foreground" />
-                </a>
+              <p className="text-sm text-muted-foreground">
+                You need an extension that supports <span className="text-white font-medium">custom OpenAI-compatible API endpoints</span>.
+                These extensions let you set your own Base URL and API key, so they route to your self-hosted Ollama instead of OpenAI.
+              </p>
+              <div className="text-[10px] text-amber-400/80 bg-amber-500/5 border border-amber-500/10 rounded-lg px-3 py-2">
+                Most "ChatGPT" extensions only connect to OpenAI's servers and won't work. The ones below support custom endpoints.
+              </div>
+              <div className="space-y-2">
+                {COMPATIBLE_EXTENSIONS.map((ext) => (
+                  <div key={ext.name} className={`rounded-lg border p-3 ${ext.recommended ? "border-emerald-500/20 bg-emerald-500/[0.02]" : "border-white/5 bg-white/[0.01]"}`}>
+                    <div className="flex items-start gap-3">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${ext.recommended ? "bg-emerald-500/10" : "bg-white/5"}`}>
+                        <Puzzle className={`w-4 h-4 ${ext.recommended ? "text-emerald-400" : "text-muted-foreground"}`} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-white">{ext.name}</span>
+                          {ext.recommended && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-medium flex items-center gap-0.5">
+                              <Star className="w-2.5 h-2.5" /> Recommended
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-relaxed">{ext.desc}</p>
+                        <div className="flex items-center gap-2 mt-2">
+                          <a href={ext.chrome} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-[11px] text-white">
+                            <Chrome className="w-3 h-3 text-blue-400" /> Chrome <ExternalLink className="w-2.5 h-2.5 text-muted-foreground" />
+                          </a>
+                          {ext.firefox && (
+                            <a href={ext.firefox} target="_blank" rel="noopener noreferrer"
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-[11px] text-white">
+                              <Globe className="w-3 h-3 text-orange-400" /> Firefox <ExternalLink className="w-2.5 h-2.5 text-muted-foreground" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
               </div>
               {step === 1 && (
                 <button onClick={() => setStep(2)} className="flex items-center gap-1.5 text-xs text-orange-400 hover:text-orange-300 transition-all mt-2">
-                  I've installed it <ArrowRight className="w-3 h-3" />
+                  I've installed one <ArrowRight className="w-3 h-3" />
                 </button>
               )}
             </div>
@@ -189,22 +271,22 @@ export default function BrowserExtension() {
           <div className={`glass-panel rounded-xl border p-5 transition-all ${step === 3 ? "border-orange-500/30 bg-orange-500/[0.03]" : "border-white/5"}`}>
             <div className="flex items-center gap-3 mb-3">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold ${step === 3 ? "bg-orange-500 text-white" : "bg-white/10 text-muted-foreground"}`}>3</div>
-              <h3 className="text-base font-semibold text-white">Configure LLM-X Connection</h3>
+              <h3 className="text-base font-semibold text-white">Configure Your Extension</h3>
             </div>
             <div className="ml-11 space-y-4">
-              <p className="text-sm text-muted-foreground">Open LLM-X and add a new <span className="text-white">OpenAI</span> connection with these settings:</p>
+              <p className="text-sm text-muted-foreground">Open your extension's settings and look for "Custom API" or "OpenAI-compatible" configuration. Enter these values:</p>
 
               <div className="space-y-3">
                 <div>
-                  <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium block mb-1">Connection Type</label>
+                  <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium block mb-1">Connection / Provider Type</label>
                   <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-black/40 border border-white/10">
-                    <span className="text-sm text-white font-medium">OpenAI</span>
-                    <span className="text-[10px] text-muted-foreground">(OpenAI-compatible — routes to your Ollama server)</span>
+                    <span className="text-sm text-white font-medium">OpenAI-Compatible</span>
+                    <span className="text-[10px] text-muted-foreground">(may also be called "Custom OpenAI", "OpenAI API", or "Ollama")</span>
                   </div>
                 </div>
 
                 <div>
-                  <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium block mb-1">Host / Base URL</label>
+                  <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium block mb-1">Base URL / API Endpoint / Host</label>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 px-3 py-2.5 rounded-lg bg-black/40 border border-white/10 text-cyan-300 text-sm font-mono">{apiEndpoint}</code>
                     <button onClick={() => copyText(apiEndpoint, "base-url")} className="px-2 py-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all flex-shrink-0">
@@ -219,6 +301,16 @@ export default function BrowserExtension() {
                     <span className="text-sm text-amber-300 font-mono">ent_your_api_key_here</span>
                     <span className="text-[10px] text-muted-foreground ml-auto">(paste the key from Step 2)</span>
                   </div>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3 space-y-2">
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Extension-specific setup tips</div>
+                <div className="space-y-1.5 text-[11px] text-muted-foreground">
+                  <div><span className="text-emerald-400 font-medium">Page Assist:</span> Settings → Ollama Settings → set "Ollama URL" to the Base URL above. Set API key in Advanced Settings.</div>
+                  <div><span className="text-emerald-400 font-medium">Chatbox:</span> Settings → AI Model Provider → "OpenAI API Compatible" → paste Base URL and API key.</div>
+                  <div><span className="text-emerald-400 font-medium">Smart Sidebar:</span> Settings → Custom Provider → enter Base URL and API key.</div>
+                  <div><span className="text-emerald-400 font-medium">LLM-X:</span> Add Connection → "OpenAI" type → set Host URL and API key.</div>
                 </div>
               </div>
 
@@ -237,16 +329,41 @@ export default function BrowserExtension() {
             </div>
             <div className="ml-11 space-y-3">
               <p className="text-sm text-muted-foreground">
-                In LLM-X, click the model selector and choose from your available Ollama models. 
-                The extension will fetch the model list from your VPS automatically.
+                In your extension, select a model from your VPS. Some extensions auto-detect models; 
+                others require you to type the model name manually. Use any name from the list below.
               </p>
               <div className="rounded-lg border border-white/10 bg-black/20 p-3">
-                <div className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium mb-2">Available Models on Your VPS</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {["llama3.2:latest", "qwen2.5:14b", "qwen2.5:7b", "deepseek-r1:8b", "mistral:latest", "llava:13b", "codellama:7b", "meditron:7b", "deepseek-coder:6.7b", "meditron-7b-ent-trained:latest", "nomic-embed-text:latest", "mxbai-embed-large:latest"].map(m => (
-                    <span key={m} className="px-2 py-1 rounded bg-white/[0.03] border border-white/5 text-[10px] font-mono text-white">{m}</span>
-                  ))}
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium">Available Models on Your VPS</div>
+                  <button onClick={fetchModels} className="p-1 rounded hover:bg-white/5 text-muted-foreground hover:text-white transition-all" title="Refresh">
+                    <RefreshCw className={`w-3 h-3 ${modelsLoading ? "animate-spin" : ""}`} />
+                  </button>
                 </div>
+                {modelsLoading && vpsModels.length === 0 ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Loading models from VPS...
+                  </div>
+                ) : vpsModels.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {vpsModels.map(m => {
+                      const isCode = /coder|codellama|starcoder|codegemma/i.test(m.name);
+                      const sizeGb = m.size > 0 ? `${(m.size / (1024**3)).toFixed(1)}GB` : "";
+                      return (
+                        <button key={m.name} onClick={() => copyText(m.name, `model-${m.name}`)}
+                          className={`group px-2 py-1 rounded border text-[10px] font-mono transition-all flex items-center gap-1 ${isCode ? "bg-emerald-500/[0.05] border-emerald-500/15 text-emerald-300 hover:bg-emerald-500/10" : "bg-white/[0.03] border-white/5 text-white hover:bg-white/5"}`}>
+                          {m.name}
+                          {sizeGb && <span className="text-[8px] text-muted-foreground/50">{sizeGb}</span>}
+                          {copiedId === `model-${m.name}` ? <Check className="w-2.5 h-2.5 text-emerald-400" /> : <Copy className="w-2.5 h-2.5 opacity-0 group-hover:opacity-50" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground py-2">Could not fetch models. Check that your VPS is online.</p>
+                )}
+                {vpsModels.some(m => /coder|codellama|starcoder|codegemma/i.test(m.name)) && (
+                  <p className="text-[9px] text-emerald-400/60 mt-2">Green models are optimized for coding tasks</p>
+                )}
               </div>
               {step === 4 && (
                 <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.03] p-3 flex items-center gap-2">
