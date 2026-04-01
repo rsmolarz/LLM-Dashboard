@@ -31,7 +31,7 @@ export default function CodeTerminal() {
   ]);
   const [terminalInput, setTerminalInput] = useState("");
   const [terminalRunning, setTerminalRunning] = useState(false);
-  const [model, setModel] = useState("deepseek-coder:6.7b");
+  const [model, setModel] = useState("qwen2.5-coder:7b");
   const [models, setModels] = useState<string[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -53,8 +53,24 @@ export default function CodeTerminal() {
     fetch(`${API}/api/llm/models`).then(r => r.json()).then(d => {
       const names = (d.models || []).map((m: any) => m.name || m.id);
       setModels(names);
-      const codeModel = names.find((n: string) => n.includes("deepseek-coder") || n.includes("codellama"));
-      if (codeModel) setModel(codeModel);
+      const CODE_MODEL_PRIORITY = [
+        "qwen2.5-coder:14b",
+        "qwen2.5-coder:7b",
+        "deepseek-coder-v2:16b",
+        "codellama:13b",
+        "codegemma:7b",
+        "starcoder2:7b",
+        "deepseek-coder:6.7b",
+        "codellama:7b",
+      ];
+      const best = CODE_MODEL_PRIORITY.find(cm => names.some((n: string) => n.startsWith(cm.split(":")[0]) && n.includes(cm.split(":")[1] || "")));
+      if (best) {
+        const match = names.find((n: string) => n.startsWith(best.split(":")[0]) && n.includes(best.split(":")[1] || ""));
+        if (match) setModel(match);
+      } else {
+        const anyCode = names.find((n: string) => n.includes("coder") || n.includes("codellama") || n.includes("starcoder") || n.includes("codegemma"));
+        if (anyCode) setModel(anyCode);
+      }
     }).catch(() => {});
   }, []);
 
@@ -310,7 +326,17 @@ export default function CodeTerminal() {
             className="px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-xs text-white focus:outline-none focus:border-emerald-500/50"
           >
             {models.length === 0 && <option value={model}>{model}</option>}
-            {models.map(m => <option key={m} value={m}>{m}</option>)}
+            {(() => {
+              const isCodeModel = (n: string) => /coder|codellama|starcoder|codegemma/i.test(n);
+              const codeModels = models.filter(isCodeModel);
+              const otherModels = models.filter(m => !isCodeModel(m));
+              return (
+                <>
+                  {codeModels.length > 0 && <optgroup label="⚡ Coding Models">{codeModels.map(m => <option key={m} value={m}>{m}</option>)}</optgroup>}
+                  {otherModels.length > 0 && <optgroup label="General Models">{otherModels.map(m => <option key={m} value={m}>{m}</option>)}</optgroup>}
+                </>
+              );
+            })()}
           </select>
 
           <button onClick={() => setShowSettings(!showSettings)}
