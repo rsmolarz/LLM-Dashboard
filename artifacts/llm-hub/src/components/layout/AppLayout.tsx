@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User, Stethoscope, Share2, TrendingUp, Database, Mic, HardDrive, BookOpen, Beaker, FlaskConical, Key, Library, Sun, Moon, Trophy, Workflow, GitCompareArrows, FileText, BrainCircuit, DollarSign, Users } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User, Stethoscope, Share2, TrendingUp, Database, Mic, HardDrive, BookOpen, Beaker, FlaskConical, Key, Library, Sun, Moon, Trophy, Workflow, GitCompareArrows, FileText, BrainCircuit, DollarSign, Users, Puzzle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -61,6 +61,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/pubmed", label: "PubMed", icon: BookOpen, adminOnly: false },
     { href: "/pipeline", label: "Pipeline", icon: Beaker, adminOnly: false },
     { href: "/platform-api", label: "Platform API", icon: Key, adminOnly: false },
+    { href: "/extension", label: "Extension", icon: Puzzle, adminOnly: false },
     { href: "/rag", label: "RAG", icon: Library, adminOnly: false },
     { href: "/evaluation", label: "Benchmarks", icon: Trophy, adminOnly: false },
     { href: "/research-pipeline", label: "Research", icon: FlaskConical, adminOnly: false },

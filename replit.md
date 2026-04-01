@@ -56,6 +56,7 @@ The project is structured as a pnpm monorepo with distinct artifacts for the fro
 -   **Auto-Collector & Continuous Training Pipeline**: In-memory scheduler for data collection and continuous training data generation across specific domains using model rotation.
 -   **Domain-Specific Training Pipelines**: Dedicated pipelines for ENT and Hedge Fund, collecting and categorizing data from various sources for model fine-tuning.
 -   **Platform API Gateway**: OpenAI-compatible API gateway (`/platform-api`) with key management, rate limiting, and usage tracking for external applications to access VPS LLM models.
+    -   **Browser Extension Integration**: Dedicated `/extension` page with step-by-step setup guide for connecting LLM-X browser extension (Chrome/Firefox) to the Platform API. Includes inline API key generation, connection configuration (OpenAI-compatible type, base URL, API key), available model listing, and Python/TypeScript SDK code examples. All extension traffic routes through the Platform API to self-hosted Ollama — zero external API costs.
 
 ## External Dependencies
 -   **Ollama**: Self-hosted LLM server (v0.18.0) for local models and embeddings.
