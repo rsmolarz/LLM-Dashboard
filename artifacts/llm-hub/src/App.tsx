@@ -37,6 +37,7 @@ import Costs from "@/pages/Costs";
 import Team from "@/pages/Team";
 import Compliance from "@/pages/Compliance";
 import BrowserExtension from "@/pages/BrowserExtension";
+import CodeTerminal from "@/pages/CodeTerminal";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -84,6 +85,7 @@ function Router() {
         <Route path="/team" component={Team} />
         <Route path="/compliance" component={Compliance} />
         <Route path="/extension" component={BrowserExtension} />
+        <Route path="/code" component={CodeTerminal} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

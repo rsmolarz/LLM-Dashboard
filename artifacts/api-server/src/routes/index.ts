@@ -54,6 +54,7 @@ import memoryRouter from "./memory";
 import costsRouter from "./costs";
 import teamRouter from "./team";
 import complianceRouter from "./compliance";
+import codeTerminalRouter from "./code-terminal";
 
 const router: IRouter = Router();
 
@@ -113,5 +114,6 @@ router.use(memoryRouter);
 router.use(costsRouter);
 router.use(teamRouter);
 router.use(complianceRouter);
+router.use(codeTerminalRouter);
 
 export default router;
