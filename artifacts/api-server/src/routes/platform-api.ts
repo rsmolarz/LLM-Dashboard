@@ -384,4 +384,94 @@ router.get("/platform-api/usage", async (_req, res) => {
   res.json({ totalRequests, totalTokens, activeKeys, totalKeys: keys.length, modelsCount, serverOnline });
 });
 
+router.get("/ollama/api/tags", async (_req, res) => {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.json({ models: [] }); return; }
+  try {
+    const r = await fetch(`${serverUrl}/api/tags`, { signal: AbortSignal.timeout(15000), /* @ts-ignore */ dispatcher: ollamaAgent });
+    if (!r.ok) { res.json({ models: [] }); return; }
+    res.json(await r.json());
+  } catch { res.json({ models: [] }); }
+});
+
+router.get("/ollama/api/version", async (_req, res) => {
+  res.json({ version: "0.18.0" });
+});
+
+router.post("/ollama/api/chat", async (req, res) => {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "LLM server not configured" }); return; }
+  const { model, messages, stream = true, options } = req.body;
+  if (!model) { res.status(400).json({ error: "model is required" }); return; }
+  try {
+    const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages, stream, options }),
+      signal: AbortSignal.timeout(300000),
+      // @ts-ignore
+      dispatcher: ollamaAgent,
+    });
+    if (!ollamaRes.ok) { res.status(ollamaRes.status).json({ error: await ollamaRes.text() }); return; }
+    if (stream && ollamaRes.body) {
+      res.setHeader("Content-Type", "application/x-ndjson");
+      res.setHeader("Cache-Control", "no-cache");
+      const reader = ollamaRes.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(decoder.decode(value, { stream: true }));
+      }
+      res.end();
+    } else { res.json(await ollamaRes.json()); }
+  } catch (err: any) { res.status(502).json({ error: err.message || "LLM server unreachable" }); }
+});
+
+router.post("/ollama/api/generate", async (req, res) => {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "LLM server not configured" }); return; }
+  try {
+    const ollamaRes = await fetch(`${serverUrl}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req.body),
+      signal: AbortSignal.timeout(300000),
+      // @ts-ignore
+      dispatcher: ollamaAgent,
+    });
+    if (!ollamaRes.ok) { res.status(ollamaRes.status).json({ error: await ollamaRes.text() }); return; }
+    if (req.body.stream !== false && ollamaRes.body) {
+      res.setHeader("Content-Type", "application/x-ndjson");
+      res.setHeader("Cache-Control", "no-cache");
+      const reader = ollamaRes.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(decoder.decode(value, { stream: true }));
+      }
+      res.end();
+    } else { res.json(await ollamaRes.json()); }
+  } catch (err: any) { res.status(502).json({ error: err.message || "LLM server unreachable" }); }
+});
+
+router.post("/ollama/api/show", async (req, res) => {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.status(503).json({ error: "LLM server not configured" }); return; }
+  try {
+    const r = await fetch(`${serverUrl}/api/show`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req.body), signal: AbortSignal.timeout(15000), /* @ts-ignore */ dispatcher: ollamaAgent });
+    res.status(r.status).json(await r.json());
+  } catch (err: any) { res.status(502).json({ error: err.message }); }
+});
+
+router.get("/ollama/api/ps", async (_req, res) => {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) { res.json({ models: [] }); return; }
+  try {
+    const r = await fetch(`${serverUrl}/api/ps`, { signal: AbortSignal.timeout(5000), /* @ts-ignore */ dispatcher: ollamaAgent });
+    res.json(await r.json());
+  } catch { res.json({ models: [] }); }
+});
+
 export default router;

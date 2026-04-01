@@ -65,6 +65,7 @@ export default function BrowserExtension() {
 
   const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
   const apiEndpoint = `${baseUrl}/api/v1`;
+  const ollamaEndpoint = `${baseUrl}/api/ollama`;
 
   const fetchKeys = useCallback(async () => {
     setLoading(true);
@@ -276,17 +277,28 @@ export default function BrowserExtension() {
             <div className="ml-11 space-y-4">
               <p className="text-sm text-muted-foreground">Open your extension's settings and look for "Custom API" or "OpenAI-compatible" configuration. Enter these values:</p>
 
+              <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/[0.03] p-3 mb-3">
+                <div className="text-[10px] text-emerald-400 font-medium mb-1.5">Two connection modes available:</div>
+                <div className="space-y-1 text-[11px] text-muted-foreground">
+                  <div><span className="text-white font-medium">Ollama mode</span> (Page Assist) — extension connects as if talking to a local Ollama server. No API key needed.</div>
+                  <div><span className="text-white font-medium">OpenAI mode</span> (Chatbox, Smart Sidebar, LLM-X) — extension uses OpenAI-compatible protocol with your API key.</div>
+                </div>
+              </div>
+
               <div className="space-y-3">
                 <div>
-                  <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium block mb-1">Connection / Provider Type</label>
-                  <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-black/40 border border-white/10">
-                    <span className="text-sm text-white font-medium">OpenAI-Compatible</span>
-                    <span className="text-[10px] text-muted-foreground">(may also be called "Custom OpenAI", "OpenAI API", or "Ollama")</span>
+                  <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium block mb-1">For Page Assist (Ollama mode) — Ollama URL</label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 px-3 py-2.5 rounded-lg bg-black/40 border border-emerald-500/20 text-cyan-300 text-sm font-mono">{ollamaEndpoint}</code>
+                    <button onClick={() => copyText(ollamaEndpoint, "ollama-url")} className="px-2 py-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all flex-shrink-0">
+                      {copiedId === "ollama-url" ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-white" />}
+                    </button>
                   </div>
+                  <p className="text-[9px] text-muted-foreground mt-1">Paste this into Page Assist's Ollama URL field. No API key needed — it proxies directly to your VPS.</p>
                 </div>
 
-                <div>
-                  <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium block mb-1">Base URL / API Endpoint / Host</label>
+                <div className="border-t border-white/5 pt-3">
+                  <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium block mb-1">For Other Extensions (OpenAI mode) — Base URL</label>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 px-3 py-2.5 rounded-lg bg-black/40 border border-white/10 text-cyan-300 text-sm font-mono">{apiEndpoint}</code>
                     <button onClick={() => copyText(apiEndpoint, "base-url")} className="px-2 py-2 rounded-lg bg-white/5 hover:bg-white/10 transition-all flex-shrink-0">
@@ -296,7 +308,7 @@ export default function BrowserExtension() {
                 </div>
 
                 <div>
-                  <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium block mb-1">API Key</label>
+                  <label className="text-[11px] text-muted-foreground uppercase tracking-wider font-medium block mb-1">API Key (OpenAI mode only)</label>
                   <div className="flex items-center gap-2 px-3 py-2.5 rounded-lg bg-black/40 border border-white/10">
                     <span className="text-sm text-amber-300 font-mono">ent_your_api_key_here</span>
                     <span className="text-[10px] text-muted-foreground ml-auto">(paste the key from Step 2)</span>
@@ -305,12 +317,12 @@ export default function BrowserExtension() {
               </div>
 
               <div className="rounded-lg border border-white/5 bg-white/[0.02] p-3 space-y-2">
-                <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Extension-specific setup tips</div>
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium">Extension-specific setup</div>
                 <div className="space-y-1.5 text-[11px] text-muted-foreground">
-                  <div><span className="text-emerald-400 font-medium">Page Assist:</span> Settings → Ollama Settings → set "Ollama URL" to the Base URL above. Set API key in Advanced Settings.</div>
-                  <div><span className="text-emerald-400 font-medium">Chatbox:</span> Settings → AI Model Provider → "OpenAI API Compatible" → paste Base URL and API key.</div>
-                  <div><span className="text-emerald-400 font-medium">Smart Sidebar:</span> Settings → Custom Provider → enter Base URL and API key.</div>
-                  <div><span className="text-emerald-400 font-medium">LLM-X:</span> Add Connection → "OpenAI" type → set Host URL and API key.</div>
+                  <div><span className="text-emerald-400 font-medium">Page Assist:</span> Settings → paste the <span className="text-cyan-300 font-mono text-[10px]">{ollamaEndpoint}</span> into the Ollama URL field → click Retry. Models will auto-detect. No API key needed.</div>
+                  <div><span className="text-emerald-400 font-medium">Chatbox:</span> Settings → AI Model Provider → "OpenAI API Compatible" → paste Base URL + API key.</div>
+                  <div><span className="text-emerald-400 font-medium">Smart Sidebar:</span> Settings → Custom Provider → enter Base URL + API key.</div>
+                  <div><span className="text-emerald-400 font-medium">LLM-X:</span> Add Connection → "OpenAI" type → set Host URL + API key.</div>
                 </div>
               </div>
 
