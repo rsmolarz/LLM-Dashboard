@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Terminal, Send, Loader2, Code2, Play, Square, Trash2, Copy, Check,
   FolderOpen, FileCode, ChevronRight, Bot, User, RefreshCw, Settings,
-  Maximize2, Minimize2, ArrowUp, ArrowDown, PanelLeftClose, PanelLeft
+  Maximize2, Minimize2, ArrowUp, ArrowDown, PanelLeftClose, PanelLeft,
+  Download, CheckCircle2, XCircle, ChevronDown, ChevronUp, Zap
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL ? import.meta.env.BASE_URL.replace(/\/$/, "") : "";
@@ -42,6 +43,80 @@ export default function CodeTerminal() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [panelSplit, setPanelSplit] = useState<"both" | "chat" | "terminal">("both");
   const [temperature, setTemperature] = useState(0.3);
+  const [showDownloads, setShowDownloads] = useState(false);
+  const [downloads, setDownloads] = useState<Record<string, { status: string; progress: number; total: number; error?: string }>>({});
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+
+  const RECOMMENDED_CODE_MODELS = [
+    { name: "qwen2.5-coder:7b", size: "4.7 GB", desc: "Best coding model at 7B" },
+    { name: "qwen2.5-coder:14b", size: "8.9 GB", desc: "Best coding model — larger" },
+    { name: "deepseek-coder-v2:16b", size: "8.9 GB", desc: "Strong multi-file reasoning" },
+    { name: "codellama:13b", size: "7.4 GB", desc: "Good all-rounder for code" },
+    { name: "starcoder2:7b", size: "4.0 GB", desc: "Stack v2 trained, wide language support" },
+    { name: "codegemma:7b", size: "5.0 GB", desc: "Google coding model" },
+  ];
+
+  const refreshModels = useCallback(() => {
+    fetch(`${API}/api/llm/models`).then(r => r.json()).then(d => {
+      const names = (d.models || []).map((m: any) => m.name || m.id);
+      setModels(names);
+      setAvailableModels(names);
+    }).catch(() => {});
+  }, []);
+
+  const pullModel = useCallback((modelName: string) => {
+    setDownloads(prev => ({ ...prev, [modelName]: { status: "pulling", progress: 0, total: 0 } }));
+    fetch(`${API}/api/llm/models/pull-stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: modelName }),
+    }).then(async res => {
+      if (!res.body) {
+        setDownloads(prev => ({ ...prev, [modelName]: { status: "error", progress: 0, total: 0, error: "No response" } }));
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.error) {
+                setDownloads(prev => ({ ...prev, [modelName]: { status: "error", progress: 0, total: 0, error: data.error } }));
+              } else if (data.status === "complete" || data.status === "success") {
+                setDownloads(prev => ({ ...prev, [modelName]: { status: "complete", progress: 1, total: 1 } }));
+                refreshModels();
+              } else if (data.total && data.completed !== undefined) {
+                setDownloads(prev => ({ ...prev, [modelName]: { status: data.status || "pulling", progress: data.completed || 0, total: data.total || 0 } }));
+              } else if (data.status) {
+                setDownloads(prev => {
+                  const existing = prev[modelName] || { status: "pulling", progress: 0, total: 0 };
+                  return { ...prev, [modelName]: { ...existing, status: data.status } };
+                });
+              }
+            } catch {}
+          }
+        }
+      }
+      setDownloads(prev => {
+        const cur = prev[modelName];
+        if (cur && cur.status !== "error") {
+          refreshModels();
+          return { ...prev, [modelName]: { status: "complete", progress: 1, total: 1 } };
+        }
+        return prev;
+      });
+    }).catch(err => {
+      setDownloads(prev => ({ ...prev, [modelName]: { status: "error", progress: 0, total: 0, error: err.message } }));
+    });
+  }, [refreshModels]);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
@@ -53,6 +128,7 @@ export default function CodeTerminal() {
     fetch(`${API}/api/llm/models`).then(r => r.json()).then(d => {
       const names = (d.models || []).map((m: any) => m.name || m.id);
       setModels(names);
+      setAvailableModels(names);
       const CODE_MODEL_PRIORITY = [
         "qwen2.5-coder:14b",
         "qwen2.5-coder:7b",
@@ -344,6 +420,15 @@ export default function CodeTerminal() {
             <Settings className="w-3.5 h-3.5" />
           </button>
 
+          <button onClick={() => setShowDownloads(!showDownloads)}
+            className={`p-1.5 rounded-lg transition-all relative ${showDownloads ? "bg-white/10 text-white" : "hover:bg-white/5 text-muted-foreground hover:text-white"}`}
+            title="Model downloads">
+            <Download className="w-3.5 h-3.5" />
+            {Object.values(downloads).some(d => d.status === "pulling" || d.status?.startsWith("pulling")) && (
+              <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+            )}
+          </button>
+
           <div className="flex items-center border border-white/10 rounded-lg overflow-hidden">
             <button onClick={() => setPanelSplit("both")}
               className={`p-1.5 transition-all ${panelSplit === "both" ? "bg-white/10 text-white" : "hover:bg-white/5 text-muted-foreground"}`}
@@ -383,6 +468,77 @@ export default function CodeTerminal() {
                 className="ml-2 w-16 px-2 py-1 rounded bg-white/5 border border-white/10 text-xs text-white focus:outline-none" />
             </div>
           </div>
+        </div>
+      )}
+
+      {showDownloads && (
+        <div className="px-4 py-3 border-b border-white/5 bg-black/20 flex-shrink-0 max-h-[240px] overflow-y-auto">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-medium flex items-center gap-1">
+              <Zap className="w-3 h-3 text-emerald-400" /> Recommended Coding Models
+            </span>
+            <button onClick={refreshModels} className="p-1 rounded hover:bg-white/5 text-muted-foreground hover:text-white" title="Refresh model list">
+              <RefreshCw className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            {RECOMMENDED_CODE_MODELS.map(rm => {
+              const installed = availableModels.some(m => m.startsWith(rm.name.split(":")[0]) && m.includes(rm.name.split(":")[1]));
+              const dl = downloads[rm.name];
+              const isPulling = dl && (dl.status === "pulling" || dl.status?.startsWith("pulling"));
+              const isComplete = dl?.status === "complete" || installed;
+              const isError = dl?.status === "error";
+              const progressPct = dl && dl.total > 0 ? Math.round((dl.progress / dl.total) * 100) : 0;
+
+              return (
+                <div key={rm.name} className="flex items-center gap-2 py-1.5 px-2 rounded-lg bg-white/[0.02] border border-white/5">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-white font-medium truncate">{rm.name}</span>
+                      <span className="text-[9px] text-muted-foreground/60">{rm.size}</span>
+                    </div>
+                    <p className="text-[9px] text-muted-foreground truncate">{rm.desc}</p>
+                    {isPulling && dl.total > 0 && (
+                      <div className="mt-1 w-full bg-white/5 rounded-full h-1">
+                        <div className="bg-emerald-500 h-1 rounded-full transition-all duration-300" style={{ width: `${progressPct}%` }} />
+                      </div>
+                    )}
+                    {isPulling && (
+                      <p className="text-[9px] text-emerald-400 mt-0.5">
+                        {dl.total > 0 ? `${progressPct}% — ${(dl.progress / (1024**3)).toFixed(1)}/${(dl.total / (1024**3)).toFixed(1)} GB` : dl.status}
+                      </p>
+                    )}
+                    {isError && <p className="text-[9px] text-red-400 mt-0.5">{dl?.error || "Download failed"}</p>}
+                  </div>
+                  <div className="flex-shrink-0">
+                    {isComplete ? (
+                      <span className="flex items-center gap-1 text-[9px] text-emerald-400"><CheckCircle2 className="w-3 h-3" /> Installed</span>
+                    ) : isPulling ? (
+                      <Loader2 className="w-3.5 h-3.5 text-emerald-400 animate-spin" />
+                    ) : isError ? (
+                      <button onClick={() => pullModel(rm.name)} className="text-[9px] px-2 py-0.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20">
+                        Retry
+                      </button>
+                    ) : (
+                      <button onClick={() => pullModel(rm.name)}
+                        className="text-[9px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 flex items-center gap-1">
+                        <Download className="w-2.5 h-2.5" /> Pull
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {Object.keys(downloads).length > 0 && (
+            <div className="mt-2 pt-2 border-t border-white/5">
+              <span className="text-[9px] text-muted-foreground">
+                {Object.values(downloads).filter(d => d.status === "complete").length} complete,{" "}
+                {Object.values(downloads).filter(d => d.status === "pulling" || d.status?.startsWith("pulling")).length} downloading,{" "}
+                {Object.values(downloads).filter(d => d.status === "error").length} failed
+              </span>
+            </div>
+          )}
         </div>
       )}
 

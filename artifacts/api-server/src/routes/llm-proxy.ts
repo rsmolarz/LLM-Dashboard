@@ -260,6 +260,63 @@ router.post("/llm/models/pull", async (req, res): Promise<void> => {
   }
 });
 
+router.post("/llm/models/pull-stream", async (req, res): Promise<void> => {
+  const { name } = req.body;
+  if (!name) {
+    res.status(400).json({ error: "model name required" });
+    return;
+  }
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.status(503).json({ error: "Ollama server not configured" });
+    return;
+  }
+  try {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    const pullRes = await fetch(`${serverUrl}/api/pull`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: name, stream: true }),
+      signal: AbortSignal.timeout(1800000),
+    });
+    if (!pullRes.ok || !pullRes.body) {
+      res.write(`data: ${JSON.stringify({ error: "Pull failed" })}\n\n`);
+      res.end();
+      return;
+    }
+    const reader = pullRes.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop() || "";
+      for (const line of lines) {
+        if (line.trim()) {
+          try {
+            const parsed = JSON.parse(line);
+            res.write(`data: ${JSON.stringify(parsed)}\n\n`);
+          } catch {}
+        }
+      }
+    }
+    if (buf.trim()) {
+      try { res.write(`data: ${JSON.stringify(JSON.parse(buf))}\n\n`); } catch {}
+    }
+    res.write(`data: ${JSON.stringify({ status: "complete" })}\n\n`);
+    res.end();
+  } catch (err) {
+    try {
+      res.write(`data: ${JSON.stringify({ error: err instanceof Error ? err.message : "Pull failed" })}\n\n`);
+      res.end();
+    } catch {}
+  }
+});
+
 router.delete("/llm/models/:name", async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
 
