@@ -55,8 +55,8 @@ The project is structured as a pnpm monorepo with distinct artifacts for the fro
 -   **SSL/TLS**: Full SSL configuration for VPS PostgreSQL.
 -   **Auto-Collector & Continuous Training Pipeline**: In-memory scheduler for data collection and continuous training data generation across specific domains using model rotation.
 -   **Domain-Specific Training Pipelines**: Dedicated pipelines for ENT and Hedge Fund, collecting and categorizing data from various sources for model fine-tuning.
--   **Platform API Gateway**: OpenAI-compatible API gateway (`/platform-api`) with key management, rate limiting, and usage tracking for external applications to access VPS LLM models.
-    -   **Browser Extension Integration**: Dedicated `/extension` page with step-by-step setup guide for connecting LLM-X browser extension (Chrome/Firefox) to the Platform API. Includes inline API key generation, connection configuration (OpenAI-compatible type, base URL, API key), available model listing, and Python/TypeScript SDK code examples. All extension traffic routes through the Platform API to self-hosted Ollama — zero external API costs.
+-   **Platform API Gateway**: OpenAI-compatible API gateway (`/platform-api`) with key management, rate limiting, and usage tracking for external applications to access VPS LLM models. Merged model catalog: 12 Ollama VPS models + 350+ OpenRouter models (Claude, GPT, Gemini, Llama, DeepSeek, Mistral). OpenRouter models fetched from public API with 5-minute cache; requests with `/` in model name route to OpenRouter (billed to Replit credits), others go to Ollama VPS.
+    -   **Browser Extension Integration**: Dedicated `/extension` page with step-by-step setup guide for connecting browser extensions (Chatbox, Page Assist, Smart Sidebar, LLM-X) to 360+ models. Two connection modes: (A) OpenAI-compatible via Platform API with API key for full model catalog + audit/analytics, (B) Direct Ollama connection to VPS for free self-hosted models. Includes inline API key generation, curated OpenRouter model recommendations with tier badges (premium/fast/free/budget), VPS model listing, and per-extension configuration instructions.
 
 ## External Dependencies
 -   **Ollama**: Self-hosted LLM server (v0.18.0) for local models and embeddings.
@@ -68,3 +68,4 @@ The project is structured as a pnpm monorepo with distinct artifacts for the fro
 -   **Google Drive**: Used by the Auto-Collector for data ingestion.
 -   **Alpha Factory**: External platform integrated via API for trading signals and market data.
 -   **Various Voice AI Providers**: Integrated in the Voice Agent Hub (e.g., Amazon Lex, ElevenLabs, OpenAI Voice, Google Dialogflow, Azure Speech).
+-   **OpenRouter**: AI model aggregator providing 350+ models (Claude, GPT, Gemini, Llama, DeepSeek, Mistral, etc.) via Replit AI Integrations proxy. Billed to Replit credits. Env vars: `AI_INTEGRATIONS_OPENROUTER_BASE_URL`, `AI_INTEGRATIONS_OPENROUTER_API_KEY`.
