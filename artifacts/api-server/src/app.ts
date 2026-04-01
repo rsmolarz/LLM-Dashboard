@@ -19,13 +19,15 @@ app.use(auditLog);
 app.use("/api", router);
 app.use(router);
 
-const currentDir = typeof __dirname !== "undefined"
-  ? __dirname
-  : path.dirname(fileURLToPath(import.meta.url));
-const staticDir = path.resolve(currentDir, "../../llm-hub/dist/public");
-app.use(express.static(staticDir));
-app.get("{*path}", (_req, res) => {
-  res.sendFile(path.join(staticDir, "index.html"));
-});
+if (process.env.NODE_ENV === "production") {
+  const currentDir = typeof __dirname !== "undefined"
+    ? __dirname
+    : path.dirname(fileURLToPath(import.meta.url));
+  const staticDir = path.resolve(currentDir, "../../llm-hub/dist/public");
+  app.use(express.static(staticDir));
+  app.get("{*path}", (_req, res) => {
+    res.sendFile(path.join(staticDir, "index.html"));
+  });
+}
 
 export default app;
