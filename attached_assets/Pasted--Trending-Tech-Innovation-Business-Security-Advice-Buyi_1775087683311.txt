@@ -1,0 +1,213 @@
+
+
+Trending
+
+Tech
+
+Innovation
+
+Business
+
+Security
+
+Advice
+
+Buying Guides
+tomorrow
+belongs to those who embrace it
+today
+
+
+
+Innovation
+Home  Innovation  Artificial Intelligence
+I tried a Claude Code rival that's local, open source, and completely free - how it went
+I was curious if Block's Goose agent, paired with Ollama and the Qwen3-coder model, could really replace Claude Code. Here's how it worked.
+david-gewirtz
+Written by David Gewirtz, Senior Contributing Editor
+Feb. 8, 2026 at 6:16 p.m. PT
+Table of Contents
+Downloading the software
+Installing Ollama and Qwen3-coder
+Installing Goose
+Taking Goose for a spin
+First impressions
+How to get started with Goose, a free open-source alternative to Claude Code
+Elyse Betters Picaro / ZDNET
+Follow ZDNET: Add us as a preferred source on Google.
+
+ZDNET's key takeaways
+Free AI tools Goose and Qwen3-coder may replace a pricey Claude Code plan.
+Setup is straightforward but requires a powerful local machine.
+Early tests show promise, though issues remain with accuracy and retries.
+Jack Dorsey is the founder of Twitter (now X), Square (now Block), and Bluesky (still blue). Back in July, he posted a fairly cryptic statement on X, saying "goose + qwen3-coder = wow".
+
+Also: OpenAI's new Spark model codes 15x faster than GPT-5.3-Codex - but there's a catch
+
+Since then, interest has grown in both Goose and Qwen3-coder. Goose, developed by Dorsey's company Block, is an open-source agent framework, similar to Claude Code. Qwen3-coder is a coding-centric large language model similar to Sonnet-4.5. Both are free.
+
+Together, suggests the internet, they can combine to create a fully free competitor to Claude Code. But can they? Really? I decided to find out.
+
+Also: I tried vibe coding for free to save $1,200 a year - and it was a total disaster
+
+This is the first of three articles that will discuss the integration of Goose (the agent framework), Ollama (an LLM server), and Qwen3-coder (the LLM). 
+
+In this article, I'll show you how to get everything working. In the next article, I'll give you a more in-depth understanding of the roles each of these three tools plays in the AI agent coding process. And then, finally, I'll attempt to use these tools to build a fully powered iPad app as an extension of the apps I've been building with Claude Code.
+
+
+Okay, let's get started. I'm building this on my Mac, but you can install all three tools on your Windows or Linux machine, if that's how you roll.
+
+Downloading the software
+You'll need to start by downloading both Goose and Ollama. You'll later download the Qwen3-coder model from within Ollama:
+
+Download Goose from GitHub
+Download Ollama
+I originally downloaded and installed Goose first. But I couldn't get it to talk to Ollama. Can you guess what I did wrong? Yep. I hadn't yet downloaded and set up Ollama.
+
+Installing Ollama and Qwen3-coder
+My recommendation is to install Ollama first. As I mentioned, I'm using MacOS, but you can use whatever you prefer. You can also install a command-line version of Ollama, but I prefer the app version, so that's what we'll be exploring:
+
+download-ollama
+Screenshot by David Gewirtz/ZDNET
+Download Ollama. Then, double-click the installer. Once the application loads, you'll see a chat-like interface. To the right, you'll see the model. Mine defaulted to gpt-oss-20b. 
+
+Also: Gemini can look through your emails and photos to 'help' you now - but should you let it?
+
+Click that, and a model list will pop up. I chose Qwen3-coder:30b, where 30b refers to the number of model parameters. This is a coding-optimized model with about 30 billion parameters:
+
+
+choose-model
+Screenshot by David Gewirtz/ZDNET
+Note that the model won't download until it's forced to answer a prompt. I typed the word "test," and the model downloaded:
+
+download-model
+Screenshot by David Gewirtz/ZDNET
+Note that this model is 17GB, so make sure you have enough storage space. This requirement highlights one of the big benefits of this whole project. Your AI is local, running on your machine. You're not sending anything to the cloud.
+
+Also: I've tested free vs. paid AI coding tools - here's which one I'd actually use
+
+Once you've installed Qwen3-coder, you need to make the Ollama instance visible to other applications on your computer. To take this step, select Settings from the Ollama menu on your menu bar:
+
+allow-access
+Screenshot by David Gewirtz/ZDNET
+Turn on Expose Ollama to the network. I let Ollama install itself in the .ollama directory. This approach hides the directory, so remember that you have a 17GB file buried in there. 
+
+Also: I used Claude Code to vibe code a Mac app in 8 hours, but it was more work than magic
+
+Finally, I set my context length to 32K. I have 128GB of RAM on my machine, so if I start to run out of context, I'll boost it. But I wanted to see how well this approach worked with a smaller context space.
+
+
+Also, notice that I did not sign in to Ollama. You can create an account and use some cloud services. But we're attempting to do this entirely for free and entirely on the local computer, so I'm avoiding signing in whenever I can.
+
+Also: Is your AI agent up to the task? 3 ways to determine when to delegate
+
+And that's it for Ollama and Qwen3-coder. You will need to have Ollama launched and running whenever you use Goose, but you probably won't interact with it much after this.
+
+Installing Goose
+Next up, let's install Goose. Go ahead and run the installer. As with Ollama, there are multiple Goose implementations. I chose the MacOS Apple Silicon Desktop version:
+
+download-goose
+Screenshot by David Gewirtz/ZDNET
+Once you launch Goose for the first time, you'll get this Welcome screen. You have several configuration choices, but since we're going for an all-free setup, go down to the Other Providers section and click Go to Provider Settings:
+
+welcome-goose
+Screenshot by David Gewirtz/ZDNET
+Here, you'll see a very large list of various agent tools and LLMs you can run. Scroll down, find Ollama, and hit Configure:
+
+
+providers
+Screenshot by David Gewirtz/ZDNET
+Once you do that step, you'll be asked to Configure Ollama. This is where I got a bit confused because, silly me, I thought "Configure Ollama" meant I was actually configuring Ollama. Not so much. What you're doing (here, and for all the other providers) is configuring your connection, in this case to Ollama:
+
+goose-ollama
+Screenshot by David Gewirtz/ZDNET
+You'll be asked to choose a model. Once again, choose qwen3-coder:30b:
+
+goose-model
+Screenshot by David Gewirtz/ZDNET
+Once you've chosen both Ollama and qwen3-coder:30b, hit Select Model:
+
+select-model
+Screenshot by David Gewirtz/ZDNET
+Congratulations. You've now installed and configured a local coding agent, running on your computer.
+
+Taking Goose for a spin
+As with almost any other chatbot, you'll want to type a prompt into the prompt area. But first, it's not a bad idea to let Goose know the directory you'll be using. For my initial test, I set Goose to work from a temporary folder. You specify this at (1) by tapping the directory already shown:
+
+Screenshot by David Gewirtz/ZDNET
+Also note that the model you're running is indicated at (2). You can set Goose up to run multiple models, but we're just working with this one for now.
+
+
+As a first test, I used my standard test challenge -- building a simple WordPress plugin. In its first run, Goose/Qwen3 failed. It generated a plugin, but it didn't work:
+
+Screenshot by David Gewirtz/ZDNET
+In my second and third tries, after explaining what didn't work to Goose/Qwen3, it failed, and failed again.
+
+Also: True agentic AI is years away - here's why and how we get there
+
+By the third try, it ran the randomization, but didn't completely follow directions, which kind of defeated the whole purpose of the original plugin:
+
+test3
+Screenshot by David Gewirtz/ZDNET
+It took five rounds for Goose to get it right, and it was very, very pleased with itself about how right it expected itself to be:
+
+test4
+Screenshot by David Gewirtz/ZDNET
+First impressions
+So what do I think about this approach? I was disappointed it took Goose five tries to get my little test to work. When I tested a bunch of free chatbots with this assignment, all but Grok and a pre-Gemini 3 Gemini got my little test right on the first try.
+
+Also: How I test an AI chatbot's coding ability - and you can, too
+
+But a big difference between chatbot coding and agentic coding is that agentic coding tools like Claude Code and Goose work on the actual source code. Therefore, repeated corrections do improve the actual codebase.
+
+When my colleague Tiernan Ray tried Ollama on his 16GB M1 Mac, he found performance was unbearable. But I'm running this setup on an M4 Max Mac Studio with 128GB of RAM. I even had Chrome, Fusion, Final Cut, VS Code, Xcode, Wispr Flow, and Photoshop open at the same time.
+
+So far, I've only run a fairly simple programming test, but I found that overall performance is quite good. I didn't see a tangible difference in turnaround from prompts between the local instance running Goose on my Mac Studio and local/cloud hybrid products like Claude Code and OpenAI Codex that use the AI companies' enormous infrastructures.
+
+Also: I built an iOS app in just two days with just my voice - and it was electrifying
+
+But these are still first impressions. I'll be better able to tell you if I think this free solution can replace the spendy alternatives like Claude Code's $100/mo Max plan or OpenAI's $200/mo Pro plan once I run a big project through it. (Spoiler from the future: Goose didn't hold up all that well.)
+
+Have you tried running a coding-focused LLM locally with tools like Goose, Ollama, or Qwen? How did setup go for you, and what hardware are you running it on? If you've used cloud options like Claude or OpenAI Codex, how does local performance and output quality compare? Let us know in the comments below.
+
+You can follow my day-to-day project updates on social media. Be sure to subscribe to my weekly update newsletter, and follow me on Twitter/X at @DavidGewirtz, on Facebook at Facebook.com/DavidGewirtz, on Instagram at Instagram.com/DavidGewirtz, on Bluesky at @DavidGewirtz.com, and on YouTube at YouTube.com/DavidGewirtzTV.
+
+Artificial Intelligence
+Editorial standards
+Show Comments
+Click to unmute
+
+Play
+
+Unmute
+ 
+
+Captions
+
+Fullscreen
+
+Related
+aicodescreenshot-2026-03-31-153221
+How AI has suddenly become much more useful to open-source developers
+aiagent11gettyimages-2263463626
+How to build better AI agents for your business - without creating trust issues
+woman using phone
+The best data removal services of 2026: Delete yourself from the internet
+
+Footer background image
+ 
+we equip you to harness the power of disruptive innovation, at work and at home.
+Topics
+Galleries
+Videos
+Do Not Sell or Share My Personal Information
+about ZDNET
+Meet The Team
+Sitemap
+Reprint Policy
+Join | Log In
+Newsletters
+Licensing
+Accessibility
+© 2026 ZDNET, A Ziff Davis company. All rights reserved. Privacy Policy | | Your Privacy Rights | Advertise | Terms of Use
+Transparent audience pixel
