@@ -6,6 +6,40 @@ import { db, llmConfigTable, apiKeysTable } from "@workspace/db";
 
 const router = Router();
 
+const OPENROUTER_BASE_URL = process.env.AI_INTEGRATIONS_OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+const OPENROUTER_API_KEY = process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY || "";
+
+function isOpenRouterModel(model: string): boolean {
+  return model.includes("/");
+}
+
+let cachedOpenRouterModels: any[] | null = null;
+let cachedAt = 0;
+
+async function fetchOpenRouterModels(): Promise<any[]> {
+  if (cachedOpenRouterModels && Date.now() - cachedAt < 300000) return cachedOpenRouterModels;
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/models", {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) return cachedOpenRouterModels || [];
+    const data: any = await r.json();
+    cachedOpenRouterModels = (data.data || []).map((m: any) => ({
+      id: m.id,
+      object: "model",
+      created: 0,
+      owned_by: "openrouter",
+      permission: [],
+      root: m.id,
+      parent: null,
+    }));
+    cachedAt = Date.now();
+    return cachedOpenRouterModels;
+  } catch {
+    return cachedOpenRouterModels || [];
+  }
+}
+
 const ollamaAgent = new Agent({
   headersTimeout: 600000,
   bodyTimeout: 600000,
@@ -76,48 +110,41 @@ async function authenticateApiKey(req: Request, res: Response, next: NextFunctio
 }
 
 router.get("/v1/models", authenticateApiKey, async (_req, res) => {
+  const allModels: any[] = [];
+
   const serverUrl = await getServerUrl();
-  if (!serverUrl) {
-    res.status(503).json({ error: { message: "LLM server not configured", type: "server_error" } });
-    return;
+  if (serverUrl) {
+    try {
+      const ollamaRes = await fetch(`${serverUrl}/api/tags`, {
+        signal: AbortSignal.timeout(15000),
+        // @ts-ignore
+        dispatcher: ollamaAgent,
+      });
+      if (ollamaRes.ok) {
+        const data: any = await ollamaRes.json();
+        const ollamaModels = (data.models || []).map((m: any) => ({
+          id: m.name,
+          object: "model",
+          created: m.modified_at ? Math.floor(new Date(m.modified_at).getTime() / 1000) : 0,
+          owned_by: "ollama",
+          permission: [],
+          root: m.name,
+          parent: null,
+        }));
+        allModels.push(...ollamaModels);
+      }
+    } catch {}
   }
 
-  try {
-    const ollamaRes = await fetch(`${serverUrl}/api/tags`, {
-      signal: AbortSignal.timeout(15000),
-      // @ts-ignore
-      dispatcher: ollamaAgent,
-    });
-
-    if (!ollamaRes.ok) {
-      res.status(502).json({ error: { message: "Failed to reach LLM server", type: "server_error" } });
-      return;
-    }
-
-    const data: any = await ollamaRes.json();
-    const models = (data.models || []).map((m: any) => ({
-      id: m.name,
-      object: "model",
-      created: m.modified_at ? Math.floor(new Date(m.modified_at).getTime() / 1000) : 0,
-      owned_by: "ollama",
-      permission: [],
-      root: m.name,
-      parent: null,
-    }));
-
-    res.json({ object: "list", data: models });
-  } catch (err: any) {
-    res.status(502).json({ error: { message: err.message || "LLM server unreachable", type: "server_error" } });
+  if (OPENROUTER_API_KEY) {
+    const orModels = await fetchOpenRouterModels();
+    allModels.push(...orModels);
   }
+
+  res.json({ object: "list", data: allModels });
 });
 
 router.post("/v1/chat/completions", authenticateApiKey, async (req, res) => {
-  const serverUrl = await getServerUrl();
-  if (!serverUrl) {
-    res.status(503).json({ error: { message: "LLM server not configured", type: "server_error" } });
-    return;
-  }
-
   const { model, messages, temperature, max_tokens, stream, top_p, frequency_penalty, presence_penalty } = req.body;
 
   if (!model) {
@@ -126,6 +153,16 @@ router.post("/v1/chat/completions", authenticateApiKey, async (req, res) => {
   }
   if (!messages || !Array.isArray(messages) || messages.length === 0) {
     res.status(400).json({ error: { message: "messages array is required and must not be empty", type: "invalid_request_error" } });
+    return;
+  }
+
+  if (isOpenRouterModel(model)) {
+    return handleOpenRouterChat(req, res, { model, messages, temperature, max_tokens, stream, top_p, frequency_penalty, presence_penalty });
+  }
+
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.status(503).json({ error: { message: "LLM server not configured", type: "server_error" } });
     return;
   }
 
@@ -287,6 +324,90 @@ router.post("/v1/chat/completions", authenticateApiKey, async (req, res) => {
     }
   }
 });
+
+async function handleOpenRouterChat(req: Request, res: Response, params: any) {
+  const { model, messages, temperature, max_tokens, stream, top_p, frequency_penalty, presence_penalty } = params;
+  const completionId = `chatcmpl-${crypto.randomBytes(12).toString("hex")}`;
+
+  const body: any = { model, messages, stream: !!stream };
+  if (temperature !== undefined) body.temperature = temperature;
+  if (max_tokens !== undefined) body.max_tokens = max_tokens;
+  if (top_p !== undefined) body.top_p = top_p;
+  if (frequency_penalty !== undefined) body.frequency_penalty = frequency_penalty;
+  if (presence_penalty !== undefined) body.presence_penalty = presence_penalty;
+
+  try {
+    const orRes = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(300000),
+    });
+
+    if (!orRes.ok) {
+      const errText = await orRes.text();
+      res.status(orRes.status).json({ error: { message: `OpenRouter error: ${errText}`, type: "server_error" } });
+      return;
+    }
+
+    if (stream) {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+
+      const reader = orRes.body?.getReader();
+      if (!reader) { res.write("data: [DONE]\n\n"); res.end(); return; }
+      const decoder = new TextDecoder();
+      let totalTokens = 0;
+      let buf = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() || "";
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const payload = line.slice(6).trim();
+            if (payload === "[DONE]") {
+              res.write("data: [DONE]\n\n");
+              continue;
+            }
+            try {
+              const chunk = JSON.parse(payload);
+              if (chunk.choices?.[0]?.delta?.content) totalTokens++;
+              chunk.id = completionId;
+              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+            } catch {
+              res.write(`${line}\n`);
+            }
+          }
+        }
+      }
+      if (!buf.includes("[DONE]")) res.write("data: [DONE]\n\n");
+      res.end();
+
+      const apiKey = (req as any).apiKey;
+      db.update(apiKeysTable).set({ totalTokens: sql`${apiKeysTable.totalTokens} + ${totalTokens}` }).where(eq(apiKeysTable.id, apiKey.id)).then(() => {});
+    } else {
+      const data: any = await orRes.json();
+      data.id = completionId;
+
+      const apiKey = (req as any).apiKey;
+      const total = (data.usage?.total_tokens) || 0;
+      db.update(apiKeysTable).set({ totalTokens: sql`${apiKeysTable.totalTokens} + ${total}` }).where(eq(apiKeysTable.id, apiKey.id)).then(() => {});
+
+      res.json(data);
+    }
+  } catch (err: any) {
+    res.status(502).json({ error: { message: err.message || "OpenRouter unreachable", type: "server_error" } });
+  }
+}
 
 router.get("/platform-api/keys", async (_req, res) => {
   const keys = await db.select({
