@@ -4,7 +4,7 @@ const router = Router();
 
 function requireAuth(req: Request, res: Response, next: NextFunction) { next(); }
 
-const OLLAMA_HOST = "http://72.60.167.64:11434";
+const OLLAMA_HOST = process.env.OLLAMA_HOST ?? "http://localhost:11434";
 
 interface CompareResult {
   id: string;
