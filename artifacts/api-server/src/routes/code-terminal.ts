@@ -402,4 +402,144 @@ router.post("/code-terminal/list-files", async (req, res): Promise<void> => {
   }
 });
 
+router.post("/code-terminal/clone-repo", async (req, res): Promise<void> => {
+  const { url, targetDir } = req.body;
+
+  if (!url || typeof url !== "string") {
+    res.status(400).json({ error: "url is required" });
+    return;
+  }
+
+  const urlPattern = /^https:\/\/(github\.com|gitlab\.com|bitbucket\.org)\/.+/;
+  if (!urlPattern.test(url)) {
+    res.status(400).json({ error: "Only HTTPS URLs from GitHub, GitLab, or Bitbucket are supported" });
+    return;
+  }
+
+  const repoName = url.split("/").pop()?.replace(/\.git$/, "") || "repo";
+  const dest = targetDir || `projects/${repoName}`;
+  const safeDest = sanitizePath(dest);
+  if (!safeDest) {
+    res.status(403).json({ error: "Access denied: path outside workspace" });
+    return;
+  }
+
+  try {
+    const fs = await import("fs/promises");
+    const pathMod = await import("path");
+
+    let alreadyExists = false;
+    try {
+      await fs.access(safeDest);
+      alreadyExists = true;
+    } catch {}
+
+    if (alreadyExists) {
+      const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+        exec(`cd "${safeDest}" && git pull`, {
+          timeout: 60000,
+          maxBuffer: 1024 * 1024,
+        }, (error, stdout, stderr) => {
+          if (error) { reject(new Error(stderr || error.message)); return; }
+          resolve({ stdout, stderr });
+        });
+      });
+      res.json({ success: true, action: "pulled", path: dest, output: result.stdout || result.stderr });
+      return;
+    }
+
+    const parentDir = pathMod.dirname(safeDest);
+    await fs.mkdir(parentDir, { recursive: true });
+
+    const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+      exec(`git clone --depth 1 "${url}" "${safeDest}"`, {
+        timeout: 120000,
+        maxBuffer: 1024 * 1024,
+      }, (error, stdout, stderr) => {
+        if (error) { reject(new Error(stderr || error.message)); return; }
+        resolve({ stdout, stderr });
+      });
+    });
+    res.json({ success: true, action: "cloned", path: dest, output: result.stdout || result.stderr });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/code-terminal/projects", async (_req, res): Promise<void> => {
+  try {
+    const fs = await import("fs/promises");
+    const pathMod = await import("path");
+
+    const projects: any[] = [];
+
+    const scanDir = async (dir: string, label: string) => {
+      try {
+        const entries = await fs.readdir(resolve(WORKSPACE_ROOT, dir), { withFileTypes: true });
+        for (const e of entries) {
+          if (!e.isDirectory()) continue;
+          if (e.name.startsWith(".") || e.name === "node_modules") continue;
+          const fullPath = pathMod.join(dir, e.name);
+          const relativePath = fullPath;
+          let hasPackageJson = false;
+          let description = "";
+          try {
+            const pkg = JSON.parse(await fs.readFile(resolve(WORKSPACE_ROOT, fullPath, "package.json"), "utf-8"));
+            hasPackageJson = true;
+            description = pkg.description || "";
+          } catch {}
+          let isGit = false;
+          try {
+            await fs.access(resolve(WORKSPACE_ROOT, fullPath, ".git"));
+            isGit = true;
+          } catch {}
+          projects.push({
+            name: e.name,
+            path: relativePath,
+            source: label,
+            hasPackageJson,
+            isGit,
+            description,
+          });
+        }
+      } catch {}
+    };
+
+    await scanDir("artifacts", "artifact");
+    await scanDir("lib", "library");
+    await scanDir("projects", "project");
+
+    const rootEntries = await fs.readdir(WORKSPACE_ROOT, { withFileTypes: true });
+    for (const e of rootEntries) {
+      if (!e.isDirectory()) continue;
+      if (["artifacts", "lib", "node_modules", ".local", ".git", ".replit-artifact", "scripts", ".canvas", "projects"].includes(e.name)) continue;
+      if (e.name.startsWith(".")) continue;
+      let hasPackageJson = false;
+      try {
+        await fs.access(resolve(WORKSPACE_ROOT, e.name, "package.json"));
+        hasPackageJson = true;
+      } catch {}
+      let isGit = false;
+      try {
+        await fs.access(resolve(WORKSPACE_ROOT, e.name, ".git"));
+        isGit = true;
+      } catch {}
+      if (hasPackageJson || isGit) {
+        projects.push({
+          name: e.name,
+          path: e.name,
+          source: "root",
+          hasPackageJson,
+          isGit,
+          description: "",
+        });
+      }
+    }
+
+    res.json({ projects });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

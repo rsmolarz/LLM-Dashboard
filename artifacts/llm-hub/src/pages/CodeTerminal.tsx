@@ -4,7 +4,7 @@ import {
   FolderOpen, FileCode, ChevronRight, Bot, User, RefreshCw, Settings,
   ChevronDown, Zap, File, Folder, ArrowLeft, Save, Plus, X, Search,
   MessageSquare, PanelLeftClose, PanelLeft, Sparkles, Globe, Server,
-  FileText, Cpu, DollarSign,
+  FileText, Cpu, DollarSign, GitBranch, Package, ExternalLink,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL ? import.meta.env.BASE_URL.replace(/\/$/, "") : "";
@@ -31,20 +31,9 @@ interface OpenTab {
   language: string;
 }
 
-interface OllamaModel {
-  id: string;
-  name: string;
-  size: number;
-  source: "ollama";
-}
-
-interface OpenRouterModel {
-  id: string;
-  name: string;
-  context_length?: number;
-  pricing?: { prompt?: string; completion?: string };
-  source: "openrouter";
-}
+interface OllamaModel { id: string; name: string; size: number; source: "ollama"; }
+interface OpenRouterModel { id: string; name: string; context_length?: number; pricing?: { prompt?: string; completion?: string }; source: "openrouter"; }
+interface ProjectEntry { name: string; path: string; source: string; hasPackageJson: boolean; isGit: boolean; description: string; }
 
 function getLanguage(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -123,6 +112,12 @@ export default function CodeTerminal() {
   const [showModelDropdown, setShowModelDropdown] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const [layout, setLayout] = useState<"agent" | "editor" | "split">("split");
+  const [showSources, setShowSources] = useState(false);
+  const [gitUrl, setGitUrl] = useState("");
+  const [cloning, setCloning] = useState(false);
+  const [cloneResult, setCloneResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [projects, setProjects] = useState<ProjectEntry[]>([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
@@ -191,12 +186,44 @@ export default function CodeTerminal() {
     setLoadingFiles(false);
   }, []);
 
+  const loadProjects = useCallback(async () => {
+    setLoadingProjects(true);
+    try {
+      const res = await fetch(`${API}/api/code-terminal/projects`);
+      const data = await res.json();
+      setProjects(data.projects || []);
+    } catch {}
+    setLoadingProjects(false);
+  }, []);
+
+  const cloneRepo = async () => {
+    if (!gitUrl.trim() || cloning) return;
+    setCloning(true);
+    setCloneResult(null);
+    try {
+      const res = await fetch(`${API}/api/code-terminal/clone-repo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: gitUrl.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCloneResult({ success: true, message: `${data.action === "pulled" ? "Updated" : "Cloned"} to ${data.path}` });
+        setCurrentPath(data.path);
+        setGitUrl("");
+        loadProjects();
+      } else {
+        setCloneResult({ success: false, message: data.error || "Clone failed" });
+      }
+    } catch (err: any) {
+      setCloneResult({ success: false, message: err.message });
+    }
+    setCloning(false);
+  };
+
   const openFile = useCallback(async (filePath: string, fileName: string) => {
     const existing = openTabs.find(t => t.path === filePath);
-    if (existing) {
-      setActiveTab(filePath);
-      return;
-    }
+    if (existing) { setActiveTab(filePath); return; }
     try {
       const res = await fetch(`${API}/api/code-terminal/read-file`, {
         method: "POST",
@@ -205,13 +232,7 @@ export default function CodeTerminal() {
       });
       const data = await res.json();
       if (data.error) return;
-      const tab: OpenTab = {
-        path: filePath,
-        name: fileName,
-        content: data.content,
-        modified: false,
-        language: getLanguage(fileName),
-      };
+      const tab: OpenTab = { path: filePath, name: fileName, content: data.content, modified: false, language: getLanguage(fileName) };
       setOpenTabs(prev => [...prev, tab]);
       setActiveTab(filePath);
       setLayout(prev => prev === "agent" ? "split" : prev);
@@ -251,53 +272,42 @@ export default function CodeTerminal() {
   const sendMessage = async () => {
     if (!input.trim() || streaming) return;
     const userMsg: Message = { id: `u-${Date.now()}`, role: "user", content: input.trim(), timestamp: Date.now() };
-
     let contextMessages = [...messages, userMsg];
     const currentTab = openTabs.find(t => t.path === activeTab);
     let systemContent = systemPrompt;
     if (currentTab) {
       systemContent += `\n\nCurrently open file: ${currentTab.path}\n\`\`\`${currentTab.language}\n${currentTab.content.slice(0, 8000)}\n\`\`\``;
     }
-
     setMessages(prev => [...prev, userMsg]);
     setInput("");
-
     const assistantMsg: Message = { id: `a-${Date.now()}`, role: "assistant", content: "", timestamp: Date.now() };
     setMessages(prev => [...prev, assistantMsg]);
     setStreaming(true);
-
     const abortController = new AbortController();
     abortRef.current = abortController;
-
     try {
       const chatMessages = [
         { role: "system", content: systemContent },
         ...contextMessages.map(m => ({ role: m.role, content: m.content })),
       ];
-
       const res = await fetch(`${API}/api/code-terminal/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model, messages: chatMessages, stream: true, temperature }),
         signal: abortController.signal,
       });
-
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
       const reader = res.body?.getReader();
       if (!reader) throw new Error("No reader");
-
       const decoder = new TextDecoder();
       let buffer = "";
       let fullContent = "";
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
-
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const payload = line.slice(6).trim();
@@ -306,27 +316,20 @@ export default function CodeTerminal() {
             const data = JSON.parse(payload);
             if (data.content) {
               fullContent += data.content;
-              setMessages(prev => prev.map(m =>
-                m.id === assistantMsg.id ? { ...m, content: fullContent } : m
-              ));
+              setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: fullContent } : m));
             }
             if (data.error) {
               fullContent += `\nError: ${data.error}`;
-              setMessages(prev => prev.map(m =>
-                m.id === assistantMsg.id ? { ...m, content: fullContent } : m
-              ));
+              setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: fullContent } : m));
             }
           } catch {}
         }
       }
     } catch (err: any) {
       if (err.name !== "AbortError") {
-        setMessages(prev => prev.map(m =>
-          m.id === assistantMsg.id ? { ...m, content: m.content || `Error: ${err.message}` } : m
-        ));
+        setMessages(prev => prev.map(m => m.id === assistantMsg.id ? { ...m, content: m.content || `Error: ${err.message}` } : m));
       }
     }
-
     setStreaming(false);
     abortRef.current = null;
   };
@@ -339,10 +342,8 @@ export default function CodeTerminal() {
       setHistoryIndex(-1);
       setTerminalInput("");
     }
-
     setTerminalLines(prev => [...prev, { id: `in-${Date.now()}`, type: "input", content: command }]);
     setTerminalRunning(true);
-
     try {
       const res = await fetch(`${API}/api/code-terminal/exec`, {
         method: "POST",
@@ -369,10 +370,8 @@ export default function CodeTerminal() {
       const path = lang;
       const name = path.split("/").pop() || path;
       const existing = openTabs.find(t => t.path === path);
-      if (existing) {
-        updateTabContent(path, code);
-        setActiveTab(path);
-      } else {
+      if (existing) { updateTabContent(path, code); setActiveTab(path); }
+      else {
         setOpenTabs(prev => [...prev, { path, name, content: code, modified: true, language: getLanguage(name) }]);
         setActiveTab(path);
       }
@@ -423,14 +422,9 @@ export default function CodeTerminal() {
     });
   };
 
-  const currentModelInfo = model.includes("/")
-    ? openrouterModels.find(m => m.id === model)
-    : ollamaModels.find(m => m.id === model);
-
   const filteredOllamaModels = ollamaModels.filter(m =>
     !modelSearch || m.id.toLowerCase().includes(modelSearch.toLowerCase())
   );
-
   const filteredORModels = modelSearch
     ? openrouterModels.filter(m => m.id.toLowerCase().includes(modelSearch.toLowerCase()) || m.name.toLowerCase().includes(modelSearch.toLowerCase())).slice(0, 30)
     : openrouterModels.filter(m => CURATED_OR_MODELS.includes(m.id));
@@ -446,14 +440,14 @@ export default function CodeTerminal() {
 
   return (
     <div className="h-full flex flex-col overflow-hidden bg-[#0a0a0f]">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06] bg-[#0d0d14] flex-shrink-0">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.06] bg-[#0d0d14] flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-violet-500/20">
             <Sparkles className="w-4 h-4 text-white" />
           </div>
           <div>
             <h1 className="text-sm font-bold text-white">Code Agent</h1>
-            <p className="text-[10px] text-muted-foreground">AI-powered coding assistant with file access</p>
+            <p className="text-[10px] text-muted-foreground">AI coding assistant with file access & terminal</p>
           </div>
         </div>
 
@@ -475,16 +469,12 @@ export default function CodeTerminal() {
                 <div className="p-2 border-b border-white/[0.06]">
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                    <input
-                      value={modelSearch}
-                      onChange={e => setModelSearch(e.target.value)}
+                    <input value={modelSearch} onChange={e => setModelSearch(e.target.value)}
                       placeholder="Search models..."
                       className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder:text-muted-foreground/50 focus:outline-none focus:border-violet-500/50"
-                      autoFocus
-                    />
+                      autoFocus />
                   </div>
                 </div>
-
                 <div className="max-h-[400px] overflow-y-auto">
                   {filteredOllamaModels.length > 0 && (
                     <div>
@@ -503,7 +493,6 @@ export default function CodeTerminal() {
                       ))}
                     </div>
                   )}
-
                   {filteredORModels.length > 0 && (
                     <div>
                       <div className="px-3 py-1.5 text-[9px] uppercase tracking-wider font-semibold text-violet-400 flex items-center gap-1.5 bg-violet-500/[0.03] border-t border-white/[0.04]">
@@ -516,9 +505,7 @@ export default function CodeTerminal() {
                             className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-white/[0.04] transition-all ${model === m.id ? "bg-violet-500/[0.06]" : ""}`}>
                             <div className="flex items-center gap-2 min-w-0">
                               <Globe className="w-3 h-3 text-violet-400 flex-shrink-0" />
-                              <div className="min-w-0">
-                                <span className="text-xs text-white block truncate">{m.id}</span>
-                              </div>
+                              <span className="text-xs text-white block truncate">{m.id}</span>
                             </div>
                             <div className="flex items-center gap-2 flex-shrink-0 ml-2">
                               {cost > 0 ? (
@@ -544,6 +531,12 @@ export default function CodeTerminal() {
               </div>
             )}
           </div>
+
+          <button onClick={() => { setShowSources(!showSources); if (!showSources) loadProjects(); }}
+            className={`p-1.5 rounded-lg transition-all ${showSources ? "bg-violet-500/10 text-violet-400 border border-violet-500/30" : "hover:bg-white/5 text-muted-foreground hover:text-white"}`}
+            title="Import sources (GitHub / Projects)">
+            <GitBranch className="w-3.5 h-3.5" />
+          </button>
 
           <button onClick={() => setShowSettings(!showSettings)}
             className={`p-1.5 rounded-lg transition-all ${showSettings ? "bg-white/10 text-white" : "hover:bg-white/5 text-muted-foreground hover:text-white"}`}>
@@ -576,6 +569,71 @@ export default function CodeTerminal() {
         </div>
       </div>
 
+      {showSources && (
+        <div className="border-b border-white/[0.06] bg-[#0c0c14] flex-shrink-0">
+          <div className="flex">
+            <div className="flex-1 p-4 border-r border-white/[0.06]">
+              <div className="flex items-center gap-2 mb-3">
+                <GitBranch className="w-4 h-4 text-orange-400" />
+                <span className="text-xs font-semibold text-white">Clone from GitHub</span>
+              </div>
+              <div className="flex gap-2">
+                <input value={gitUrl} onChange={e => setGitUrl(e.target.value)}
+                  placeholder="https://github.com/user/repo"
+                  onKeyDown={e => { if (e.key === "Enter") cloneRepo(); }}
+                  className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-white placeholder:text-muted-foreground/40 focus:outline-none focus:border-violet-500/50 font-mono" />
+                <button onClick={cloneRepo} disabled={cloning || !gitUrl.trim()}
+                  className="px-4 py-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-400 text-xs font-medium hover:bg-orange-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1.5">
+                  {cloning ? <Loader2 className="w-3 h-3 animate-spin" /> : <GitBranch className="w-3 h-3" />}
+                  {cloning ? "Cloning..." : "Clone"}
+                </button>
+              </div>
+              {cloneResult && (
+                <div className={`mt-2 text-[11px] px-3 py-1.5 rounded-lg ${cloneResult.success ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"}`}>
+                  {cloneResult.message}
+                </div>
+              )}
+              <p className="text-[10px] text-muted-foreground/50 mt-2">Supports GitHub, GitLab, Bitbucket. Repos clone into projects/ folder. Re-cloning pulls latest changes.</p>
+            </div>
+
+            <div className="flex-1 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Package className="w-4 h-4 text-cyan-400" />
+                  <span className="text-xs font-semibold text-white">Workspace Projects</span>
+                </div>
+                <button onClick={loadProjects} className="p-1 rounded hover:bg-white/5 text-muted-foreground hover:text-white">
+                  <RefreshCw className={`w-3 h-3 ${loadingProjects ? "animate-spin" : ""}`} />
+                </button>
+              </div>
+              <div className="max-h-[200px] overflow-y-auto space-y-1">
+                {loadingProjects ? (
+                  <div className="flex items-center justify-center py-4"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
+                ) : projects.length === 0 ? (
+                  <p className="text-[11px] text-muted-foreground/50 py-2">No projects found. Clone a repo or check workspace.</p>
+                ) : projects.map(p => (
+                  <button key={p.path}
+                    onClick={() => { setCurrentPath(p.path); setShowFileExplorer(true); setShowSources(false); }}
+                    className="w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-white/[0.04] transition-all group">
+                    <div className="w-7 h-7 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center flex-shrink-0">
+                      {p.isGit ? <GitBranch className="w-3.5 h-3.5 text-orange-400" /> : <Package className="w-3.5 h-3.5 text-cyan-400" />}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-white font-medium truncate">{p.name}</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white/[0.04] text-muted-foreground/60">{p.source}</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground/50 truncate block">{p.path}</span>
+                    </div>
+                    <ExternalLink className="w-3 h-3 text-muted-foreground/30 group-hover:text-white/50 flex-shrink-0" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showSettings && (
         <div className="px-4 py-3 border-b border-white/[0.06] bg-[#0d0d14] space-y-2 flex-shrink-0">
           <div>
@@ -594,9 +652,9 @@ export default function CodeTerminal() {
         </div>
       )}
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         {showFileExplorer && (
-          <div className="w-56 border-r border-white/[0.06] bg-[#0b0b12] flex flex-col flex-shrink-0">
+          <div className="w-60 border-r border-white/[0.06] bg-[#0b0b12] flex flex-col flex-shrink-0">
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06]">
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold flex items-center gap-1">
                 <FolderOpen className="w-3 h-3" /> Explorer
@@ -612,24 +670,16 @@ export default function CodeTerminal() {
                 </button>
               </div>
             </div>
-
             <div className="px-3 py-1 text-[9px] text-muted-foreground/60 font-mono truncate border-b border-white/[0.03]">
               {currentPath === "." ? "/" : `/${currentPath}`}
             </div>
-
             <div className="flex-1 overflow-y-auto py-1">
               {loadingFiles ? (
                 <div className="flex items-center justify-center py-6"><Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /></div>
               ) : files.map(f => (
                 <button key={f.name}
-                  onClick={() => {
-                    if (f.isDirectory) {
-                      setCurrentPath(f.path);
-                    } else {
-                      openFile(f.path, f.name);
-                    }
-                  }}
-                  className={`w-full text-left px-3 py-1 flex items-center gap-2 hover:bg-white/[0.04] transition-all group text-[11px] ${
+                  onClick={() => { if (f.isDirectory) { setCurrentPath(f.path); } else { openFile(f.path, f.name); } }}
+                  className={`w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-white/[0.04] transition-all group text-[12px] ${
                     activeTab === f.path ? "bg-violet-500/[0.08] text-white" : "text-gray-400"
                   }`}>
                   {f.isDirectory ? (
@@ -639,7 +689,7 @@ export default function CodeTerminal() {
                   )}
                   <span className="truncate flex-1">{f.name}</span>
                   {!f.isDirectory && f.size > 0 && (
-                    <span className="text-[8px] text-muted-foreground/50 flex-shrink-0 opacity-0 group-hover:opacity-100">{formatSize(f.size)}</span>
+                    <span className="text-[9px] text-muted-foreground/50 flex-shrink-0 opacity-0 group-hover:opacity-100">{formatSize(f.size)}</span>
                   )}
                 </button>
               ))}
@@ -648,7 +698,7 @@ export default function CodeTerminal() {
         )}
 
         {(layout === "agent" || layout === "split") && (
-          <div className={`flex flex-col ${layout === "split" ? "w-[45%]" : "flex-1"} border-r border-white/[0.06]`}>
+          <div className={`flex flex-col ${layout === "split" ? "w-[45%]" : "flex-1"} border-r border-white/[0.06] min-h-0`}>
             <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.06] bg-[#0b0b12] flex-shrink-0">
               <span className="text-[10px] text-muted-foreground font-medium flex items-center gap-1.5">
                 <Bot className="w-3 h-3 text-violet-400" /> Agent
@@ -661,15 +711,18 @@ export default function CodeTerminal() {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-3 space-y-3">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
               {messages.length === 0 && (
                 <div className="flex-1 flex items-center justify-center h-full">
-                  <div className="text-center space-y-3 max-w-sm">
-                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-violet-500/20 to-cyan-500/20 border border-white/[0.06] flex items-center justify-center mx-auto">
-                      <Sparkles className="w-7 h-7 text-violet-400/50" />
+                  <div className="text-center space-y-4 max-w-md">
+                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500/20 to-cyan-500/20 border border-white/[0.06] flex items-center justify-center mx-auto">
+                      <Sparkles className="w-8 h-8 text-violet-400/50" />
                     </div>
-                    <p className="text-xs text-muted-foreground">Ask me to write, edit, debug, or explain code. I can see your open files and run commands.</p>
-                    <div className="flex flex-wrap gap-1.5 justify-center">
+                    <div>
+                      <p className="text-sm text-white font-medium mb-1">Code Agent</p>
+                      <p className="text-xs text-muted-foreground">Ask me to write, edit, debug, or explain code. I can see your open files and run commands.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 justify-center">
                       {[
                         "Create a REST API with Express",
                         "Debug the error in the open file",
@@ -677,7 +730,7 @@ export default function CodeTerminal() {
                         "Write unit tests",
                       ].map((s, i) => (
                         <button key={i} onClick={() => setInput(s)}
-                          className="px-2.5 py-1 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[10px] text-muted-foreground hover:text-white hover:bg-white/[0.06] hover:border-white/10 transition-all">
+                          className="px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/[0.06] text-[11px] text-muted-foreground hover:text-white hover:bg-white/[0.06] hover:border-white/10 transition-all">
                           {s}
                         </button>
                       ))}
@@ -687,13 +740,13 @@ export default function CodeTerminal() {
               )}
 
               {messages.map(msg => (
-                <div key={msg.id} className={`flex gap-2 ${msg.role === "user" ? "justify-end" : ""}`}>
+                <div key={msg.id} className={`flex gap-2.5 ${msg.role === "user" ? "justify-end" : ""}`}>
                   {msg.role === "assistant" && (
-                    <div className="w-6 h-6 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <Bot className="w-3.5 h-3.5 text-violet-400" />
+                    <div className="w-7 h-7 rounded-lg bg-violet-500/10 border border-violet-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <Bot className="w-4 h-4 text-violet-400" />
                     </div>
                   )}
-                  <div className={`rounded-xl px-3 py-2 text-xs max-w-[88%] ${
+                  <div className={`rounded-xl px-4 py-3 text-[13px] leading-relaxed max-w-[85%] ${
                     msg.role === "user"
                       ? "bg-violet-500/10 text-white border border-violet-500/20"
                       : "bg-white/[0.02] text-gray-300 border border-white/[0.06]"
@@ -702,12 +755,12 @@ export default function CodeTerminal() {
                       <span className="whitespace-pre-wrap">{msg.content}</span>
                     )}
                     {streaming && msg.role === "assistant" && msg === messages[messages.length - 1] && (
-                      <span className="inline-block w-1.5 h-3.5 bg-violet-400 animate-pulse ml-0.5 rounded-sm" />
+                      <span className="inline-block w-1.5 h-4 bg-violet-400 animate-pulse ml-0.5 rounded-sm" />
                     )}
                   </div>
                   {msg.role === "user" && (
-                    <div className="w-6 h-6 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                      <User className="w-3.5 h-3.5 text-cyan-400" />
+                    <div className="w-7 h-7 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <User className="w-4 h-4 text-cyan-400" />
                     </div>
                   )}
                 </div>
@@ -715,32 +768,29 @@ export default function CodeTerminal() {
               <div ref={chatEndRef} />
             </div>
 
-            <div className="p-3 border-t border-white/[0.06] flex-shrink-0">
+            <div className="p-4 border-t border-white/[0.06] flex-shrink-0">
               {activeTab && (
                 <div className="flex items-center gap-1.5 mb-2 px-1">
                   <FileCode className="w-3 h-3 text-violet-400" />
-                  <span className="text-[9px] text-muted-foreground">Context: {activeTab}</span>
+                  <span className="text-[10px] text-muted-foreground">Context: {activeTab}</span>
                 </div>
               )}
               <div className="flex items-end gap-2">
-                <textarea
-                  ref={inputRef}
-                  value={input}
+                <textarea ref={inputRef} value={input}
                   onChange={e => setInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                   placeholder="Ask the agent to write code, fix bugs, create files..."
-                  rows={2}
-                  className="flex-1 px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.08] text-xs text-white placeholder:text-muted-foreground/40 resize-none focus:outline-none focus:border-violet-500/40"
-                />
+                  rows={3}
+                  className="flex-1 px-4 py-3 rounded-xl bg-white/[0.04] border border-white/[0.08] text-sm text-white placeholder:text-muted-foreground/40 resize-none focus:outline-none focus:border-violet-500/40" />
                 {streaming ? (
                   <button onClick={() => { abortRef.current?.abort(); setStreaming(false); }}
-                    className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all">
-                    <Square className="w-4 h-4" />
+                    className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all">
+                    <Square className="w-5 h-5" />
                   </button>
                 ) : (
                   <button onClick={sendMessage} disabled={!input.trim()}
-                    className="p-2.5 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
-                    <Send className="w-4 h-4" />
+                    className="p-3 rounded-xl bg-violet-500/10 border border-violet-500/20 text-violet-400 hover:bg-violet-500/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+                    <Send className="w-5 h-5" />
                   </button>
                 )}
               </div>
@@ -749,16 +799,16 @@ export default function CodeTerminal() {
         )}
 
         {(layout === "editor" || layout === "split") && (
-          <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
             <div className="flex items-center border-b border-white/[0.06] bg-[#0b0b12] flex-shrink-0 overflow-x-auto">
               {openTabs.map(tab => (
                 <div key={tab.path}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 border-r border-white/[0.04] cursor-pointer transition-all min-w-0 group ${
+                  className={`flex items-center gap-1.5 px-3 py-2 border-r border-white/[0.04] cursor-pointer transition-all min-w-0 group ${
                     activeTab === tab.path ? "bg-[#0d0d14] text-white" : "text-muted-foreground hover:text-white hover:bg-white/[0.02]"
                   }`}
                   onClick={() => setActiveTab(tab.path)}>
                   <FileCode className="w-3 h-3 flex-shrink-0" />
-                  <span className="text-[11px] truncate max-w-[120px]">{tab.name}</span>
+                  <span className="text-[11px] truncate max-w-[140px]">{tab.name}</span>
                   {tab.modified && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />}
                   <button onClick={e => { e.stopPropagation(); closeTab(tab.path); }}
                     className="p-0.5 rounded hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
@@ -767,15 +817,15 @@ export default function CodeTerminal() {
                 </div>
               ))}
               {openTabs.length === 0 && (
-                <div className="px-3 py-1.5 text-[10px] text-muted-foreground/50 italic">No files open — select from explorer</div>
+                <div className="px-3 py-2 text-[11px] text-muted-foreground/50 italic">No files open — select from explorer</div>
               )}
             </div>
 
-            <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="flex-1 flex flex-col overflow-hidden min-h-0">
               {activeTabData ? (
                 <>
-                  <div className="flex items-center justify-between px-3 py-1 border-b border-white/[0.04] bg-[#0c0c14] flex-shrink-0">
-                    <span className="text-[9px] text-muted-foreground font-mono truncate">{activeTabData.path}</span>
+                  <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.04] bg-[#0c0c14] flex-shrink-0">
+                    <span className="text-[10px] text-muted-foreground font-mono truncate">{activeTabData.path}</span>
                     <div className="flex items-center gap-1.5">
                       <span className="text-[9px] text-muted-foreground/50">{activeTabData.language}</span>
                       {activeTabData.modified && (
@@ -786,15 +836,12 @@ export default function CodeTerminal() {
                       )}
                     </div>
                   </div>
-                  <div className="flex-1 overflow-hidden relative">
+                  <div className="flex-1 overflow-hidden relative min-h-0">
                     <textarea
                       value={activeTabData.content}
                       onChange={e => updateTabContent(activeTabData.path, e.target.value)}
                       onKeyDown={e => {
-                        if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-                          e.preventDefault();
-                          saveFile(activeTabData.path);
-                        }
+                        if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); saveFile(activeTabData.path); }
                         if (e.key === "Tab") {
                           e.preventDefault();
                           const target = e.target as HTMLTextAreaElement;
@@ -803,29 +850,26 @@ export default function CodeTerminal() {
                           const value = target.value;
                           const newValue = value.substring(0, start) + "  " + value.substring(end);
                           updateTabContent(activeTabData.path, newValue);
-                          setTimeout(() => {
-                            target.selectionStart = target.selectionEnd = start + 2;
-                          }, 0);
+                          setTimeout(() => { target.selectionStart = target.selectionEnd = start + 2; }, 0);
                         }
                       }}
                       spellCheck={false}
-                      className="absolute inset-0 w-full h-full bg-transparent text-[12px] font-mono text-gray-300 p-4 resize-none focus:outline-none leading-5 tab-size-2"
-                      style={{ tabSize: 2 }}
-                    />
+                      className="absolute inset-0 w-full h-full bg-transparent text-[13px] font-mono text-gray-300 p-4 resize-none focus:outline-none leading-6 tab-size-2"
+                      style={{ tabSize: 2 }} />
                   </div>
                 </>
               ) : (
                 <div className="flex-1 flex items-center justify-center">
-                  <div className="text-center space-y-2">
-                    <FileText className="w-10 h-10 text-muted-foreground/20 mx-auto" />
-                    <p className="text-xs text-muted-foreground/40">Open a file from the explorer</p>
+                  <div className="text-center space-y-3">
+                    <FileText className="w-12 h-12 text-muted-foreground/20 mx-auto" />
+                    <p className="text-sm text-muted-foreground/40">Open a file from the explorer</p>
                   </div>
                 </div>
               )}
 
               {showTerminal && (
-                <div className="h-[200px] border-t border-white/[0.06] bg-[#08080e] flex flex-col flex-shrink-0">
-                  <div className="flex items-center justify-between px-3 py-1 border-b border-white/[0.04] flex-shrink-0">
+                <div className="h-[220px] border-t border-white/[0.06] bg-[#08080e] flex flex-col flex-shrink-0">
+                  <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/[0.04] flex-shrink-0">
                     <span className="text-[10px] text-muted-foreground font-medium flex items-center gap-1">
                       <Terminal className="w-3 h-3 text-emerald-400" /> Terminal
                     </span>
@@ -838,7 +882,7 @@ export default function CodeTerminal() {
                       </button>
                     </div>
                   </div>
-                  <div className="flex-1 overflow-y-auto px-3 py-1 font-mono text-[11px] space-y-0.5">
+                  <div className="flex-1 overflow-y-auto px-3 py-1.5 font-mono text-[12px] space-y-0.5">
                     {terminalLines.map(line => (
                       <div key={line.id} className={
                         line.type === "input" ? "text-cyan-300" :
@@ -857,12 +901,10 @@ export default function CodeTerminal() {
                     )}
                     <div ref={terminalEndRef} />
                   </div>
-                  <div className="px-3 py-1.5 border-t border-white/[0.04] flex-shrink-0">
+                  <div className="px-3 py-2 border-t border-white/[0.04] flex-shrink-0">
                     <div className="flex items-center gap-2">
                       <span className="text-emerald-400 text-xs font-mono">$</span>
-                      <input
-                        ref={terminalInputRef}
-                        value={terminalInput}
+                      <input ref={terminalInputRef} value={terminalInput}
                         onChange={e => setTerminalInput(e.target.value)}
                         onKeyDown={e => {
                           if (e.key === "Enter") { e.preventDefault(); runCommand(); }
@@ -884,8 +926,7 @@ export default function CodeTerminal() {
                         }}
                         placeholder="Enter command..."
                         disabled={terminalRunning}
-                        className="flex-1 bg-transparent text-[11px] text-white font-mono placeholder:text-muted-foreground/30 focus:outline-none disabled:opacity-50"
-                      />
+                        className="flex-1 bg-transparent text-[12px] text-white font-mono placeholder:text-muted-foreground/30 focus:outline-none disabled:opacity-50" />
                     </div>
                   </div>
                 </div>
@@ -893,7 +934,7 @@ export default function CodeTerminal() {
 
               {!showTerminal && (
                 <button onClick={() => setShowTerminal(true)}
-                  className="flex items-center gap-1.5 px-3 py-1 border-t border-white/[0.06] text-[10px] text-muted-foreground hover:text-white hover:bg-white/[0.02] transition-all flex-shrink-0">
+                  className="flex items-center gap-1.5 px-3 py-1.5 border-t border-white/[0.06] text-[10px] text-muted-foreground hover:text-white hover:bg-white/[0.02] transition-all flex-shrink-0">
                   <Terminal className="w-3 h-3" /> Show Terminal
                 </button>
               )}
