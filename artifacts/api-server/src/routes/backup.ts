@@ -317,7 +317,7 @@ async function exportDatabase(client: any, label: string): Promise<Record<string
   for (const row of tablesResult.rows) {
     const tableName = row.tablename;
     try {
-      const dataResult = await client.query(`SELECT * FROM "${tableName}"`);
+      const dataResult = await client.query(`SELECT * FROM ${client.escapeIdentifier(tableName)}`);
       tables[tableName] = dataResult.rows;
     } catch (err: any) {
       tables[tableName] = [{ _export_error: err?.message }];
