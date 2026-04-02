@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { Agent } from "undici";
 import { resolve, normalize } from "path";
 import { db, llmConfigTable } from "@workspace/db";
@@ -436,7 +436,7 @@ router.post("/code-terminal/clone-repo", async (req, res): Promise<void> => {
 
     if (alreadyExists) {
       const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-        exec(`cd "${safeDest}" && git pull`, {
+        execFile("git", ["-C", safeDest, "pull"], {
           timeout: 60000,
           maxBuffer: 1024 * 1024,
         }, (error, stdout, stderr) => {
@@ -452,7 +452,7 @@ router.post("/code-terminal/clone-repo", async (req, res): Promise<void> => {
     await fs.mkdir(parentDir, { recursive: true });
 
     const result = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-      exec(`git clone --depth 1 "${url}" "${safeDest}"`, {
+      execFile("git", ["clone", "--depth", "1", url, safeDest], {
         timeout: 120000,
         maxBuffer: 1024 * 1024,
       }, (error, stdout, stderr) => {
