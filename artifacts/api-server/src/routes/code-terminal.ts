@@ -1,24 +1,264 @@
 import { Router } from "express";
 import { exec } from "child_process";
+import { Agent } from "undici";
+import { resolve, normalize } from "path";
+import { db, llmConfigTable } from "@workspace/db";
 
 const router = Router();
 
+const WORKSPACE_ROOT = resolve(process.cwd(), "../..");
+
+function sanitizePath(inputPath: string): string | null {
+  const resolved = resolve(WORKSPACE_ROOT, inputPath);
+  const normalized = normalize(resolved);
+  if (!normalized.startsWith(WORKSPACE_ROOT)) return null;
+  return normalized;
+}
+
+const OPENROUTER_BASE_URL = process.env.AI_INTEGRATIONS_OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+const OPENROUTER_API_KEY = process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY || "";
+
+const ollamaAgent = new Agent({
+  headersTimeout: 600000,
+  bodyTimeout: 600000,
+  connectTimeout: 30000,
+});
+
+function isOpenRouterModel(model: string): boolean {
+  return model.includes("/");
+}
+
+async function getServerUrl(): Promise<string | null> {
+  const [config] = await db.select().from(llmConfigTable).limit(1);
+  return config?.serverUrl || null;
+}
+
+let cachedORModels: any[] | null = null;
+let cachedORAt = 0;
+
+async function fetchOpenRouterModels(): Promise<any[]> {
+  if (cachedORModels && Date.now() - cachedORAt < 300000) return cachedORModels;
+  try {
+    const r = await fetch("https://openrouter.ai/api/v1/models", { signal: AbortSignal.timeout(10000) });
+    if (!r.ok) return cachedORModels || [];
+    const data: any = await r.json();
+    cachedORModels = (data.data || []).map((m: any) => ({
+      id: m.id,
+      name: m.name || m.id,
+      context_length: m.context_length,
+      pricing: m.pricing,
+      source: "openrouter" as const,
+    }));
+    cachedORAt = Date.now();
+    return cachedORModels;
+  } catch {
+    return cachedORModels || [];
+  }
+}
+
 const BLOCKED_COMMANDS = [
-  "rm -rf /",
-  "mkfs",
-  "dd if=",
-  ":(){",
-  "fork bomb",
-  "shutdown",
-  "reboot",
-  "halt",
-  "poweroff",
-  "init 0",
-  "init 6",
+  "rm -rf /", "mkfs", "dd if=", ":(){", "fork bomb",
+  "shutdown", "reboot", "halt", "poweroff", "init 0", "init 6",
 ];
 
 const MAX_OUTPUT_LENGTH = 50000;
 const COMMAND_TIMEOUT = 30000;
+
+router.get("/code-terminal/models", async (_req, res): Promise<void> => {
+  try {
+    const serverUrl = await getServerUrl();
+    let ollamaModels: any[] = [];
+    if (serverUrl) {
+      try {
+        const r = await fetch(`${serverUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
+        if (r.ok) {
+          const data: any = await r.json();
+          ollamaModels = (data.models || []).map((m: any) => ({
+            id: m.name,
+            name: m.name,
+            size: m.size,
+            source: "ollama" as const,
+          }));
+        }
+      } catch {}
+    }
+
+    let orModels: any[] = [];
+    try {
+      orModels = await fetchOpenRouterModels();
+    } catch {}
+
+    res.json({ ollama: ollamaModels, openrouter: orModels });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/code-terminal/chat", async (req, res): Promise<void> => {
+  const { model, messages, temperature = 0.3, max_tokens, stream = true } = req.body;
+
+  if (!model || !messages?.length) {
+    res.status(400).json({ error: "model and messages are required" });
+    return;
+  }
+
+  if (isOpenRouterModel(model)) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    try {
+      const orRes = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+          "HTTP-Referer": "https://llm-hub.replit.app",
+        },
+        body: JSON.stringify({ model, messages, temperature, max_tokens, stream: true }),
+        signal: AbortSignal.timeout(300000),
+      });
+
+      if (!orRes.ok) {
+        const errText = await orRes.text();
+        res.write(`data: ${JSON.stringify({ error: errText })}\n\n`);
+        res.end();
+        return;
+      }
+
+      const reader = orRes.body?.getReader();
+      if (!reader) { res.end(); return; }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const payload = line.slice(6).trim();
+            if (payload === "[DONE]") {
+              res.write("data: [DONE]\n\n");
+            } else {
+              try {
+                const chunk = JSON.parse(payload);
+                const content = chunk.choices?.[0]?.delta?.content;
+                if (content) {
+                  res.write(`data: ${JSON.stringify({ content })}\n\n`);
+                }
+                if (chunk.choices?.[0]?.finish_reason === "stop") {
+                  res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+                }
+              } catch {}
+            }
+          }
+        }
+      }
+      res.write("data: [DONE]\n\n");
+      res.end();
+    } catch (err: any) {
+      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.end();
+    }
+    return;
+  }
+
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.status(503).json({ error: "Ollama server not configured" });
+    return;
+  }
+
+  if (stream) {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    try {
+      const options: any = { temperature };
+      if (max_tokens) options.num_predict = max_tokens;
+
+      const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model, messages, stream: true, options }),
+        signal: AbortSignal.timeout(300000),
+        // @ts-ignore
+        dispatcher: ollamaAgent,
+      });
+
+      if (!ollamaRes.ok) {
+        const errText = await ollamaRes.text();
+        res.write(`data: ${JSON.stringify({ error: errText })}\n\n`);
+        res.end();
+        return;
+      }
+
+      const reader = ollamaRes.body?.getReader();
+      if (!reader) { res.end(); return; }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const chunk = JSON.parse(line);
+            if (chunk.message?.content) {
+              res.write(`data: ${JSON.stringify({ content: chunk.message.content })}\n\n`);
+            }
+            if (chunk.done) {
+              res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+            }
+          } catch {}
+        }
+      }
+      res.write("data: [DONE]\n\n");
+      res.end();
+    } catch (err: any) {
+      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.end();
+    }
+    return;
+  }
+
+  try {
+    const options: any = { temperature };
+    if (max_tokens) options.num_predict = max_tokens;
+
+    const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages, stream: false, options }),
+      signal: AbortSignal.timeout(120000),
+      // @ts-ignore
+      dispatcher: ollamaAgent,
+    });
+
+    if (!ollamaRes.ok) {
+      const errText = await ollamaRes.text();
+      res.status(502).json({ error: errText });
+      return;
+    }
+
+    const data: any = await ollamaRes.json();
+    res.json({ content: data.message?.content || "", model: data.model });
+  } catch (err: any) {
+    res.status(502).json({ error: err.message });
+  }
+});
 
 router.post("/code-terminal/exec", async (req, res): Promise<void> => {
   const { command } = req.body;
@@ -79,9 +319,15 @@ router.post("/code-terminal/read-file", async (req, res): Promise<void> => {
     return;
   }
 
+  const safePath = sanitizePath(filePath);
+  if (!safePath) {
+    res.status(403).json({ error: "Access denied: path outside workspace" });
+    return;
+  }
+
   try {
     const fs = await import("fs/promises");
-    const content = await fs.readFile(filePath, "utf-8");
+    const content = await fs.readFile(safePath, "utf-8");
     res.json({ content: content.slice(0, MAX_OUTPUT_LENGTH) });
   } catch (err: any) {
     res.status(404).json({ error: err.message });
@@ -99,11 +345,17 @@ router.post("/code-terminal/write-file", async (req, res): Promise<void> => {
     return;
   }
 
+  const safePath = sanitizePath(filePath);
+  if (!safePath) {
+    res.status(403).json({ error: "Access denied: path outside workspace" });
+    return;
+  }
+
   try {
     const fs = await import("fs/promises");
-    const path = await import("path");
-    await fs.mkdir(path.dirname(filePath), { recursive: true });
-    await fs.writeFile(filePath, content, "utf-8");
+    const { dirname } = await import("path");
+    await fs.mkdir(dirname(safePath), { recursive: true });
+    await fs.writeFile(safePath, content, "utf-8");
     res.json({ success: true, path: filePath });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -113,18 +365,38 @@ router.post("/code-terminal/write-file", async (req, res): Promise<void> => {
 router.post("/code-terminal/list-files", async (req, res): Promise<void> => {
   const { path: dirPath = "." } = req.body;
 
+  const safePath = sanitizePath(dirPath);
+  if (!safePath) {
+    res.status(403).json({ error: "Access denied: path outside workspace" });
+    return;
+  }
+
   try {
     const fs = await import("fs/promises");
-    const entries = await fs.readdir(dirPath, { withFileTypes: true });
-    const files = entries.map(e => ({
-      name: e.name,
-      isDirectory: e.isDirectory(),
-    })).sort((a, b) => {
+    const pathMod = await import("path");
+    const entries = await fs.readdir(safePath, { withFileTypes: true });
+    const files = await Promise.all(entries.map(async e => {
+      const fullPath = pathMod.join(safePath, e.name);
+      let size = 0;
+      try {
+        if (!e.isDirectory()) {
+          const stat = await fs.stat(fullPath);
+          size = stat.size;
+        }
+      } catch {}
+      return {
+        name: e.name,
+        isDirectory: e.isDirectory(),
+        size,
+        path: pathMod.relative(WORKSPACE_ROOT, fullPath) || ".",
+      };
+    }));
+    files.sort((a, b) => {
       if (a.isDirectory && !b.isDirectory) return -1;
       if (!a.isDirectory && b.isDirectory) return 1;
       return a.name.localeCompare(b.name);
     });
-    res.json({ files });
+    res.json({ files, path: pathMod.relative(WORKSPACE_ROOT, safePath) || "." });
   } catch (err: any) {
     res.status(404).json({ error: err.message });
   }
