@@ -115,7 +115,7 @@ router.use(memoryRouter);
 router.use(costsRouter);
 router.use(teamRouter);
 router.use(complianceRouter);
-router.use(codeTerminalRouter);
+router.use(requireAuth, codeTerminalRouter);
 router.use(chatImportRouter);
 
 export default router;
