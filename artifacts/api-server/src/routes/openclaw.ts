@@ -1071,11 +1071,6 @@ Respond ONLY with a valid JSON array. Example:
         context += `\n\n[Web Search: ${planStep.input}]\n${toolResult.result}`;
         steps.push({ step: stepNum++, type: "tool:web_search", content: toolResult.result.substring(0, 500), timestamp: Date.now(), durationMs: Date.now() - stepStart });
         toolsUsed++;
-      } else if (planStep.type === "code_exec") {
-        const toolResult = await executeToolCall("code_exec", { code: planStep.input });
-        context += `\n\n[Code Execution]\n${toolResult.result}`;
-        steps.push({ step: stepNum++, type: "tool:code_exec", content: toolResult.result.substring(0, 500), timestamp: Date.now(), durationMs: Date.now() - stepStart });
-        toolsUsed++;
       } else if (planStep.type === "api_call") {
         const toolResult = await executeToolCall("api_call", { url: planStep.input });
         context += `\n\n[API Call: ${planStep.input}]\n${toolResult.result}`;
