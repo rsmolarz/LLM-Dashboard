@@ -4,8 +4,8 @@ import { z } from "zod/v4";
 
 export const openclawConfigTable = pgTable("openclaw_config", {
   id: serial("id").primaryKey(),
-  gatewayUrl: text("gateway_url").notNull().default("ws://72.60.167.64:18789"),
-  httpUrl: text("http_url").notNull().default("http://72.60.167.64:18789"),
+  gatewayUrl: text("gateway_url").notNull().default("wss://72.60.167.64:18789"),
+  httpUrl: text("http_url").notNull().default("https://72.60.167.64:18789"),
   authToken: text("auth_token").notNull().default(""),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
