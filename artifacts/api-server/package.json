@@ -16,19 +16,23 @@
     "@workspace/db": "workspace:*",
     "@workspace/integrations-anthropic-ai": "workspace:*",
     "@workspace/integrations-openai-ai-server": "workspace:*",
+    "adm-zip": "^0.5.16",
     "cookie-parser": "^1.4.7",
     "cors": "^2",
     "drizzle-orm": "catalog:",
     "express": "^5",
     "googleapis": "^171.4.0",
+    "multer": "^2.1.1",
     "openid-client": "^6.8.2",
     "pg": "^8.20.0",
     "undici": "^7.24.5"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0",
     "@types/node": "catalog:",
     "esbuild": "^0.27.3",
     "tsx": "catalog:"

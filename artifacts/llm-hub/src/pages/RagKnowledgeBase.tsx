@@ -1,10 +1,20 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Database, Search, Loader2, RefreshCw, BookOpen, Brain, Stethoscope,
-  FileText, Trash2, Plus, CheckCircle, XCircle, Activity, Zap, Upload
+  FileText, Trash2, Plus, CheckCircle, XCircle, Activity, Zap, Upload,
+  Book, FileUp, X, AlertCircle
 } from "lucide-react";
 
 const API = import.meta.env.VITE_API_URL || "";
+
+interface IngestedBook {
+  sourceRef: string;
+  title: string;
+  chunks: number;
+  ingestedAt: string;
+  category: string;
+  originalFile: string;
+}
 
 interface RagStatus {
   totalChunks: number;
@@ -32,7 +42,17 @@ export default function RagKnowledgeBase() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [ingestResult, setIngestResult] = useState<{ type: string; ingested: number; skipped: number; total: number } | null>(null);
-  const [tab, setTab] = useState<"overview" | "search" | "ingest">("overview");
+  const [tab, setTab] = useState<"overview" | "search" | "ingest" | "books">("overview");
+  const [books, setBooks] = useState<IngestedBook[]>([]);
+  const [booksLoading, setBooksLoading] = useState(false);
+  const [bookUploading, setBookUploading] = useState(false);
+  const [bookTitle, setBookTitle] = useState("");
+  const [bookCategory, setBookCategory] = useState("books");
+  const [bookResult, setBookResult] = useState<{ title: string; ingested: number; totalChunks: number; wordCount: number; textLength: number } | null>(null);
+  const [bookError, setBookError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [deletingBook, setDeletingBook] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [customTitle, setCustomTitle] = useState("");
   const [customContent, setCustomContent] = useState("");
   const [customIngesting, setCustomIngesting] = useState(false);
@@ -130,11 +150,75 @@ export default function RagKnowledgeBase() {
     }
   };
 
+  const fetchBooks = useCallback(async () => {
+    setBooksLoading(true);
+    try {
+      const res = await fetch(`${API}/api/rag-pipeline/books`);
+      const data = await res.json();
+      setBooks(data.books || []);
+    } catch {} finally {
+      setBooksLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { if (tab === "books") fetchBooks(); }, [tab, fetchBooks]);
+
+  const uploadBook = async (file: File) => {
+    setBookUploading(true);
+    setBookError(null);
+    setBookResult(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("title", bookTitle || file.name.replace(/\.[^.]+$/, ""));
+      formData.append("category", bookCategory);
+      const res = await fetch(`${API}/api/rag-pipeline/ingest/book`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Upload failed");
+      setBookResult(data);
+      setBookTitle("");
+      fetchBooks();
+      fetchStatus();
+    } catch (e: any) {
+      setBookError(e.message);
+    } finally {
+      setBookUploading(false);
+    }
+  };
+
+  const deleteBook = async (sourceRef: string) => {
+    setDeletingBook(sourceRef);
+    try {
+      await fetch(`${API}/api/rag-pipeline/books/${encodeURIComponent(sourceRef)}`, { method: "DELETE" });
+      fetchBooks();
+      fetchStatus();
+    } catch {} finally {
+      setDeletingBook(null);
+    }
+  };
+
+  const handleFileDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file) uploadBook(file);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) uploadBook(file);
+    e.target.value = "";
+  };
+
   const sourceIcon = (type: string) => {
     switch (type) {
       case "pubmed": return <BookOpen className="w-4 h-4" />;
       case "ent-training": return <Stethoscope className="w-4 h-4" />;
       case "knowledge-base": return <Brain className="w-4 h-4" />;
+      case "book": return <Book className="w-4 h-4" />;
       default: return <FileText className="w-4 h-4" />;
     }
   };
@@ -144,6 +228,7 @@ export default function RagKnowledgeBase() {
       case "pubmed": return "text-blue-400";
       case "ent-training": return "text-emerald-400";
       case "knowledge-base": return "text-purple-400";
+      case "book": return "text-amber-400";
       default: return "text-gray-400";
     }
   };
@@ -208,13 +293,14 @@ export default function RagKnowledgeBase() {
       </div>
 
       <div className="flex gap-2 border-b border-white/10 pb-0">
-        {(["overview", "search", "ingest"] as const).map(t => (
+        {(["overview", "books", "search", "ingest"] as const).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition ${tab === t ? "border-primary text-primary" : "border-transparent text-gray-400 hover:text-white"}`}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition flex items-center gap-1.5 ${tab === t ? "border-primary text-primary" : "border-transparent text-gray-400 hover:text-white"}`}
           >
-            {t === "overview" ? "Knowledge Sources" : t === "search" ? "Test Search" : "Ingest Data"}
+            {t === "books" && <Book className="w-3.5 h-3.5" />}
+            {t === "overview" ? "Knowledge Sources" : t === "search" ? "Test Search" : t === "books" ? "Books & Documents" : "Ingest Data"}
           </button>
         ))}
       </div>
@@ -287,6 +373,183 @@ export default function RagKnowledgeBase() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {tab === "books" && (
+        <div className="space-y-4">
+          <div className="glass-panel rounded-2xl border border-white/5 p-6 bg-gradient-to-r from-amber-500/[0.03] to-orange-500/[0.03]">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+                <Book className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white mb-1">Book & Document Ingestion</h2>
+                <p className="text-sm text-gray-400 leading-relaxed">
+                  Upload Kindle exports, EPUB files, or plain text documents to add them to your RAG knowledge base.
+                  The content will be chunked, embedded, and made searchable across all your AI models.
+                </p>
+                <div className="flex gap-2 mt-2">
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium">.epub</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium">.txt</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium">.md</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 font-medium">.html</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-gray-400 font-medium">Max 50MB</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="glass-panel rounded-xl border border-white/5 p-5 space-y-4">
+            <h3 className="text-sm font-semibold text-white">Upload a Book or Document</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Title (optional — uses filename if blank)</label>
+                <input
+                  type="text"
+                  value={bookTitle}
+                  onChange={(e) => setBookTitle(e.target.value)}
+                  placeholder="e.g. AWS Solutions Architect Guide"
+                  className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-sm placeholder:text-gray-600 focus:border-amber-500/30 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-400 block mb-1">Category</label>
+                <select
+                  value={bookCategory}
+                  onChange={(e) => setBookCategory(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-sm focus:border-amber-500/30 focus:outline-none"
+                >
+                  <option value="books">Books (General)</option>
+                  <option value="medical">Medical / Clinical</option>
+                  <option value="tech">Software / Tech</option>
+                  <option value="business">Business / Finance</option>
+                  <option value="reference">Reference Material</option>
+                </select>
+              </div>
+            </div>
+
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleFileDrop}
+              onClick={() => fileInputRef.current?.click()}
+              className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+                dragOver ? "border-amber-500/50 bg-amber-500/[0.05]" : "border-white/10 hover:border-amber-500/30 hover:bg-white/[0.02]"
+              } ${bookUploading ? "pointer-events-none opacity-60" : ""}`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".epub,.txt,.md,.text,.html,.htm"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              {bookUploading ? (
+                <div className="flex flex-col items-center gap-2">
+                  <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+                  <span className="text-sm text-amber-400 font-medium">Processing & embedding chunks...</span>
+                  <span className="text-xs text-gray-500">This may take a minute for large books</span>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2">
+                  <FileUp className="w-8 h-8 text-gray-500" />
+                  <span className="text-sm text-gray-300">Drop a file here or click to browse</span>
+                  <span className="text-xs text-gray-500">EPUB, TXT, MD, or HTML — up to 50MB</span>
+                </div>
+              )}
+            </div>
+
+            {bookError && (
+              <div className="rounded-lg border border-red-500/30 bg-red-500/[0.05] px-4 py-3 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="text-sm text-red-400 font-medium">Upload Failed</div>
+                  <div className="text-xs text-red-400/70 mt-0.5">{bookError}</div>
+                </div>
+                <button onClick={() => setBookError(null)} className="ml-auto p-1 hover:bg-white/5 rounded">
+                  <X className="w-3 h-3 text-gray-500" />
+                </button>
+              </div>
+            )}
+
+            {bookResult && (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.05] px-4 py-3 flex items-start gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
+                <div>
+                  <div className="text-sm text-emerald-400 font-medium">"{bookResult.title}" ingested successfully</div>
+                  <div className="text-xs text-gray-400 mt-0.5">
+                    {bookResult.ingested.toLocaleString()} chunks embedded &middot; {bookResult.wordCount.toLocaleString()} words &middot; {(bookResult.textLength / 1024).toFixed(0)}KB of text
+                  </div>
+                </div>
+                <button onClick={() => setBookResult(null)} className="ml-auto p-1 hover:bg-white/5 rounded">
+                  <X className="w-3 h-3 text-gray-500" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="glass-panel rounded-xl border border-white/5 p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <BookOpen className="w-4 h-4 text-amber-400" /> Ingested Books
+              </h3>
+              <button onClick={fetchBooks} className="p-1.5 rounded-lg hover:bg-white/5 text-gray-500 hover:text-white transition">
+                <RefreshCw className={`w-3.5 h-3.5 ${booksLoading ? "animate-spin" : ""}`} />
+              </button>
+            </div>
+
+            {booksLoading && books.length === 0 ? (
+              <div className="flex items-center gap-2 py-6 justify-center text-gray-500 text-sm">
+                <Loader2 className="w-4 h-4 animate-spin" /> Loading books...
+              </div>
+            ) : books.length > 0 ? (
+              <div className="space-y-2">
+                {books.map(book => (
+                  <div key={book.sourceRef} className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.02] px-4 py-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Book className="w-5 h-5 text-amber-400 flex-shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-sm text-white font-medium truncate">{book.title}</div>
+                        <div className="text-[11px] text-gray-500 flex items-center gap-2 mt-0.5">
+                          <span>{book.chunks} chunks</span>
+                          <span>&middot;</span>
+                          <span className="capitalize">{book.category}</span>
+                          <span>&middot;</span>
+                          <span>{book.originalFile}</span>
+                          <span>&middot;</span>
+                          <span>{new Date(book.ingestedAt).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => deleteBook(book.sourceRef)}
+                      disabled={deletingBook === book.sourceRef}
+                      className="p-1.5 rounded-lg hover:bg-red-500/20 text-gray-500 hover:text-red-400 transition flex-shrink-0"
+                    >
+                      {deletingBook === book.sourceRef ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Book className="w-10 h-10 text-gray-600 mx-auto mb-3" />
+                <p className="text-sm text-gray-400">No books ingested yet</p>
+                <p className="text-xs text-gray-500 mt-1">Upload an EPUB or text file above to get started</p>
+              </div>
+            )}
+          </div>
+
+          <div className="glass-panel rounded-xl border border-white/5 p-4">
+            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">How to export Kindle books</h4>
+            <div className="space-y-1.5 text-[11px] text-gray-500 leading-relaxed">
+              <div><span className="text-white font-medium">1.</span> Install Calibre (free) — <a href="https://calibre-ebook.com/download" target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:underline">calibre-ebook.com</a></div>
+              <div><span className="text-white font-medium">2.</span> Connect your Kindle via USB or download books from <a href="https://www.amazon.com/hz/mycd/myx" target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:underline">amazon.com/mycd</a></div>
+              <div><span className="text-white font-medium">3.</span> In Calibre, select a book → Convert Books → Output format: EPUB → OK</div>
+              <div><span className="text-white font-medium">4.</span> Find the converted .epub file in your Calibre library folder and upload it above</div>
+            </div>
+          </div>
         </div>
       )}
 

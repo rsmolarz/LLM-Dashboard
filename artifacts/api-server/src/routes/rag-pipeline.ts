@@ -1,4 +1,5 @@
 import { Router } from "express";
+import multer from "multer";
 import { db, pool } from "@workspace/db";
 import { entEmbeddingsTable, entKnowledgeSourcesTable } from "@workspace/db/schema";
 import { eq, sql, desc, count } from "drizzle-orm";
@@ -634,6 +635,204 @@ router.post("/rag-pipeline/re-embed", async (req, res): Promise<void> => {
       totalPending: totalPending - reEmbedded,
       message: `Re-embedded ${reEmbedded}/${rows.rows.length} chunks with semantic vectors. ${totalPending - reEmbedded} remaining.`,
     });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/h[1-6]>/gi, "\n\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function extractTextFromEpub(buffer: Buffer): Promise<string> {
+  const { default: AdmZip } = await import("adm-zip");
+  return new Promise((resolve, reject) => {
+    try {
+      const zip = new AdmZip(buffer);
+      const entries = zip.getEntries();
+
+      const containerEntry = entries.find((e: any) => e.entryName === "META-INF/container.xml");
+      let contentOpfPath = "OEBPS/content.opf";
+      if (containerEntry) {
+        const containerXml = containerEntry.getData().toString("utf8");
+        const rootFileMatch = containerXml.match(/full-path="([^"]+)"/);
+        if (rootFileMatch) contentOpfPath = rootFileMatch[1];
+      }
+
+      const opfEntry = entries.find((e: any) => e.entryName === contentOpfPath);
+      const opfDir = contentOpfPath.replace(/[^/]*$/, "");
+      let orderedFiles: string[] = [];
+
+      if (opfEntry) {
+        const opfXml = opfEntry.getData().toString("utf8");
+        const itemMap = new Map<string, string>();
+        const itemRegex = /<item[^>]+id="([^"]*)"[^>]*href="([^"]*)"[^>]*media-type="([^"]*)"[^>]*/g;
+        let match;
+        while ((match = itemRegex.exec(opfXml)) !== null) {
+          if (match[3].includes("html")) {
+            itemMap.set(match[1], opfDir + match[2]);
+          }
+        }
+        const spineRegex = /<itemref[^>]+idref="([^"]*)"/g;
+        while ((match = spineRegex.exec(opfXml)) !== null) {
+          const href = itemMap.get(match[1]);
+          if (href) orderedFiles.push(href);
+        }
+      }
+
+      if (orderedFiles.length === 0) {
+        orderedFiles = entries
+          .filter((e: any) => /\.(x?html?|htm)$/i.test(e.entryName))
+          .sort((a: any, b: any) => a.entryName.localeCompare(b.entryName))
+          .map((e: any) => e.entryName);
+      }
+
+      const textParts: string[] = [];
+      for (const filePath of orderedFiles) {
+        const entry = entries.find((e: any) => e.entryName === filePath);
+        if (entry) {
+          const html = entry.getData().toString("utf8");
+          const text = stripHtml(html);
+          if (text.length > 20) textParts.push(text);
+        }
+      }
+
+      if (textParts.length === 0) {
+        reject(new Error("No readable text found in EPUB"));
+        return;
+      }
+
+      resolve(textParts.join("\n\n"));
+    } catch (e: any) {
+      reject(new Error(`EPUB parsing failed: ${e.message}`));
+    }
+  });
+}
+
+router.post("/rag-pipeline/ingest/book", upload.single("file"), async (req, res) => {
+  try {
+    const file = (req as any).file;
+    const title = req.body.title || file?.originalname || "Untitled Book";
+    const category = req.body.category || "books";
+
+    let textContent = "";
+
+    if (file) {
+      const ext = (file.originalname || "").toLowerCase();
+      if (ext.endsWith(".epub")) {
+        textContent = await extractTextFromEpub(file.buffer);
+      } else if (ext.endsWith(".txt") || ext.endsWith(".md") || ext.endsWith(".text")) {
+        textContent = file.buffer.toString("utf8");
+      } else if (ext.endsWith(".html") || ext.endsWith(".htm")) {
+        textContent = stripHtml(file.buffer.toString("utf8"));
+      } else {
+        textContent = file.buffer.toString("utf8");
+      }
+    } else if (req.body.content) {
+      textContent = req.body.content;
+    } else {
+      res.status(400).json({ error: "No file or content provided" });
+      return;
+    }
+
+    textContent = textContent.replace(/\r\n/g, "\n").replace(/\t/g, " ").replace(/ {3,}/g, "  ").trim();
+    if (textContent.length < 50) {
+      res.status(400).json({ error: "File content too short (minimum 50 characters)" });
+      return;
+    }
+
+    const chunks = chunkText(textContent, 800, 100);
+    const sourceRef = `book-${Date.now()}-${title.replace(/[^a-z0-9]/gi, "_").slice(0, 40)}`;
+    let ingested = 0;
+    let failed = 0;
+
+    for (let i = 0; i < chunks.length; i++) {
+      try {
+        const embedding = await getEmbedding(chunks[i]);
+        await storeEmbedding(
+          "book",
+          sourceRef,
+          title,
+          chunks[i],
+          i,
+          embedding,
+          undefined,
+          JSON.stringify({ category, originalFile: file?.originalname || "pasted", totalChunks: chunks.length })
+        );
+        ingested++;
+      } catch {
+        failed++;
+      }
+    }
+
+    res.json({
+      title,
+      category,
+      sourceRef,
+      ingested,
+      failed,
+      totalChunks: chunks.length,
+      textLength: textContent.length,
+      wordCount: textContent.split(/\s+/).length,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/rag-pipeline/books", async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT source_ref, title, COUNT(*) as chunks, MIN(created_at) as ingested_at, 
+              metadata::text as metadata
+       FROM ent_embeddings 
+       WHERE source_type = 'book' 
+       GROUP BY source_ref, title, metadata
+       ORDER BY MIN(created_at) DESC`
+    );
+
+    const books = result.rows.map((r: any) => {
+      let meta: any = {};
+      try { meta = JSON.parse(r.metadata || "{}"); } catch {}
+      return {
+        sourceRef: r.source_ref,
+        title: r.title,
+        chunks: parseInt(r.chunks, 10),
+        ingestedAt: r.ingested_at,
+        category: meta.category || "books",
+        originalFile: meta.originalFile || "unknown",
+      };
+    });
+
+    res.json({ books, total: books.length });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete("/rag-pipeline/books/:sourceRef", async (req, res) => {
+  try {
+    const { sourceRef } = req.params;
+    await pool.query("DELETE FROM ent_embeddings WHERE source_type = 'book' AND source_ref = $1", [sourceRef]);
+    res.json({ deleted: true, sourceRef });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
