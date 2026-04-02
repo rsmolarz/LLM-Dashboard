@@ -925,7 +925,7 @@ function SettingsView({ onBack }: { onBack: () => void }) {
             <Input
               value={form.gatewayUrl}
               onChange={(e) => setForm({ ...form, gatewayUrl: e.target.value })}
-              placeholder="ws://72.60.167.64:18789"
+              placeholder="wss://72.60.167.64:18789"
               className="mt-1 bg-black/40 border-white/10 font-mono text-sm"
             />
           </div>
