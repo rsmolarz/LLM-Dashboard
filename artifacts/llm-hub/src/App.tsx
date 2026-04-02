@@ -38,6 +38,7 @@ import Team from "@/pages/Team";
 import Compliance from "@/pages/Compliance";
 import BrowserExtension from "@/pages/BrowserExtension";
 import CodeTerminal from "@/pages/CodeTerminal";
+import ChatImport from "@/pages/ChatImport";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -86,6 +87,7 @@ function Router() {
         <Route path="/compliance" component={Compliance} />
         <Route path="/extension" component={BrowserExtension} />
         <Route path="/code" component={CodeTerminal} />
+        <Route path="/chat-import" component={ChatImport} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

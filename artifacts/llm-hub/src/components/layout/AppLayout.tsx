@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User, Stethoscope, Share2, TrendingUp, Database, Mic, HardDrive, BookOpen, Beaker, FlaskConical, Key, Library, Sun, Moon, Trophy, Workflow, GitCompareArrows, FileText, BrainCircuit, DollarSign, Users, Puzzle, Code2 } from "lucide-react";
+import { Server, MessageSquare, Brain, Terminal, Bot, Search, Eye, BarChart3, LineChart, Zap, Menu, X, Shield, LogIn, LogOut, User, Stethoscope, Share2, TrendingUp, Database, Mic, HardDrive, BookOpen, Beaker, FlaskConical, Key, Library, Sun, Moon, Trophy, Workflow, GitCompareArrows, FileText, BrainCircuit, DollarSign, Users, Puzzle, Code2, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -38,6 +38,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const navItems = [
     { href: "/", label: "Local LLM", icon: Server, adminOnly: false },
     { href: "/chat", label: "Chat", icon: MessageSquare, adminOnly: false },
+    { href: "/chat-import", label: "Chat Import", icon: Download, adminOnly: false },
     { href: "/training", label: "Training", icon: Brain, adminOnly: false },
     { href: "/research", label: "Research", icon: Search, adminOnly: false },
     { href: "/vision", label: "Vision", icon: Eye, adminOnly: false },

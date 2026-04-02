@@ -55,6 +55,7 @@ import costsRouter from "./costs";
 import teamRouter from "./team";
 import complianceRouter from "./compliance";
 import codeTerminalRouter from "./code-terminal";
+import chatImportRouter from "./chat-import";
 
 const router: IRouter = Router();
 
@@ -115,5 +116,6 @@ router.use(costsRouter);
 router.use(teamRouter);
 router.use(complianceRouter);
 router.use(codeTerminalRouter);
+router.use(chatImportRouter);
 
 export default router;
