@@ -903,25 +903,6 @@ async function executeToolCall(toolId: string, args: Record<string, any>): Promi
       }
     }
 
-    case "code_exec": {
-      const code = args.code || "";
-      const language = args.language || "javascript";
-      try {
-        if (language === "javascript" || language === "js") {
-          const { execSync } = require("child_process");
-          const output = execSync(`node -e ${JSON.stringify(code)}`, {
-            timeout: 10000,
-            encoding: "utf8",
-            maxBuffer: 1024 * 100,
-          });
-          return { success: true, result: output.trim() || "(no output)" };
-        }
-        return { success: false, result: `Language "${language}" not supported. Use javascript.` };
-      } catch (err: any) {
-        return { success: false, result: `Code execution error: ${err.stderr || err.message}` };
-      }
-    }
-
     case "api_call": {
       const url = args.url || "";
       const method = (args.method || "GET").toUpperCase();
@@ -973,15 +954,9 @@ async function executeToolCall(toolId: string, args: Record<string, any>): Promi
   }
 }
 
-const EXTERNALLY_BLOCKED_TOOLS = ["code_exec"];
-
 router.post("/openclaw/tools/execute", async (req, res): Promise<void> => {
   const { toolId, args } = req.body;
   if (!toolId) { res.status(400).json({ error: "toolId required" }); return; }
-  if (EXTERNALLY_BLOCKED_TOOLS.includes(toolId)) {
-    res.status(403).json({ error: `Tool "${toolId}" cannot be invoked via the external API` });
-    return;
-  }
   const startTime = Date.now();
   const result = await executeToolCall(toolId, args || {});
   res.json({ ...result, toolId, durationMs: Date.now() - startTime });
