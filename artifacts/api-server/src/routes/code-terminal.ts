@@ -64,7 +64,7 @@ const BLOCKED_COMMANDS = [
 const MAX_OUTPUT_LENGTH = 50000;
 const COMMAND_TIMEOUT = 30000;
 
-router.get("/code-terminal/models", async (_req, res): Promise<void> => {
+router.get("/models", async (_req, res): Promise<void> => {
   try {
     const serverUrl = await getServerUrl();
     let ollamaModels: any[] = [];
@@ -94,7 +94,7 @@ router.get("/code-terminal/models", async (_req, res): Promise<void> => {
   }
 });
 
-router.post("/code-terminal/chat", async (req, res): Promise<void> => {
+router.post("/chat", async (req, res): Promise<void> => {
   const { model, messages, temperature = 0.3, max_tokens, stream = true } = req.body;
 
   if (!model || !messages?.length) {
@@ -260,7 +260,7 @@ router.post("/code-terminal/chat", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/code-terminal/exec", async (req, res): Promise<void> => {
+router.post("/exec", async (req, res): Promise<void> => {
   const { command } = req.body;
 
   if (!command || typeof command !== "string") {
@@ -312,7 +312,7 @@ router.post("/code-terminal/exec", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/code-terminal/read-file", async (req, res): Promise<void> => {
+router.post("/read-file", async (req, res): Promise<void> => {
   const { path: filePath } = req.body;
   if (!filePath || typeof filePath !== "string") {
     res.status(400).json({ error: "path is required" });
@@ -334,7 +334,7 @@ router.post("/code-terminal/read-file", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/code-terminal/write-file", async (req, res): Promise<void> => {
+router.post("/write-file", async (req, res): Promise<void> => {
   const { path: filePath, content } = req.body;
   if (!filePath || typeof filePath !== "string") {
     res.status(400).json({ error: "path is required" });
@@ -362,7 +362,7 @@ router.post("/code-terminal/write-file", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/code-terminal/list-files", async (req, res): Promise<void> => {
+router.post("/list-files", async (req, res): Promise<void> => {
   const { path: dirPath = "." } = req.body;
 
   const safePath = sanitizePath(dirPath);
@@ -402,7 +402,7 @@ router.post("/code-terminal/list-files", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/code-terminal/clone-repo", async (req, res): Promise<void> => {
+router.post("/clone-repo", async (req, res): Promise<void> => {
   const { url, targetDir } = req.body;
 
   if (!url || typeof url !== "string") {
@@ -466,7 +466,7 @@ router.post("/code-terminal/clone-repo", async (req, res): Promise<void> => {
   }
 });
 
-router.get("/code-terminal/projects", async (_req, res): Promise<void> => {
+router.get("/projects", async (_req, res): Promise<void> => {
   try {
     const fs = await import("fs/promises");
     const pathMod = await import("path");
