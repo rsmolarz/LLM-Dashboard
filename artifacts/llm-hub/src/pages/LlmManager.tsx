@@ -4,7 +4,7 @@ import {
   Play, CheckCircle2, XCircle, AlertCircle, MemoryStick, Clock,
   Package, ChevronDown, ChevronUp, Plus, X, Power, PowerOff,
   Activity, Gauge, Sparkles, Zap, Star, Code2, MessageSquare,
-  FileText, Search, Brain, PenTool, Languages, Image,
+  FileText, Search, Brain, PenTool, Languages, Image, Stethoscope,
 } from "lucide-react";
 import {
   useListModels,
@@ -81,6 +81,7 @@ const TASK_TYPES = [
   { id: "translation", label: "Translation", icon: Languages, desc: "Multi-language translation tasks", families: ["qwen2", "qwen2.5", "aya", "gemma", "llama", "mistral"], keywords: ["translate", "multilingual", "aya"], minParams: 3 },
   { id: "vision", label: "Vision / Image", icon: Image, desc: "Image understanding and description", families: ["llava", "bakllava", "moondream", "llama3.2-vision"], keywords: ["llava", "vision", "moondream", "bakllava"], minParams: 1 },
   { id: "reasoning", label: "Deep Reasoning", icon: Brain, desc: "Complex multi-step reasoning", families: ["qwen2.5", "mixtral", "command-r", "deepseek", "phi"], keywords: ["reason", "think", "math"], minParams: 14 },
+  { id: "medical", label: "Medical / Clinical", icon: Stethoscope, desc: "Health questions, symptoms, diagnosis, clinical reasoning", families: ["meditron", "medllama", "med"], keywords: ["meditron", "medical", "med", "clinical", "health"], minParams: 1 },
 ] as const;
 
 const TASK_QUERY_MAP: Record<string, string[]> = {
@@ -92,6 +93,7 @@ const TASK_QUERY_MAP: Record<string, string[]> = {
   translation: ["translat", "language", "spanish", "french", "german", "chinese", "japanese", "korean", "arabic", "portuguese", "italian", "hindi", "russian", "convert language", "foreign"],
   vision: ["image", "picture", "photo", "visual", "see", "look at", "describe image", "ocr", "screenshot", "diagram", "chart image"],
   reasoning: ["reason", "logic", "math", "calcul", "solve", "proof", "theorem", "complex", "step by step", "think through", "deduc", "infer", "puzzle", "strategy"],
+  medical: ["medical", "health", "clinical", "symptom", "diagnosis", "diagnos", "patient", "doctor", "disease", "treatment", "therapy", "pharma", "drug", "medicine", "patholog", "anatomy", "surgery", "nurse", "hospital", "ent", "otolaryngolog", "cardio", "neuro", "oncolog", "pediatr", "radiol"],
 };
 
 function matchTaskFromQuery(query: string): string | null {
@@ -135,6 +137,10 @@ const MODEL_TASK_AFFINITIES: Record<string, string[]> = {
   "vicuna": ["chat"],
   "openchat": ["chat"],
   "neural-chat": ["chat"],
+  "meditron": ["medical"],
+  "medllama": ["medical"],
+  "med42": ["medical"],
+  "biomistral": ["medical"],
 };
 
 function scoreModel(model: any, task: typeof TASK_TYPES[number]): number {
