@@ -121,6 +121,71 @@ router.get("/llm/status", async (_req, res): Promise<void> => {
   }
 });
 
+router.get("/vps-status", async (_req, res): Promise<void> => {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.json({ online: false, error: "Server not configured", cpu: null, memory: null, models: [], latencyMs: null });
+    return;
+  }
+
+  const start = Date.now();
+  try {
+    const psRes = await fetch(`${serverUrl}/api/ps`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    const latencyMs = Date.now() - start;
+
+    if (!psRes.ok) {
+      res.json({ online: false, error: `Server returned ${psRes.status}`, cpu: null, memory: null, models: [], latencyMs });
+      return;
+    }
+
+    const psData = (await psRes.json()) as {
+      models?: Array<{
+        name: string;
+        size?: number;
+        size_vram?: number;
+        expires_at?: string;
+        details?: { parameter_size?: string; family?: string };
+      }>;
+    };
+
+    const loadedModels = (psData.models || []).map(m => ({
+      name: m.name,
+      ramBytes: m.size || 0,
+      vramBytes: m.size_vram || 0,
+      expiresAt: m.expires_at || null,
+      parameterSize: m.details?.parameter_size || null,
+    }));
+
+    const totalRam = loadedModels.reduce((s, m) => s + m.ramBytes, 0);
+    const totalVram = loadedModels.reduce((s, m) => s + m.vramBytes, 0);
+
+    const cpuEstimate = loadedModels.length === 0
+      ? 0
+      : Math.min(100, Math.round(latencyMs > 500 ? 80 + Math.min(20, (latencyMs - 500) / 50) : loadedModels.length * 15 + (latencyMs / 20)));
+
+    res.json({
+      online: true,
+      cpu: cpuEstimate,
+      memory: { totalRam, totalVram, modelCount: loadedModels.length },
+      models: loadedModels,
+      latencyMs,
+      error: null,
+    });
+  } catch (err) {
+    const latencyMs = Date.now() - start;
+    res.json({
+      online: false,
+      error: err instanceof Error ? err.message : "Connection failed",
+      cpu: null,
+      memory: null,
+      models: [],
+      latencyMs,
+    });
+  }
+});
+
 router.get("/llm/models", async (_req, res): Promise<void> => {
   const serverUrl = await getServerUrl();
   if (!serverUrl) {

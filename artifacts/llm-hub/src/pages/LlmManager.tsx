@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Server, Cpu, HardDrive, Loader2, RefreshCw, Trash2, Download,
   Play, CheckCircle2, XCircle, AlertCircle, MemoryStick, Clock,
   Package, ChevronDown, ChevronUp, Plus, X, Power, PowerOff,
+  Activity, Gauge,
 } from "lucide-react";
 import {
   useListModels,
@@ -14,6 +15,61 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+
+interface VpsStatus {
+  online: boolean;
+  cpu: number | null;
+  memory: { totalRam: number; totalVram: number; modelCount: number } | null;
+  latencyMs: number | null;
+  error: string | null;
+}
+
+function useVpsStatus(intervalMs = 10000) {
+  const [data, setData] = useState<VpsStatus | null>(null);
+
+  const poll = useCallback(async () => {
+    try {
+      const res = await fetch("/api/vps-status");
+      if (!res.ok) {
+        setData({ online: false, cpu: null, memory: null, latencyMs: null, error: `HTTP ${res.status}` });
+        return;
+      }
+      const json = await res.json();
+      setData(json);
+    } catch {
+      setData({ online: false, cpu: null, memory: null, latencyMs: null, error: "Fetch failed" });
+    }
+  }, []);
+
+  useEffect(() => {
+    poll();
+    const id = setInterval(poll, intervalMs);
+    return () => clearInterval(id);
+  }, [poll, intervalMs]);
+
+  return { vps: data, refreshVps: poll };
+}
+
+function CpuGauge({ value }: { value: number }) {
+  const color = value > 70 ? "text-red-400" : value > 40 ? "text-amber-400" : "text-emerald-400";
+  const bgColor = value > 70 ? "bg-red-500" : value > 40 ? "bg-amber-500" : "bg-emerald-500";
+  const barWidth = Math.max(2, Math.min(100, value));
+
+  return (
+    <div className="flex items-center gap-2 min-w-0">
+      <Gauge className={cn("w-3.5 h-3.5 flex-shrink-0", color)} />
+      <div className="flex-1 min-w-0">
+        <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+          <div
+            className={cn("h-full rounded-full transition-all duration-700 ease-out", bgColor)}
+            style={{ width: `${barWidth}%` }}
+          />
+        </div>
+      </div>
+      <span className={cn("text-xs font-bold tabular-nums flex-shrink-0", color)}>{value}%</span>
+    </div>
+  );
+}
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -44,6 +100,7 @@ export default function LlmManager() {
   });
   const pullModel = usePullModel();
   const deleteModel = useDeleteModel();
+  const { vps, refreshVps } = useVpsStatus(10000);
 
   const [pullInput, setPullInput] = useState("");
   const [showPullInput, setShowPullInput] = useState(false);
@@ -64,6 +121,7 @@ export default function LlmManager() {
     queryClient.invalidateQueries({ queryKey: ["/api/llm/models"] });
     queryClient.invalidateQueries({ queryKey: ["/api/llm/models/running"] });
     queryClient.invalidateQueries({ queryKey: ["/api/llm/status"] });
+    refreshVps();
   };
 
   const handlePull = async () => {
@@ -172,10 +230,22 @@ export default function LlmManager() {
           </div>
           <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] p-3">
             <div className="flex items-center gap-2 mb-1.5">
-              <Cpu className="w-3.5 h-3.5 text-amber-400" />
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Server</span>
+              <Activity className="w-3.5 h-3.5 text-amber-400" />
+              <span className="text-[10px] text-muted-foreground uppercase tracking-wider">CPU Usage</span>
+              {vps && vps.latencyMs !== null && (
+                <span className="text-[8px] text-muted-foreground/50 ml-auto">{vps.latencyMs}ms</span>
+              )}
             </div>
-            <p className="text-xs text-white truncate" title={serverUrl}>{serverUrl}</p>
+            {vps === null ? (
+              <div className="flex items-center gap-1.5">
+                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+                <span className="text-[10px] text-muted-foreground">Polling...</span>
+              </div>
+            ) : vps.cpu !== null ? (
+              <CpuGauge value={vps.cpu} />
+            ) : (
+              <p className="text-xs text-muted-foreground">—</p>
+            )}
           </div>
         </div>
 
