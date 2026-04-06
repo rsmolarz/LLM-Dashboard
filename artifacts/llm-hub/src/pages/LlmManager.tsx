@@ -144,29 +144,54 @@ const MODEL_TASK_AFFINITIES: Record<string, string[]> = {
   "biomistral": ["medical"],
 };
 
-function scoreModel(model: any, task: typeof TASK_TYPES[number]): number {
+interface ScoreResult {
+  score: number;
+  reasons: string[];
+  confidence: "high" | "medium" | "low";
+}
+
+function scoreModel(model: any, task: typeof TASK_TYPES[number]): ScoreResult {
   const name = (model.name || "").toLowerCase();
   const family = (model.family || "").toLowerCase();
   const paramStr = model.parameterSize || "";
   const paramNum = parseFloat(paramStr) || 0;
   let score = 0;
+  const reasons: string[] = [];
 
   for (const [modelKey, tasks] of Object.entries(MODEL_TASK_AFFINITIES)) {
     if (name.includes(modelKey) && tasks.includes(task.id)) {
       score += 60;
+      reasons.push(`Purpose-built for ${task.label.toLowerCase()} tasks`);
       break;
     }
   }
 
-  if (task.keywords.some(kw => name.includes(kw))) score += 50;
-  if (task.families.some(f => family.includes(f) || name.includes(f))) score += 30;
-  if (paramNum >= task.minParams) score += 10;
-  if (paramNum >= 13) score += 5;
+  if (task.keywords.some(kw => name.includes(kw))) {
+    score += 50;
+    reasons.push(`Name indicates ${task.label.toLowerCase()} specialization`);
+  }
+  if (task.families.some(f => family.includes(f) || name.includes(f))) {
+    score += 30;
+    reasons.push(`${(family || name.split(":")[0]).replace(/^\w/, c => c.toUpperCase())} family excels at this`);
+  }
+  if (paramNum >= task.minParams) {
+    score += 10;
+    reasons.push(`${paramStr || paramNum + "B"} parameters meets task requirements`);
+  }
+  if (paramNum >= 13) {
+    score += 5;
+    reasons.push("Large model improves quality");
+  }
   const quantLevel = (model.quantizationLevel || "").toUpperCase();
-  if (quantLevel.includes("Q6") || quantLevel.includes("Q8") || quantLevel.includes("F16")) score += 5;
-  else if (quantLevel.includes("Q4")) score += 2;
+  if (quantLevel.includes("Q6") || quantLevel.includes("Q8") || quantLevel.includes("F16")) {
+    score += 5;
+    reasons.push(`High-quality quantization (${model.quantizationLevel})`);
+  } else if (quantLevel.includes("Q4")) {
+    score += 2;
+  }
 
-  return score;
+  const confidence: "high" | "medium" | "low" = score >= 80 ? "high" : score >= 40 ? "medium" : "low";
+  return { score, reasons, confidence };
 }
 
 function formatBytes(bytes: number): string {
@@ -316,7 +341,10 @@ export default function LlmManager() {
     const task = TASK_TYPES.find(t => t.id === resolvedTask);
     if (!task) return [];
     return modelsArr
-      .map((m: any) => ({ model: m, score: scoreModel(m, task) }))
+      .map((m: any) => {
+        const result = scoreModel(m, task);
+        return { model: m, ...result };
+      })
       .sort((a, b) => b.score - a.score)
       .slice(0, 3);
   }, [resolvedTask, modelsArr]);
@@ -475,57 +503,70 @@ export default function LlmManager() {
                   {advisorResults.map((r, idx) => {
                     const isTop = idx === 0 && r.score > 0;
                     const isLoaded = runningNames.has(r.model.name);
+                    const confColor = r.confidence === "high" ? "text-emerald-400 bg-emerald-500/15" : r.confidence === "medium" ? "text-blue-400 bg-blue-500/15" : "text-muted-foreground bg-white/[0.06]";
                     return (
                       <div key={r.model.name} className={cn(
-                        "flex items-center gap-3 rounded-lg p-2 border transition-all",
+                        "rounded-lg border transition-all",
                         isTop
                           ? "bg-amber-500/[0.05] border-amber-500/20"
                           : "bg-white/[0.01] border-white/[0.04]"
                       )}>
-                        <div className={cn(
-                          "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0",
-                          isTop ? "bg-amber-500/20 text-amber-400" : "bg-white/[0.06] text-muted-foreground"
-                        )}>
-                          {isTop ? <Star className="w-2.5 h-2.5" /> : idx + 1}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className={cn("text-xs font-medium truncate", isTop ? "text-amber-400" : "text-white")}>
-                              {r.model.name}
-                            </span>
-                            {isTop && (
-                              <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-[8px] font-semibold text-amber-400 uppercase flex-shrink-0">
-                                Best Pick
+                        <div className="flex items-center gap-3 p-2">
+                          <div className={cn(
+                            "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0",
+                            isTop ? "bg-amber-500/20 text-amber-400" : "bg-white/[0.06] text-muted-foreground"
+                          )}>
+                            {isTop ? <Star className="w-2.5 h-2.5" /> : idx + 1}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={cn("text-xs font-medium truncate", isTop ? "text-amber-400" : "text-white")}>
+                                {r.model.name}
                               </span>
-                            )}
-                            {isLoaded && (
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-[8px] font-semibold text-emerald-400 uppercase flex-shrink-0">
-                                Loaded
+                              {isTop && (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-[8px] font-semibold text-amber-400 uppercase flex-shrink-0">
+                                  Best Pick
+                                </span>
+                              )}
+                              {isLoaded && (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-[8px] font-semibold text-emerald-400 uppercase flex-shrink-0">
+                                  Loaded
+                                </span>
+                              )}
+                              <span className={cn("px-1.5 py-0.5 rounded text-[8px] font-semibold uppercase flex-shrink-0", confColor)}>
+                                {r.confidence}
                               </span>
+                            </div>
+                            <div className="flex items-center gap-3 mt-0.5 text-[10px] text-muted-foreground">
+                              <span>{formatBytes(r.model.size || 0)}</span>
+                              {r.model.parameterSize && <span>{r.model.parameterSize}</span>}
+                              {r.model.family && <span className="text-white/30">{r.model.family}</span>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <div className="flex items-center gap-1">
+                              <Zap className={cn("w-3 h-3", r.score >= 50 ? "text-amber-400" : r.score >= 20 ? "text-blue-400" : "text-muted-foreground/40")} />
+                              <span className={cn("text-[10px] font-bold tabular-nums", r.score >= 50 ? "text-amber-400" : r.score >= 20 ? "text-blue-400" : "text-muted-foreground/40")}>
+                                {r.score}
+                              </span>
+                            </div>
+                            {!isLoaded && (
+                              <button onClick={() => handleLoadUnload(r.model.name, false)}
+                                disabled={loadingModel === r.model.name}
+                                title="Load into memory"
+                                className="p-1 rounded-lg hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-400 transition-all disabled:opacity-30">
+                                {loadingModel === r.model.name ? <Loader2 className="w-3 h-3 animate-spin" /> : <Power className="w-3 h-3" />}
+                              </button>
                             )}
                           </div>
-                          <div className="flex items-center gap-3 mt-0.5 text-[10px] text-muted-foreground">
-                            <span>{formatBytes(r.model.size || 0)}</span>
-                            {r.model.parameterSize && <span>{r.model.parameterSize}</span>}
-                            {r.model.family && <span className="text-white/30">{r.model.family}</span>}
-                          </div>
                         </div>
-                        <div className="flex items-center gap-2 flex-shrink-0">
-                          <div className="flex items-center gap-1">
-                            <Zap className={cn("w-3 h-3", r.score >= 50 ? "text-amber-400" : r.score >= 20 ? "text-blue-400" : "text-muted-foreground/40")} />
-                            <span className={cn("text-[10px] font-bold tabular-nums", r.score >= 50 ? "text-amber-400" : r.score >= 20 ? "text-blue-400" : "text-muted-foreground/40")}>
-                              {r.score}
-                            </span>
+                        {r.reasons.length > 0 && (
+                          <div className="px-2 pb-2 pt-0">
+                            <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+                              {r.reasons.slice(0, 3).join(" · ")}
+                            </p>
                           </div>
-                          {!isLoaded && (
-                            <button onClick={() => handleLoadUnload(r.model.name, false)}
-                              disabled={loadingModel === r.model.name}
-                              title="Load into memory"
-                              className="p-1 rounded-lg hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-400 transition-all disabled:opacity-30">
-                              {loadingModel === r.model.name ? <Loader2 className="w-3 h-3 animate-spin" /> : <Power className="w-3 h-3" />}
-                            </button>
-                          )}
-                        </div>
+                        )}
                       </div>
                     );
                   })}
