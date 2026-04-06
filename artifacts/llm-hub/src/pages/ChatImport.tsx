@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
+import JSZip from "jszip";
 import {
   Upload, FileJson, FileText, Loader2, Check, X, ChevronDown, ChevronUp,
   MessageSquare, Trash2, Eye, AlertCircle, Bot, User, RefreshCw,
-  Download, Search, CheckCircle2, Info, Clock, Hash,
+  Download, Search, CheckCircle2, Info, Clock, Hash, Archive,
 } from "lucide-react";
 
 const API = import.meta.env.BASE_URL ? import.meta.env.BASE_URL.replace(/\/$/, "") : "";
@@ -89,6 +90,46 @@ export default function ChatImport() {
 
   useEffect(() => { loadImported(); }, [loadImported]);
 
+  const extractTextFromZip = useCallback(async (file: File): Promise<{ content: string; filename: string }[]> => {
+    const MAX_ENTRIES = 500;
+    const MAX_ENTRY_BYTES = 50 * 1024 * 1024;
+    const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
+
+    const zip = await JSZip.loadAsync(file);
+    const textExtensions = /\.(json|txt|text|md|markdown|csv|jsonl)$/i;
+    const preferredFiles = /conversations\.json$/i;
+    const results: { content: string; filename: string; preferred: boolean }[] = [];
+
+    const entries = Object.entries(zip.files).filter(([, e]) => !e.dir);
+    if (entries.length > MAX_ENTRIES) {
+      throw new Error(`ZIP contains too many files (${entries.length}). Maximum ${MAX_ENTRIES} entries allowed.`);
+    }
+
+    let totalBytes = 0;
+    for (const [path, entry] of entries) {
+      if (!textExtensions.test(path)) continue;
+      if (entry._data && (entry as any)._data.uncompressedSize > MAX_ENTRY_BYTES) continue;
+      try {
+        const text = await entry.async("string");
+        if (text.length > MAX_ENTRY_BYTES) continue;
+        totalBytes += text.length;
+        if (totalBytes > MAX_TOTAL_BYTES) {
+          throw new Error("ZIP contents exceed maximum total size limit (100MB uncompressed).");
+        }
+        if (text.trim().length > 0) {
+          const name = path.split("/").pop() || path;
+          results.push({ content: text, filename: name, preferred: preferredFiles.test(name) });
+        }
+      } catch (err: any) {
+        if (err.message?.includes("exceed")) throw err;
+      }
+    }
+
+    const preferred = results.filter(r => r.preferred);
+    if (preferred.length > 0) return preferred;
+    return results;
+  }, []);
+
   const handleFile = useCallback(async (file: File) => {
     setError("");
     setPreview(null);
@@ -96,26 +137,83 @@ export default function ChatImport() {
     setUploading(true);
 
     try {
-      const text = await file.text();
-      setFileContent(text);
-      setFileName(file.name);
+      const isZip = file.name.toLowerCase().endsWith(".zip") || file.type === "application/zip" || file.type === "application/x-zip-compressed";
 
-      const res = await fetch(`${API}/api/chat-import/parse`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: text, filename: file.name }),
-      });
+      if (isZip) {
+        const extracted = await extractTextFromZip(file);
+        if (extracted.length === 0) {
+          throw new Error("No readable text or JSON files found in the ZIP archive. The ZIP may only contain images or binary files.");
+        }
 
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to parse file");
+        const jsonFiles = extracted.filter(f => f.filename.toLowerCase().endsWith(".json"));
+        const primary = jsonFiles.length > 0 ? jsonFiles : extracted;
 
-      setPreview(data);
-      setSelectedIndices(data.preview.map((_: any, i: number) => i));
+        let combinedContent: string;
+        let combinedFilename: string;
+
+        if (primary.length === 1) {
+          combinedContent = primary[0].content;
+          combinedFilename = primary[0].filename;
+        } else {
+          const allParsed: any[] = [];
+          let allJson = true;
+          for (const f of primary) {
+            try {
+              const parsed = JSON.parse(f.content);
+              if (Array.isArray(parsed)) {
+                allParsed.push(...parsed);
+              } else {
+                allParsed.push(parsed);
+              }
+            } catch {
+              allJson = false;
+            }
+          }
+          if (allJson && allParsed.length > 0) {
+            combinedContent = JSON.stringify(allParsed);
+            combinedFilename = file.name.replace(/\.zip$/i, ".json");
+          } else {
+            combinedContent = primary.map(f => f.content).join("\n\n---\n\n");
+            combinedFilename = file.name.replace(/\.zip$/i, ".md");
+          }
+        }
+
+        setFileContent(combinedContent);
+        setFileName(combinedFilename);
+
+        const res = await fetch(`${API}/api/chat-import/parse`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: combinedContent, filename: combinedFilename }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to parse file");
+
+        setPreview(data);
+        setSelectedIndices(data.preview.map((_: any, i: number) => i));
+      } else {
+        const text = await file.text();
+        setFileContent(text);
+        setFileName(file.name);
+
+        const res = await fetch(`${API}/api/chat-import/parse`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: text, filename: file.name }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to parse file");
+
+        setPreview(data);
+        setSelectedIndices(data.preview.map((_: any, i: number) => i));
+      }
     } catch (err: any) {
       setError(err.message);
     }
     setUploading(false);
-  }, []);
+  }, [extractTextFromZip]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -238,7 +336,7 @@ export default function ChatImport() {
                     dragOver ? "border-blue-500 bg-blue-500/5" : "border-white/10 hover:border-white/20 bg-white/[0.02]"
                   }`}
                   onClick={() => document.getElementById("chat-import-file")?.click()}>
-                  <input id="chat-import-file" type="file" accept=".json,.md,.txt,.text" className="hidden" onChange={handleFileInput} />
+                  <input id="chat-import-file" type="file" accept=".json,.md,.txt,.text,.zip,.jsonl,.csv,.markdown" className="hidden" onChange={handleFileInput} />
                   {uploading ? (
                     <div className="space-y-2">
                       <Loader2 className="w-10 h-10 mx-auto text-blue-400 animate-spin" />
@@ -248,7 +346,7 @@ export default function ChatImport() {
                     <>
                       <Upload className="w-10 h-10 mx-auto text-muted-foreground/40 mb-3" />
                       <p className="text-sm text-white mb-1">Drop your chat export file here</p>
-                      <p className="text-[11px] text-muted-foreground">Supports JSON, Markdown, and Text files up to 20MB</p>
+                      <p className="text-[11px] text-muted-foreground">Supports ZIP archives, JSON, Markdown, and Text files up to 20MB</p>
                     </>
                   )}
                 </div>
@@ -262,7 +360,7 @@ export default function ChatImport() {
                       <span className="text-xs font-medium text-white">ChatGPT</span>
                     </div>
                     <p className="text-[10px] text-muted-foreground leading-relaxed">
-                      Settings &rarr; Data controls &rarr; Export data. You'll receive a zip with <code className="text-white/60 bg-white/5 px-1 rounded">conversations.json</code>.
+                      Settings &rarr; Data controls &rarr; Export data. Upload the ZIP directly or extract and upload <code className="text-white/60 bg-white/5 px-1 rounded">conversations.json</code>.
                     </p>
                   </div>
 
@@ -274,7 +372,7 @@ export default function ChatImport() {
                       <span className="text-xs font-medium text-white">Claude</span>
                     </div>
                     <p className="text-[10px] text-muted-foreground leading-relaxed">
-                      Settings &rarr; Account &rarr; Export Data. Unzip and upload the <code className="text-white/60 bg-white/5 px-1 rounded">conversations.json</code> file.
+                      Settings &rarr; Account &rarr; Export Data. Upload the ZIP directly or extract and upload <code className="text-white/60 bg-white/5 px-1 rounded">conversations.json</code>.
                     </p>
                   </div>
 
