@@ -248,12 +248,23 @@ export default function LlmManager() {
             </div>
             <p className="text-xl font-bold text-white">{modelsArr.length}</p>
           </div>
-          <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] p-3">
+          <div className={cn(
+            "rounded-xl border p-3",
+            runningArr.length > 1
+              ? "bg-amber-500/[0.04] border-amber-500/20"
+              : "bg-white/[0.02] border-white/[0.06]"
+          )}>
             <div className="flex items-center gap-2 mb-1.5">
-              <Play className="w-3.5 h-3.5 text-emerald-400" />
+              <Play className={cn("w-3.5 h-3.5", runningArr.length > 1 ? "text-amber-400" : "text-emerald-400")} />
               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Loaded</span>
+              {runningArr.length > 1 && (
+                <span className="flex items-center gap-1 ml-auto px-1.5 py-0.5 rounded bg-amber-500/15 text-[8px] font-semibold text-amber-400 uppercase">
+                  <AlertCircle className="w-2.5 h-2.5" />
+                  High CPU Risk
+                </span>
+              )}
             </div>
-            <p className="text-xl font-bold text-white">{runningArr.length}</p>
+            <p className={cn("text-xl font-bold", runningArr.length > 1 ? "text-amber-400" : "text-white")}>{runningArr.length}</p>
           </div>
           <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] p-3">
             <div className="flex items-center gap-2 mb-1.5">
