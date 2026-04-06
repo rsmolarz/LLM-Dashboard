@@ -109,6 +109,7 @@ export default function LlmManager() {
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const [deletingModel, setDeletingModel] = useState<string | null>(null);
   const [loadingModel, setLoadingModel] = useState<string | null>(null);
+  const [unloadingAll, setUnloadingAll] = useState(false);
 
   const modelsArr: any[] = Array.isArray(models) ? models : [];
   const runningArr: any[] = Array.isArray(runningModels) ? runningModels : [];
@@ -173,6 +174,32 @@ export default function LlmManager() {
     setDeletingModel(null);
   };
 
+  const handleUnloadAll = async () => {
+    if (runningArr.length === 0) return;
+    setUnloadingAll(true);
+    const results: string[] = [];
+    for (const rm of runningArr) {
+      try {
+        const res = await fetch("/api/llm/models/load", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: rm.name, keep_alive: 0 }),
+        });
+        const data = await res.json();
+        if (!data.success) results.push(`${rm.name}: ${data.message}`);
+      } catch (err: any) {
+        results.push(`${rm.name}: ${err.message}`);
+      }
+    }
+    if (results.length > 0) {
+      setPullStatus({ type: "error", message: `Some models failed to unload: ${results.join("; ")}` });
+    } else {
+      setPullStatus({ type: "success", message: `Unloaded ${runningArr.length} model${runningArr.length > 1 ? "s" : ""} from memory` });
+    }
+    refreshAll();
+    setUnloadingAll(false);
+  };
+
   const totalSize = modelsArr.reduce((sum: number, m: any) => sum + (m.size || 0), 0);
 
   return (
@@ -189,6 +216,13 @@ export default function LlmManager() {
         </div>
 
         <div className="flex items-center gap-2">
+          {runningArr.length > 0 && (
+            <button onClick={handleUnloadAll} disabled={unloadingAll}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-medium bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+              {unloadingAll ? <Loader2 className="w-3 h-3 animate-spin" /> : <PowerOff className="w-3 h-3" />}
+              {unloadingAll ? "Unloading..." : `Unload All (${runningArr.length})`}
+            </button>
+          )}
           <div className={cn(
             "flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[10px] font-medium",
             isOnline
