@@ -76,6 +76,7 @@
   },
   "dependencies": {
     "@workspace/replit-auth-web": "workspace:*",
+    "firebase": "^12.11.0",
     "jszip": "^3.10.1"
   }
 }
