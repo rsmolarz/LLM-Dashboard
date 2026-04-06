@@ -168,6 +168,7 @@ export default function LlmManager() {
   const [unloadingAll, setUnloadingAll] = useState(false);
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
   const [taskQuery, setTaskQuery] = useState("");
+  const [committedQuery, setCommittedQuery] = useState("");
 
   const modelsArr: any[] = Array.isArray(models) ? models : [];
   const runningArr: any[] = Array.isArray(runningModels) ? runningModels : [];
@@ -260,8 +261,13 @@ export default function LlmManager() {
 
   const resolvedTask = useMemo(() => {
     if (selectedTask) return selectedTask;
-    return matchTaskFromQuery(taskQuery);
-  }, [selectedTask, taskQuery]);
+    return matchTaskFromQuery(committedQuery);
+  }, [selectedTask, committedQuery]);
+
+  const handleRecommend = () => {
+    setSelectedTask(null);
+    setCommittedQuery(taskQuery);
+  };
 
   const advisorResults = useMemo(() => {
     if (!resolvedTask || modelsArr.length === 0) return [];
@@ -371,8 +377,8 @@ export default function LlmManager() {
           <div className="flex items-center gap-2">
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
             <h2 className="text-xs font-semibold text-white uppercase tracking-wider">Best Model for Task</h2>
-            {(selectedTask || taskQuery) && (
-              <button onClick={() => { setSelectedTask(null); setTaskQuery(""); }} className="ml-auto text-muted-foreground hover:text-white transition-all">
+            {(selectedTask || committedQuery) && (
+              <button onClick={() => { setSelectedTask(null); setTaskQuery(""); setCommittedQuery(""); }} className="ml-auto text-muted-foreground hover:text-white transition-all">
                 <X className="w-3 h-3" />
               </button>
             )}
@@ -381,22 +387,28 @@ export default function LlmManager() {
             <Search className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
             <input
               value={taskQuery}
-              onChange={e => { setTaskQuery(e.target.value); setSelectedTask(null); }}
+              onChange={e => { setTaskQuery(e.target.value); }}
+              onKeyDown={e => { if (e.key === "Enter" && taskQuery.trim()) handleRecommend(); }}
               placeholder='Describe your task (e.g. "write Python code", "summarize a document")'
               className="flex-1 bg-transparent text-sm text-white placeholder:text-muted-foreground/30 outline-none"
             />
-            {resolvedTask && !selectedTask && taskQuery && (
+            {resolvedTask && !selectedTask && committedQuery && (
               <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-amber-500/15 text-[8px] font-semibold text-amber-400 uppercase">
                 {TASK_TYPES.find(t => t.id === resolvedTask)?.label}
               </span>
             )}
+            <button onClick={handleRecommend} disabled={!taskQuery.trim()}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/25 text-amber-400 text-[10px] font-semibold hover:bg-amber-500/25 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex-shrink-0">
+              <Sparkles className="w-3 h-3" />
+              Recommend
+            </button>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {TASK_TYPES.map(task => {
               const Icon = task.icon;
-              const active = selectedTask === task.id || (!selectedTask && resolvedTask === task.id && !!taskQuery);
+              const active = selectedTask === task.id || (!selectedTask && resolvedTask === task.id && !!committedQuery);
               return (
-                <button key={task.id} onClick={() => { setSelectedTask(selectedTask === task.id ? null : task.id); setTaskQuery(""); }}
+                <button key={task.id} onClick={() => { setSelectedTask(selectedTask === task.id ? null : task.id); setTaskQuery(""); setCommittedQuery(""); }}
                   className={cn(
                     "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-medium transition-all",
                     active
