@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   Server, Cpu, HardDrive, Loader2, RefreshCw, Trash2, Download,
   Play, CheckCircle2, XCircle, AlertCircle, MemoryStick, Clock,
-  Package, ChevronDown, ChevronUp, Plus, X,
+  Package, ChevronDown, ChevronUp, Plus, X, Power, PowerOff,
 } from "lucide-react";
 import {
   useListModels,
@@ -51,6 +51,7 @@ export default function LlmManager() {
   const [pullStatus, setPullStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [expandedModel, setExpandedModel] = useState<string | null>(null);
   const [deletingModel, setDeletingModel] = useState<string | null>(null);
+  const [loadingModel, setLoadingModel] = useState<string | null>(null);
 
   const modelsArr: any[] = Array.isArray(models) ? models : [];
   const runningArr: any[] = Array.isArray(runningModels) ? runningModels : [];
@@ -80,6 +81,27 @@ export default function LlmManager() {
       setPullStatus({ type: "error", message: err.message || "Pull failed" });
     }
     setPulling(false);
+  };
+
+  const handleLoadUnload = async (name: string, unload: boolean) => {
+    setLoadingModel(name);
+    try {
+      const res = await fetch("/api/llm/models/load", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, keep_alive: unload ? 0 : "5m" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setPullStatus({ type: "success", message: data.message });
+        refreshAll();
+      } else {
+        setPullStatus({ type: "error", message: data.message || "Operation failed" });
+      }
+    } catch (err: any) {
+      setPullStatus({ type: "error", message: err.message || "Operation failed" });
+    }
+    setLoadingModel(null);
   };
 
   const handleDelete = async (name: string) => {
@@ -308,6 +330,21 @@ export default function LlmManager() {
                         </div>
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0">
+                        {isRunning ? (
+                          <button onClick={e => { e.stopPropagation(); handleLoadUnload(model.name, true); }}
+                            disabled={loadingModel === model.name}
+                            title="Unload from memory"
+                            className="p-1.5 rounded-lg hover:bg-orange-500/10 text-muted-foreground hover:text-orange-400 transition-all disabled:opacity-30">
+                            {loadingModel === model.name ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PowerOff className="w-3.5 h-3.5" />}
+                          </button>
+                        ) : (
+                          <button onClick={e => { e.stopPropagation(); handleLoadUnload(model.name, false); }}
+                            disabled={loadingModel === model.name}
+                            title="Load into memory"
+                            className="p-1.5 rounded-lg hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-400 transition-all disabled:opacity-30">
+                            {loadingModel === model.name ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Power className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
                         <button onClick={e => { e.stopPropagation(); handleDelete(model.name); }}
                           disabled={isDeleting}
                           className="p-1.5 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-400 transition-all disabled:opacity-30">

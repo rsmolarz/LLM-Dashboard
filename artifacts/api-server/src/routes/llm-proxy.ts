@@ -317,6 +317,44 @@ router.post("/llm/models/pull-stream", async (req, res): Promise<void> => {
   }
 });
 
+router.post("/llm/models/load", async (req, res): Promise<void> => {
+  const { name, keep_alive } = req.body || {};
+  if (!name) {
+    res.status(400).json({ success: false, message: "Model name is required" });
+    return;
+  }
+
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.status(503).json({ success: false, message: "Ollama server not configured" });
+    return;
+  }
+
+  try {
+    const genRes = await fetch(`${serverUrl}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: name,
+        prompt: "",
+        stream: false,
+        keep_alive: keep_alive ?? "5m",
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!genRes.ok) {
+      const text = await genRes.text();
+      res.json({ success: false, message: `Failed: ${text}` });
+      return;
+    }
+
+    res.json({ success: true, message: keep_alive === 0 ? `Unloaded ${name}` : `Loaded ${name}` });
+  } catch (err) {
+    res.json({ success: false, message: err instanceof Error ? err.message : "Operation failed" });
+  }
+});
+
 router.delete("/llm/models/:name", async (req, res): Promise<void> => {
   const raw = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
 
