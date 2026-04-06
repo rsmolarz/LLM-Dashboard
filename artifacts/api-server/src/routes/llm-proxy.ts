@@ -186,6 +186,130 @@ router.get("/vps-status", async (_req, res): Promise<void> => {
   }
 });
 
+router.get("/ollama/status", async (_req, res): Promise<void> => {
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.json({ online: false, error: "Ollama server not configured", models: [] });
+    return;
+  }
+
+  try {
+    const psRes = await fetch(`${serverUrl}/api/ps`, {
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (!psRes.ok) {
+      res.json({ online: false, error: `Server returned ${psRes.status}`, models: [] });
+      return;
+    }
+
+    const data = (await psRes.json()) as {
+      models?: Array<{
+        name: string;
+        size: number;
+        size_vram: number;
+        expires_at: string;
+        details?: { parameter_size?: string; family?: string; quantization_level?: string };
+      }>;
+    };
+
+    res.json({
+      online: true,
+      models: (data.models ?? []).map(m => ({
+        name: m.name,
+        size: m.size,
+        sizeVram: m.size_vram,
+        expiresAt: m.expires_at,
+        parameterSize: m.details?.parameter_size ?? null,
+        family: m.details?.family ?? null,
+        quantizationLevel: m.details?.quantization_level ?? null,
+      })),
+    });
+  } catch (err) {
+    res.json({
+      online: false,
+      error: err instanceof Error ? err.message : "Connection failed",
+      models: [],
+    });
+  }
+});
+
+router.post("/ollama/load", async (req, res): Promise<void> => {
+  const { model, keep_alive } = req.body || {};
+  if (!model) {
+    res.status(400).json({ success: false, message: "model field is required" });
+    return;
+  }
+
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.status(503).json({ success: false, message: "Ollama server not configured" });
+    return;
+  }
+
+  try {
+    const genRes = await fetch(`${serverUrl}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        prompt: "",
+        stream: false,
+        keep_alive: keep_alive ?? "5m",
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!genRes.ok) {
+      const text = await genRes.text();
+      res.json({ success: false, message: `Failed to load model: ${text}` });
+      return;
+    }
+
+    res.json({ success: true, message: `Model ${model} loaded with keep_alive=${keep_alive ?? "5m"}` });
+  } catch (err) {
+    res.json({ success: false, message: err instanceof Error ? err.message : "Load failed" });
+  }
+});
+
+router.post("/ollama/unload", async (req, res): Promise<void> => {
+  const { model } = req.body || {};
+  if (!model) {
+    res.status(400).json({ success: false, message: "model field is required" });
+    return;
+  }
+
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) {
+    res.status(503).json({ success: false, message: "Ollama server not configured" });
+    return;
+  }
+
+  try {
+    const genRes = await fetch(`${serverUrl}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        prompt: "",
+        stream: false,
+        keep_alive: 0,
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!genRes.ok) {
+      const text = await genRes.text();
+      res.json({ success: false, message: `Failed to unload model: ${text}` });
+      return;
+    }
+
+    res.json({ success: true, message: `Model ${model} unloaded` });
+  } catch (err) {
+    res.json({ success: false, message: err instanceof Error ? err.message : "Unload failed" });
+  }
+});
+
 router.get("/llm/models", async (_req, res): Promise<void> => {
   const serverUrl = await getServerUrl();
   if (!serverUrl) {
