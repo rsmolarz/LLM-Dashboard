@@ -6,7 +6,7 @@ import {
   Database, Mic, HardDrive, BookOpen, Beaker, FlaskConical, Key, Library, Sun,
   Moon, Trophy, Workflow, GitCompareArrows, FileText, BrainCircuit, DollarSign,
   Users, Puzzle, Code2, Download, ChevronDown, ChevronRight, PanelLeftClose,
-  PanelLeft,
+  PanelLeft, Settings2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
@@ -105,6 +105,7 @@ const navSections: NavSection[] = [
     title: "Admin",
     items: [
       { href: "/team", label: "Team", icon: Users, adminOnly: false },
+      { href: "/llm-manager", label: "LLM Manager", icon: Settings2, adminOnly: false },
       { href: "/databases", label: "Databases", icon: HardDrive, adminOnly: false },
       { href: "/platform-api", label: "Platform API", icon: Key, adminOnly: false },
       { href: "/extension", label: "Extension", icon: Puzzle, adminOnly: false },

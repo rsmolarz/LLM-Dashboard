@@ -39,6 +39,7 @@ import Compliance from "@/pages/Compliance";
 import BrowserExtension from "@/pages/BrowserExtension";
 import CodeTerminal from "@/pages/CodeTerminal";
 import ChatImport from "@/pages/ChatImport";
+import LlmManager from "@/pages/LlmManager";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -88,6 +89,7 @@ function Router() {
         <Route path="/extension" component={BrowserExtension} />
         <Route path="/code" component={CodeTerminal} />
         <Route path="/chat-import" component={ChatImport} />
+        <Route path="/llm-manager" component={LlmManager} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
