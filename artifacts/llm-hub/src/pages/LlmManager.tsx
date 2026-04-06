@@ -109,12 +109,47 @@ function matchTaskFromQuery(query: string): string | null {
   return bestId;
 }
 
+const MODEL_TASK_AFFINITIES: Record<string, string[]> = {
+  "llama3.2": ["chat", "creative", "summarization"],
+  "llama3.1": ["chat", "creative", "summarization", "analysis"],
+  "llama3": ["chat", "creative", "summarization"],
+  "llama2": ["chat", "creative"],
+  "mistral": ["chat", "creative", "summarization", "analysis"],
+  "mixtral": ["analysis", "reasoning", "creative", "coding"],
+  "qwen2.5": ["coding", "analysis", "reasoning", "translation"],
+  "qwen2": ["coding", "analysis", "translation"],
+  "deepseek-coder": ["coding"],
+  "deepseek": ["coding", "reasoning"],
+  "codellama": ["coding"],
+  "codegemma": ["coding"],
+  "starcoder": ["coding"],
+  "granite-code": ["coding"],
+  "gemma": ["chat", "summarization", "translation"],
+  "phi": ["chat", "analysis", "summarization", "reasoning"],
+  "llava": ["vision"],
+  "bakllava": ["vision"],
+  "moondream": ["vision"],
+  "command-r": ["analysis", "reasoning", "creative"],
+  "aya": ["translation", "chat"],
+  "yi": ["creative", "chat"],
+  "vicuna": ["chat"],
+  "openchat": ["chat"],
+  "neural-chat": ["chat"],
+};
+
 function scoreModel(model: any, task: typeof TASK_TYPES[number]): number {
   const name = (model.name || "").toLowerCase();
   const family = (model.family || "").toLowerCase();
   const paramStr = model.parameterSize || "";
   const paramNum = parseFloat(paramStr) || 0;
   let score = 0;
+
+  for (const [modelKey, tasks] of Object.entries(MODEL_TASK_AFFINITIES)) {
+    if (name.includes(modelKey) && tasks.includes(task.id)) {
+      score += 60;
+      break;
+    }
+  }
 
   if (task.keywords.some(kw => name.includes(kw))) score += 50;
   if (task.families.some(f => family.includes(f) || name.includes(f))) score += 30;
