@@ -120,6 +120,7 @@ const MODEL_TASK_AFFINITIES: Record<string, string[]> = {
   "mixtral": ["analysis", "reasoning", "creative", "coding"],
   "qwen2.5": ["coding", "analysis", "reasoning", "translation"],
   "qwen2": ["coding", "analysis", "translation"],
+  "deepseek-r1": ["coding", "reasoning", "analysis"],
   "deepseek-coder": ["coding"],
   "deepseek": ["coding", "reasoning"],
   "codellama": ["coding"],
