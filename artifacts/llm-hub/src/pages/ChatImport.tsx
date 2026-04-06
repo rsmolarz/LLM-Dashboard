@@ -57,12 +57,52 @@ const SOURCE_LABELS: Record<string, string> = {
   json: "JSON",
 };
 
+const CHUNK_SIZE_BYTES = 2 * 1024 * 1024;
+
+function splitJsonIntoChunks(content: string, filename: string): { content: string; filename: string }[] {
+  try {
+    const data = JSON.parse(content);
+    if (!Array.isArray(data) || data.length <= 1) {
+      return [{ content, filename }];
+    }
+
+    const chunks: { content: string; filename: string }[] = [];
+    let currentBatch: any[] = [];
+    let currentSize = 0;
+
+    for (const item of data) {
+      const itemStr = JSON.stringify(item);
+      if (currentBatch.length > 0 && currentSize + itemStr.length > CHUNK_SIZE_BYTES) {
+        chunks.push({
+          content: JSON.stringify(currentBatch),
+          filename,
+        });
+        currentBatch = [];
+        currentSize = 0;
+      }
+      currentBatch.push(item);
+      currentSize += itemStr.length;
+    }
+
+    if (currentBatch.length > 0) {
+      chunks.push({
+        content: JSON.stringify(currentBatch),
+        filename,
+      });
+    }
+
+    return chunks.length > 0 ? chunks : [{ content, filename }];
+  } catch {
+    return [{ content, filename }];
+  }
+}
+
 export default function ChatImport() {
   const [tab, setTab] = useState<"import" | "history">("import");
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<ImportPreview | null>(null);
-  const [fileContent, setFileContent] = useState<string>("");
+  const [fileChunks, setFileChunks] = useState<{ content: string; filename: string }[]>([]);
   const [fileName, setFileName] = useState<string>("");
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
   const [importing, setImporting] = useState(false);
@@ -75,6 +115,7 @@ export default function ChatImport() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedPreview, setExpandedPreview] = useState<number | null>(null);
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number; phase: string } | null>(null);
 
   const loadImported = useCallback(async () => {
     setLoadingImported(true);
@@ -130,16 +171,50 @@ export default function ChatImport() {
     return results;
   }, []);
 
+  const [chunkConvCounts, setChunkConvCounts] = useState<number[]>([]);
+
+  const parseChunks = useCallback(async (chunks: { content: string; filename: string }[]): Promise<ImportPreview> => {
+    const aggregated: ImportPreview = { format: "", totalConversations: 0, totalMessages: 0, preview: [] };
+    const counts: number[] = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      setChunkProgress({ current: i + 1, total: chunks.length, phase: "Analyzing" });
+      const res = await fetch(`${API}/api/chat-import/parse`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: chunks[i].content, filename: chunks[i].filename }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Failed to parse chunk ${i + 1}`);
+
+      if (i === 0) aggregated.format = data.format;
+      aggregated.totalConversations += data.totalConversations;
+      aggregated.totalMessages += data.totalMessages;
+      aggregated.preview.push(...data.preview);
+      counts.push(data.totalConversations);
+    }
+
+    setChunkConvCounts(counts);
+    setChunkProgress(null);
+    return aggregated;
+  }, []);
+
   const handleFile = useCallback(async (file: File) => {
     setError("");
     setPreview(null);
     setImportResult(null);
     setUploading(true);
+    setChunkProgress(null);
 
     try {
       const isZip = file.name.toLowerCase().endsWith(".zip") || file.type === "application/zip" || file.type === "application/x-zip-compressed";
 
+      let rawContent: string;
+      let rawFilename: string;
+
       if (isZip) {
+        setChunkProgress({ current: 0, total: 0, phase: "Extracting ZIP" });
         const extracted = await extractTextFromZip(file);
         if (extracted.length === 0) {
           throw new Error("No readable text or JSON files found in the ZIP archive. The ZIP may only contain images or binary files.");
@@ -148,12 +223,9 @@ export default function ChatImport() {
         const jsonFiles = extracted.filter(f => f.filename.toLowerCase().endsWith(".json"));
         const primary = jsonFiles.length > 0 ? jsonFiles : extracted;
 
-        let combinedContent: string;
-        let combinedFilename: string;
-
         if (primary.length === 1) {
-          combinedContent = primary[0].content;
-          combinedFilename = primary[0].filename;
+          rawContent = primary[0].content;
+          rawFilename = primary[0].filename;
         } else {
           const allParsed: any[] = [];
           let allJson = true;
@@ -170,50 +242,32 @@ export default function ChatImport() {
             }
           }
           if (allJson && allParsed.length > 0) {
-            combinedContent = JSON.stringify(allParsed);
-            combinedFilename = file.name.replace(/\.zip$/i, ".json");
+            rawContent = JSON.stringify(allParsed);
+            rawFilename = file.name.replace(/\.zip$/i, ".json");
           } else {
-            combinedContent = primary.map(f => f.content).join("\n\n---\n\n");
-            combinedFilename = file.name.replace(/\.zip$/i, ".md");
+            rawContent = primary.map(f => f.content).join("\n\n---\n\n");
+            rawFilename = file.name.replace(/\.zip$/i, ".md");
           }
         }
-
-        setFileContent(combinedContent);
-        setFileName(combinedFilename);
-
-        const res = await fetch(`${API}/api/chat-import/parse`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: combinedContent, filename: combinedFilename }),
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to parse file");
-
-        setPreview(data);
-        setSelectedIndices(data.preview.map((_: any, i: number) => i));
       } else {
-        const text = await file.text();
-        setFileContent(text);
-        setFileName(file.name);
-
-        const res = await fetch(`${API}/api/chat-import/parse`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: text, filename: file.name }),
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to parse file");
-
-        setPreview(data);
-        setSelectedIndices(data.preview.map((_: any, i: number) => i));
+        rawContent = await file.text();
+        rawFilename = file.name;
       }
+
+      const chunks = splitJsonIntoChunks(rawContent, rawFilename);
+      setFileChunks(chunks);
+      setFileName(rawFilename);
+
+      const data = await parseChunks(chunks);
+
+      setPreview(data);
+      setSelectedIndices(data.preview.map((_: any, i: number) => i));
     } catch (err: any) {
       setError(err.message);
     }
     setUploading(false);
-  }, [extractTextFromZip]);
+    setChunkProgress(null);
+  }, [extractTextFromZip, parseChunks]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -228,26 +282,62 @@ export default function ChatImport() {
   }, [handleFile]);
 
   const doImport = async () => {
-    if (!fileContent || !fileName || selectedIndices.length === 0) return;
+    if (fileChunks.length === 0 || !fileName || selectedIndices.length === 0) return;
     setImporting(true);
     setError("");
 
     try {
-      const res = await fetch(`${API}/api/chat-import/import`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: fileContent, filename: fileName, selectedIndices }),
+      let totalImportedConversations = 0;
+      let totalImportedMessages = 0;
+      let totalSkipped = 0;
+      let detectedFormat = "";
+      let globalOffset = 0;
+
+      for (let i = 0; i < fileChunks.length; i++) {
+        setChunkProgress({ current: i + 1, total: fileChunks.length, phase: "Importing" });
+
+        const convCount = chunkConvCounts[i] ?? 1;
+
+        const chunkSelectedIndices = selectedIndices
+          .filter(idx => idx >= globalOffset && idx < globalOffset + convCount)
+          .map(idx => idx - globalOffset);
+
+        globalOffset += convCount;
+
+        if (chunkSelectedIndices.length === 0) continue;
+
+        const res = await fetch(`${API}/api/chat-import/import`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content: fileChunks[i].content,
+            filename: fileChunks[i].filename,
+            selectedIndices: chunkSelectedIndices,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Import failed on batch ${i + 1}`);
+
+        totalImportedConversations += data.importedConversations || 0;
+        totalImportedMessages += data.importedMessages || 0;
+        totalSkipped += data.skippedConversations || 0;
+        if (!detectedFormat) detectedFormat = data.format;
+      }
+
+      setImportResult({
+        success: true,
+        format: detectedFormat,
+        importedConversations: totalImportedConversations,
+        importedMessages: totalImportedMessages,
+        skippedConversations: totalSkipped,
       });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Import failed");
-
-      setImportResult(data);
       loadImported();
     } catch (err: any) {
       setError(err.message);
     }
     setImporting(false);
+    setChunkProgress(null);
   };
 
   const viewChat = async (conv: ImportedConversation) => {
@@ -280,11 +370,13 @@ export default function ChatImport() {
 
   const resetImport = () => {
     setPreview(null);
-    setFileContent("");
+    setFileChunks([]);
     setFileName("");
     setSelectedIndices([]);
     setImportResult(null);
     setError("");
+    setChunkProgress(null);
+    setChunkConvCounts([]);
   };
 
   const toggleSelection = (index: number) => {
@@ -338,9 +430,27 @@ export default function ChatImport() {
                   onClick={() => document.getElementById("chat-import-file")?.click()}>
                   <input id="chat-import-file" type="file" accept=".json,.md,.txt,.text,.zip,.jsonl,.csv,.markdown" className="hidden" onChange={handleFileInput} />
                   {uploading ? (
-                    <div className="space-y-2">
+                    <div className="space-y-3">
                       <Loader2 className="w-10 h-10 mx-auto text-blue-400 animate-spin" />
-                      <p className="text-sm text-white">Parsing file...</p>
+                      <p className="text-sm text-white">
+                        {chunkProgress?.phase === "Extracting ZIP" ? "Extracting ZIP archive..." :
+                         chunkProgress && chunkProgress.total > 1
+                           ? `${chunkProgress.phase} batch ${chunkProgress.current} of ${chunkProgress.total}...`
+                           : "Parsing file..."}
+                      </p>
+                      {chunkProgress && chunkProgress.total > 1 && (
+                        <div className="w-48 mx-auto">
+                          <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                              style={{ width: `${Math.round((chunkProgress.current / chunkProgress.total) * 100)}%` }}
+                            />
+                          </div>
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            {Math.round((chunkProgress.current / chunkProgress.total) * 100)}% complete
+                          </p>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <>
@@ -486,15 +596,39 @@ export default function ChatImport() {
                   ))}
                 </div>
 
-                <button onClick={doImport}
-                  disabled={importing || selectedIndices.length === 0}
-                  className="w-full py-2.5 rounded-xl bg-blue-600/20 border border-blue-500/30 text-blue-400 font-medium text-sm hover:bg-blue-600/30 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2">
-                  {importing ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" /> Importing {selectedIndices.length} conversations...</>
-                  ) : (
-                    <><Download className="w-4 h-4" /> Import {selectedIndices.length} Conversations</>
+                <div className="space-y-2">
+                  {fileChunks.length > 1 && !importing && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-blue-500/[0.04] border border-blue-500/10">
+                      <Archive className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                      <p className="text-[10px] text-blue-300">
+                        Large file detected — will be processed in {fileChunks.length} batches automatically
+                      </p>
+                    </div>
                   )}
-                </button>
+                  {importing && chunkProgress && chunkProgress.total > 1 && (
+                    <div className="px-3 py-2 rounded-lg bg-blue-500/[0.04] border border-blue-500/10 space-y-1.5">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-blue-300">{chunkProgress.phase} batch {chunkProgress.current} of {chunkProgress.total}</span>
+                        <span className="text-muted-foreground">{Math.round((chunkProgress.current / chunkProgress.total) * 100)}%</span>
+                      </div>
+                      <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                          style={{ width: `${Math.round((chunkProgress.current / chunkProgress.total) * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <button onClick={doImport}
+                    disabled={importing || selectedIndices.length === 0}
+                    className="w-full py-2.5 rounded-xl bg-blue-600/20 border border-blue-500/30 text-blue-400 font-medium text-sm hover:bg-blue-600/30 disabled:opacity-30 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2">
+                    {importing ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" /> Importing {selectedIndices.length} conversations...</>
+                    ) : (
+                      <><Download className="w-4 h-4" /> Import {selectedIndices.length} Conversations</>
+                    )}
+                  </button>
+                </div>
               </div>
             )}
 
