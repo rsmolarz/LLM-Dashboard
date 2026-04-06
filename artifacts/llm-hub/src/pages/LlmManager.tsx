@@ -550,13 +550,23 @@ export default function LlmManager() {
                                 {r.score}
                               </span>
                             </div>
-                            {!isLoaded && (
+                            {!isLoaded ? (
                               <button onClick={() => handleLoadUnload(r.model.name, false)}
                                 disabled={loadingModel === r.model.name}
-                                title="Load into memory"
-                                className="p-1 rounded-lg hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-400 transition-all disabled:opacity-30">
+                                className={cn(
+                                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-semibold transition-all disabled:opacity-30",
+                                  isTop
+                                    ? "bg-emerald-500/15 border border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/25"
+                                    : "bg-white/[0.04] border border-white/[0.08] text-muted-foreground hover:text-emerald-400 hover:border-emerald-500/25"
+                                )}>
                                 {loadingModel === r.model.name ? <Loader2 className="w-3 h-3 animate-spin" /> : <Power className="w-3 h-3" />}
+                                {loadingModel === r.model.name ? "Loading…" : "Load Model"}
                               </button>
+                            ) : (
+                              <span className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-500/10 text-[10px] font-semibold text-emerald-400">
+                                <CheckCircle2 className="w-3 h-3" />
+                                Ready
+                              </span>
                             )}
                           </div>
                         </div>
