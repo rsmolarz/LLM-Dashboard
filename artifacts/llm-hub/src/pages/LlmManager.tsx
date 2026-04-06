@@ -83,6 +83,32 @@ const TASK_TYPES = [
   { id: "reasoning", label: "Deep Reasoning", icon: Brain, desc: "Complex multi-step reasoning", families: ["qwen2.5", "mixtral", "command-r", "deepseek", "phi"], keywords: ["reason", "think", "math"], minParams: 14 },
 ] as const;
 
+const TASK_QUERY_MAP: Record<string, string[]> = {
+  coding: ["code", "coding", "python", "javascript", "typescript", "java", "rust", "go", "c++", "program", "debug", "refactor", "function", "api", "script", "developer", "software", "algorithm", "sql", "html", "css", "react", "backend", "frontend", "bug", "compile"],
+  chat: ["chat", "talk", "convers", "question", "answer", "help", "assist", "general", "ask", "explain", "tell me"],
+  creative: ["write", "story", "poem", "creative", "fiction", "novel", "essay", "blog", "article", "copywriting", "narrative", "character", "plot", "screenplay", "lyrics"],
+  analysis: ["analy", "data", "interpret", "evaluat", "assess", "review", "compare", "metric", "statistic", "insight", "trend", "report", "research", "examine"],
+  summarization: ["summar", "condense", "brief", "tldr", "shorten", "digest", "overview", "recap", "key points", "extract"],
+  translation: ["translat", "language", "spanish", "french", "german", "chinese", "japanese", "korean", "arabic", "portuguese", "italian", "hindi", "russian", "convert language", "foreign"],
+  vision: ["image", "picture", "photo", "visual", "see", "look at", "describe image", "ocr", "screenshot", "diagram", "chart image"],
+  reasoning: ["reason", "logic", "math", "calcul", "solve", "proof", "theorem", "complex", "step by step", "think through", "deduc", "infer", "puzzle", "strategy"],
+};
+
+function matchTaskFromQuery(query: string): string | null {
+  if (!query.trim()) return null;
+  const lower = query.toLowerCase();
+  let bestId: string | null = null;
+  let bestCount = 0;
+  for (const [taskId, keywords] of Object.entries(TASK_QUERY_MAP)) {
+    const count = keywords.filter(kw => lower.includes(kw)).length;
+    if (count > bestCount) {
+      bestCount = count;
+      bestId = taskId;
+    }
+  }
+  return bestId;
+}
+
 function scoreModel(model: any, task: typeof TASK_TYPES[number]): number {
   const name = (model.name || "").toLowerCase();
   const family = (model.family || "").toLowerCase();
@@ -141,6 +167,7 @@ export default function LlmManager() {
   const [loadingModel, setLoadingModel] = useState<string | null>(null);
   const [unloadingAll, setUnloadingAll] = useState(false);
   const [selectedTask, setSelectedTask] = useState<string | null>(null);
+  const [taskQuery, setTaskQuery] = useState("");
 
   const modelsArr: any[] = Array.isArray(models) ? models : [];
   const runningArr: any[] = Array.isArray(runningModels) ? runningModels : [];
@@ -231,15 +258,20 @@ export default function LlmManager() {
     setUnloadingAll(false);
   };
 
+  const resolvedTask = useMemo(() => {
+    if (selectedTask) return selectedTask;
+    return matchTaskFromQuery(taskQuery);
+  }, [selectedTask, taskQuery]);
+
   const advisorResults = useMemo(() => {
-    if (!selectedTask || modelsArr.length === 0) return [];
-    const task = TASK_TYPES.find(t => t.id === selectedTask);
+    if (!resolvedTask || modelsArr.length === 0) return [];
+    const task = TASK_TYPES.find(t => t.id === resolvedTask);
     if (!task) return [];
     return modelsArr
       .map((m: any) => ({ model: m, score: scoreModel(m, task) }))
       .sort((a, b) => b.score - a.score)
       .slice(0, 3);
-  }, [selectedTask, modelsArr]);
+  }, [resolvedTask, modelsArr]);
 
   const totalSize = modelsArr.reduce((sum: number, m: any) => sum + (m.size || 0), 0);
 
@@ -339,18 +371,32 @@ export default function LlmManager() {
           <div className="flex items-center gap-2">
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
             <h2 className="text-xs font-semibold text-white uppercase tracking-wider">Best Model for Task</h2>
-            {selectedTask && (
-              <button onClick={() => setSelectedTask(null)} className="ml-auto text-muted-foreground hover:text-white transition-all">
+            {(selectedTask || taskQuery) && (
+              <button onClick={() => { setSelectedTask(null); setTaskQuery(""); }} className="ml-auto text-muted-foreground hover:text-white transition-all">
                 <X className="w-3 h-3" />
               </button>
+            )}
+          </div>
+          <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] px-3 py-2 flex items-center gap-2">
+            <Search className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
+            <input
+              value={taskQuery}
+              onChange={e => { setTaskQuery(e.target.value); setSelectedTask(null); }}
+              placeholder='Describe your task (e.g. "write Python code", "summarize a document")'
+              className="flex-1 bg-transparent text-sm text-white placeholder:text-muted-foreground/30 outline-none"
+            />
+            {resolvedTask && !selectedTask && taskQuery && (
+              <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-amber-500/15 text-[8px] font-semibold text-amber-400 uppercase">
+                {TASK_TYPES.find(t => t.id === resolvedTask)?.label}
+              </span>
             )}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {TASK_TYPES.map(task => {
               const Icon = task.icon;
-              const active = selectedTask === task.id;
+              const active = selectedTask === task.id || (!selectedTask && resolvedTask === task.id && !!taskQuery);
               return (
-                <button key={task.id} onClick={() => setSelectedTask(active ? null : task.id)}
+                <button key={task.id} onClick={() => { setSelectedTask(selectedTask === task.id ? null : task.id); setTaskQuery(""); }}
                   className={cn(
                     "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-medium transition-all",
                     active
@@ -363,10 +409,10 @@ export default function LlmManager() {
               );
             })}
           </div>
-          {selectedTask && (
+          {resolvedTask && (
             <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] p-3 space-y-2">
               <p className="text-[10px] text-muted-foreground">
-                {TASK_TYPES.find(t => t.id === selectedTask)?.desc}
+                {TASK_TYPES.find(t => t.id === resolvedTask)?.desc}
               </p>
               {advisorResults.length === 0 ? (
                 <p className="text-xs text-muted-foreground/60">No models installed to evaluate.</p>
