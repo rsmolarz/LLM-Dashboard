@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Server, Cpu, HardDrive, Loader2, RefreshCw, Trash2, Download,
   Play, CheckCircle2, XCircle, AlertCircle, MemoryStick, Clock,
   Package, ChevronDown, ChevronUp, Plus, X, Power, PowerOff,
-  Activity, Gauge,
+  Activity, Gauge, Sparkles, Zap, Star, Code2, MessageSquare,
+  FileText, Search, Brain, PenTool, Languages, Image,
 } from "lucide-react";
 import {
   useListModels,
@@ -71,6 +72,35 @@ function CpuGauge({ value }: { value: number }) {
   );
 }
 
+const TASK_TYPES = [
+  { id: "coding", label: "Coding", icon: Code2, desc: "Code generation, debugging, refactoring", families: ["qwen2", "qwen2.5", "codellama", "deepseek", "starcoder", "codegemma", "granite-code"], keywords: ["code", "coder", "starcoder", "deepseek-coder", "codellama", "codegemma", "granite-code"], minParams: 3 },
+  { id: "chat", label: "General Chat", icon: MessageSquare, desc: "Conversation, Q&A, general assistance", families: ["llama", "gemma", "qwen2", "qwen2.5", "mistral", "phi", "vicuna", "openchat", "neural-chat"], keywords: ["chat", "instruct"], minParams: 1 },
+  { id: "creative", label: "Creative Writing", icon: PenTool, desc: "Stories, poetry, creative content", families: ["llama", "mistral", "mixtral", "command-r", "yi"], keywords: ["creative", "writer", "story"], minParams: 7 },
+  { id: "analysis", label: "Data Analysis", icon: Search, desc: "Reasoning, logic, data interpretation", families: ["qwen2", "qwen2.5", "mixtral", "command-r", "deepseek", "phi"], keywords: ["analyst", "reason"], minParams: 7 },
+  { id: "summarization", label: "Summarization", icon: FileText, desc: "Condensing long documents", families: ["llama", "mistral", "gemma", "phi", "qwen2"], keywords: ["summary", "summariz"], minParams: 1 },
+  { id: "translation", label: "Translation", icon: Languages, desc: "Multi-language translation tasks", families: ["qwen2", "qwen2.5", "aya", "gemma", "llama", "mistral"], keywords: ["translate", "multilingual", "aya"], minParams: 3 },
+  { id: "vision", label: "Vision / Image", icon: Image, desc: "Image understanding and description", families: ["llava", "bakllava", "moondream", "llama3.2-vision"], keywords: ["llava", "vision", "moondream", "bakllava"], minParams: 1 },
+  { id: "reasoning", label: "Deep Reasoning", icon: Brain, desc: "Complex multi-step reasoning", families: ["qwen2.5", "mixtral", "command-r", "deepseek", "phi"], keywords: ["reason", "think", "math"], minParams: 14 },
+] as const;
+
+function scoreModel(model: any, task: typeof TASK_TYPES[number]): number {
+  const name = (model.name || "").toLowerCase();
+  const family = (model.family || "").toLowerCase();
+  const paramStr = model.parameterSize || "";
+  const paramNum = parseFloat(paramStr) || 0;
+  let score = 0;
+
+  if (task.keywords.some(kw => name.includes(kw))) score += 50;
+  if (task.families.some(f => family.includes(f) || name.includes(f))) score += 30;
+  if (paramNum >= task.minParams) score += 10;
+  if (paramNum >= 13) score += 5;
+  const quantLevel = (model.quantizationLevel || "").toUpperCase();
+  if (quantLevel.includes("Q6") || quantLevel.includes("Q8") || quantLevel.includes("F16")) score += 5;
+  else if (quantLevel.includes("Q4")) score += 2;
+
+  return score;
+}
+
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
   const k = 1024;
@@ -110,6 +140,7 @@ export default function LlmManager() {
   const [deletingModel, setDeletingModel] = useState<string | null>(null);
   const [loadingModel, setLoadingModel] = useState<string | null>(null);
   const [unloadingAll, setUnloadingAll] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<string | null>(null);
 
   const modelsArr: any[] = Array.isArray(models) ? models : [];
   const runningArr: any[] = Array.isArray(runningModels) ? runningModels : [];
@@ -199,6 +230,16 @@ export default function LlmManager() {
     refreshAll();
     setUnloadingAll(false);
   };
+
+  const advisorResults = useMemo(() => {
+    if (!selectedTask || modelsArr.length === 0) return [];
+    const task = TASK_TYPES.find(t => t.id === selectedTask);
+    if (!task) return [];
+    return modelsArr
+      .map((m: any) => ({ model: m, score: scoreModel(m, task) }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+  }, [selectedTask, modelsArr]);
 
   const totalSize = modelsArr.reduce((sum: number, m: any) => sum + (m.size || 0), 0);
 
@@ -292,6 +333,106 @@ export default function LlmManager() {
               <p className="text-xs text-muted-foreground">—</p>
             )}
           </div>
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <h2 className="text-xs font-semibold text-white uppercase tracking-wider">Best Model for Task</h2>
+            {selectedTask && (
+              <button onClick={() => setSelectedTask(null)} className="ml-auto text-muted-foreground hover:text-white transition-all">
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {TASK_TYPES.map(task => {
+              const Icon = task.icon;
+              const active = selectedTask === task.id;
+              return (
+                <button key={task.id} onClick={() => setSelectedTask(active ? null : task.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] font-medium transition-all",
+                    active
+                      ? "bg-amber-500/15 border-amber-500/30 text-amber-400"
+                      : "bg-white/[0.02] border-white/[0.06] text-muted-foreground hover:text-white hover:border-white/[0.12]"
+                  )}>
+                  <Icon className="w-3 h-3" />
+                  {task.label}
+                </button>
+              );
+            })}
+          </div>
+          {selectedTask && (
+            <div className="rounded-xl bg-white/[0.02] border border-white/[0.06] p-3 space-y-2">
+              <p className="text-[10px] text-muted-foreground">
+                {TASK_TYPES.find(t => t.id === selectedTask)?.desc}
+              </p>
+              {advisorResults.length === 0 ? (
+                <p className="text-xs text-muted-foreground/60">No models installed to evaluate.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {advisorResults.map((r, idx) => {
+                    const isTop = idx === 0 && r.score > 0;
+                    const isLoaded = runningNames.has(r.model.name);
+                    return (
+                      <div key={r.model.name} className={cn(
+                        "flex items-center gap-3 rounded-lg p-2 border transition-all",
+                        isTop
+                          ? "bg-amber-500/[0.05] border-amber-500/20"
+                          : "bg-white/[0.01] border-white/[0.04]"
+                      )}>
+                        <div className={cn(
+                          "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0",
+                          isTop ? "bg-amber-500/20 text-amber-400" : "bg-white/[0.06] text-muted-foreground"
+                        )}>
+                          {isTop ? <Star className="w-2.5 h-2.5" /> : idx + 1}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className={cn("text-xs font-medium truncate", isTop ? "text-amber-400" : "text-white")}>
+                              {r.model.name}
+                            </span>
+                            {isTop && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-[8px] font-semibold text-amber-400 uppercase flex-shrink-0">
+                                Best Pick
+                              </span>
+                            )}
+                            {isLoaded && (
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/15 text-[8px] font-semibold text-emerald-400 uppercase flex-shrink-0">
+                                Loaded
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 mt-0.5 text-[10px] text-muted-foreground">
+                            <span>{formatBytes(r.model.size || 0)}</span>
+                            {r.model.parameterSize && <span>{r.model.parameterSize}</span>}
+                            {r.model.family && <span className="text-white/30">{r.model.family}</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <div className="flex items-center gap-1">
+                            <Zap className={cn("w-3 h-3", r.score >= 50 ? "text-amber-400" : r.score >= 20 ? "text-blue-400" : "text-muted-foreground/40")} />
+                            <span className={cn("text-[10px] font-bold tabular-nums", r.score >= 50 ? "text-amber-400" : r.score >= 20 ? "text-blue-400" : "text-muted-foreground/40")}>
+                              {r.score}
+                            </span>
+                          </div>
+                          {!isLoaded && (
+                            <button onClick={() => handleLoadUnload(r.model.name, false)}
+                              disabled={loadingModel === r.model.name}
+                              title="Load into memory"
+                              className="p-1 rounded-lg hover:bg-emerald-500/10 text-muted-foreground hover:text-emerald-400 transition-all disabled:opacity-30">
+                              {loadingModel === r.model.name ? <Loader2 className="w-3 h-3 animate-spin" /> : <Power className="w-3 h-3" />}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {pullStatus && (
