@@ -56,6 +56,7 @@ import teamRouter from "./team";
 import complianceRouter from "./compliance";
 import codeTerminalRouter from "./code-terminal";
 import chatImportRouter from "./chat-import";
+import clawAgentRouter from "./claw-agent";
 
 const router: IRouter = Router();
 
@@ -117,5 +118,6 @@ router.use(teamRouter);
 router.use(complianceRouter);
 router.use("/code-terminal", requireAuth, codeTerminalRouter);
 router.use(chatImportRouter);
+router.use(clawAgentRouter);
 
 export default router;

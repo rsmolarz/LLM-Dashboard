@@ -40,6 +40,7 @@ import BrowserExtension from "@/pages/BrowserExtension";
 import CodeTerminal from "@/pages/CodeTerminal";
 import ChatImport from "@/pages/ChatImport";
 import LlmManager from "@/pages/LlmManager";
+import ClawAgent from "@/pages/ClawAgent";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -90,6 +91,7 @@ function Router() {
         <Route path="/code" component={CodeTerminal} />
         <Route path="/chat-import" component={ChatImport} />
         <Route path="/llm-manager" component={LlmManager} />
+        <Route path="/claw-agent" component={ClawAgent} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

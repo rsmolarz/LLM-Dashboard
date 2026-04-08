@@ -6,7 +6,7 @@ import {
   Database, Mic, HardDrive, BookOpen, Beaker, FlaskConical, Key, Library, Sun,
   Moon, Trophy, Workflow, GitCompareArrows, FileText, BrainCircuit, DollarSign,
   Users, Puzzle, Code2, Download, ChevronDown, ChevronRight, PanelLeftClose,
-  PanelLeft, Settings2,
+  PanelLeft, Settings2, Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
@@ -55,6 +55,7 @@ const navSections: NavSection[] = [
       { href: "/chat", label: "Chat", icon: MessageSquare, adminOnly: false },
       { href: "/chat-import", label: "Chat Import", icon: Download, adminOnly: false },
       { href: "/code", label: "Code Agent", icon: Code2, adminOnly: false },
+      { href: "/claw-agent", label: "Claw Agent", icon: Bot, adminOnly: false },
       { href: "/playground", label: "Playground", icon: Terminal, adminOnly: false },
     ],
   },
