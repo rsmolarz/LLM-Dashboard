@@ -45,7 +45,6 @@ import {
   PanelLeftClose,
   PanelLeft,
   Settings2,
-  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
