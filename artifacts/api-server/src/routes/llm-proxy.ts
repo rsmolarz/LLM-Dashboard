@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+ollamaimport { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { Agent } from "undici";
 import { db, llmConfigTable, documentsTable, documentChunksTable } from "@workspace/db";
@@ -941,5 +941,46 @@ router.post("/llm/chat/stream", async (req, res): Promise<void> => {
     res.end();
   }
 });
+
+router.post("/ollama/create", async (req, res): Promise<void> => {
+    const { name, modelfile } = req.body || {};
+    if (!name || !modelfile) {
+          res.status(400).json({ error: "name and modelfile are required" });
+          return;
+    }
+
+    const serverUrl = await getServerUrl();
+    if (!serverUrl) {
+          res.status(503).json({ error: "Ollama server not configured" });
+          return;
+    }
+
+    try {
+          const createRes = await fetch(`${serverUrl}/api/create`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ name, modelfile, stream: false }),
+                  signal: AbortSignal.timeout(120000),
+          });
+
+          if (!createRes.ok) {
+                  const text = await createRes.text();
+                  res.status(createRes.status).json({ error: `Ollama error: ${text}` });
+                  return;
+          }
+
+          const data = await createRes.json();
+          res.json({ success: true, message: `Model "${name}" created successfully`, data });
+    } catch (err) {
+          res.status(500).json({ error: err instanceof Error ? err.message : "Create failed" });
+    }
+});
+    }
+          }
+          })
+    }
+    }
+    }
+})
 
 export default router;

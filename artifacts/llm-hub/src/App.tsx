@@ -41,6 +41,7 @@ import CodeTerminal from "@/pages/CodeTerminal";
 import ChatImport from "@/pages/ChatImport";
 import LlmManager from "@/pages/LlmManager";
 import ClawAgent from "@/pages/ClawAgent";
+import CreateLlm from "@/pages/CreateLlm";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -92,6 +93,7 @@ function Router() {
         <Route path="/chat-import" component={ChatImport} />
         <Route path="/llm-manager" component={LlmManager} />
         <Route path="/claw-agent" component={ClawAgent} />
+        <Route path="/create-llm" component={CreateLlm} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
@@ -100,20 +102,26 @@ function Router() {
 
 function SessionTimeoutOverlay() {
   const { user } = useAuth();
-  const { showWarning, remainingSeconds, extendSession } = useSessionTimeout(!!user);
+  const { showWarning, remainingSeconds, extendSession } =
+    useSessionTimeout(!!user);
 
   if (!showWarning) return null;
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="bg-card border border-border rounded-xl p-6 max-w-md mx-4 shadow-2xl">
-        <h2 className="text-lg font-bold text-amber-400 mb-2">Session Expiring</h2>
+        <h2 className="text-lg font-bold text-amber-400 mb-2">
+          Session Expiring
+        </h2>
         <p className="text-sm text-muted-foreground mb-4">
-          Your session will expire in <span className="font-bold text-foreground">{remainingSeconds}</span> seconds
-          due to inactivity. This is required for HIPAA compliance.
+          Your session will expire in{" "}
+          <span className="font-bold text-foreground">{remainingSeconds}</span>{" "}
+          seconds due to inactivity. This is required for HIPAA compliance.
         </p>
-        <button onClick={extendSession}
-          className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors">
+        <button
+          onClick={extendSession}
+          className="w-full px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-medium transition-colors"
+        >
           Continue Session
         </button>
       </div>
