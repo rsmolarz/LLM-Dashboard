@@ -11,6 +11,8 @@ import {
   Puzzle, Power, Zap, Brain, ChevronUp, Bug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ProjectManager from "@/components/workbench/ProjectManager";
+import { FolderPlus } from "lucide-react";
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return "0 B";
@@ -953,6 +955,7 @@ const PANELS = [
   { id: "review", label: "Review", icon: Brain, component: CodeReviewPanel },
   { id: "env", label: "Env Vars", icon: Key, component: EnvPanel },
   { id: "process", label: "Process", icon: Activity, component: ProcessPanel },
+  { id: "projects", label: "Projects", icon: FolderPlus, component: () => <ProjectManager catppuccin={true} /> },
 ] as const;
 
 type PanelId = typeof PANELS[number]["id"];

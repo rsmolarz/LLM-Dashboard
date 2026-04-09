@@ -5,9 +5,15 @@ import * as path from "path";
 import * as os from "os";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import multer from "multer";
 
 const router: IRouter = Router();
 const PROJECT_ROOT = path.resolve(process.cwd(), "../..");
+
+const upload = multer({
+  dest: path.join(os.tmpdir(), "workbench-uploads"),
+  limits: { fileSize: 100 * 1024 * 1024 },
+});
 
 function safePath(requestedPath: string): string {
   const resolved = path.resolve(PROJECT_ROOT, requestedPath);
@@ -761,6 +767,228 @@ router.get("/claude-code", async (req, res): Promise<void> => {
     res.end();
   } catch (err: any) {
     try { res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`); res.end(); } catch {}
+  }
+});
+
+router.post("/create-project", async (req, res): Promise<void> => {
+  const { name, template, description } = req.body || {};
+  if (!name || typeof name !== "string") {
+    res.status(400).json({ error: "Project name is required" });
+    return;
+  }
+
+  const slug = name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (!slug) {
+    res.status(400).json({ error: "Invalid project name" });
+    return;
+  }
+
+  const projectDir = path.join(PROJECT_ROOT, "projects", slug);
+
+  try {
+    const projectsDir = path.join(PROJECT_ROOT, "projects");
+    if (!fs.existsSync(projectsDir)) {
+      fs.mkdirSync(projectsDir, { recursive: true });
+    }
+
+    if (fs.existsSync(projectDir)) {
+      res.status(409).json({ error: `Project "${slug}" already exists` });
+      return;
+    }
+
+    fs.mkdirSync(projectDir, { recursive: true });
+
+    const tmpl = template || "blank";
+    if (tmpl === "node" || tmpl === "express") {
+      const pkg = {
+        name: slug,
+        version: "1.0.0",
+        description: description || "",
+        main: "index.js",
+        scripts: { start: tmpl === "express" ? "node index.js" : "node index.js", dev: tmpl === "express" ? "node --watch index.js" : "node --watch index.js" },
+        dependencies: tmpl === "express" ? { express: "^4.21.0" } : {},
+      };
+      fs.writeFileSync(path.join(projectDir, "package.json"), JSON.stringify(pkg, null, 2));
+      if (tmpl === "express") {
+        fs.writeFileSync(path.join(projectDir, "index.js"),
+          `const express = require('express');\nconst app = express();\nconst PORT = process.env.PORT || 3000;\n\napp.get('/', (req, res) => {\n  res.json({ message: 'Hello from ${name}!' });\n});\n\napp.listen(PORT, () => console.log(\`${name} running on port \${PORT}\`));\n`);
+      } else {
+        fs.writeFileSync(path.join(projectDir, "index.js"), `console.log('Hello from ${name}!');\n`);
+      }
+    } else if (tmpl === "python") {
+      fs.writeFileSync(path.join(projectDir, "main.py"), `# ${name}\n# ${description || ''}\n\ndef main():\n    print("Hello from ${name}!")\n\nif __name__ == "__main__":\n    main()\n`);
+      fs.writeFileSync(path.join(projectDir, "requirements.txt"), "");
+    } else if (tmpl === "react") {
+      const pkg = {
+        name: slug,
+        version: "1.0.0",
+        description: description || "",
+        scripts: { dev: "vite", build: "vite build" },
+        dependencies: { react: "^19.0.0", "react-dom": "^19.0.0" },
+        devDependencies: { vite: "^6.0.0", "@vitejs/plugin-react": "^4.0.0" },
+      };
+      fs.writeFileSync(path.join(projectDir, "package.json"), JSON.stringify(pkg, null, 2));
+      fs.mkdirSync(path.join(projectDir, "src"), { recursive: true });
+      fs.writeFileSync(path.join(projectDir, "src", "App.jsx"), `export default function App() {\n  return <div><h1>${name}</h1><p>${description || 'New React app'}</p></div>;\n}\n`);
+      fs.writeFileSync(path.join(projectDir, "index.html"), `<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="UTF-8" /><title>${name}</title></head>\n<body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>\n</html>\n`);
+      fs.writeFileSync(path.join(projectDir, "src", "main.jsx"), `import React from 'react';\nimport ReactDOM from 'react-dom/client';\nimport App from './App';\nReactDOM.createRoot(document.getElementById('root')).render(<App />);\n`);
+    } else if (tmpl === "html") {
+      fs.writeFileSync(path.join(projectDir, "index.html"), `<!DOCTYPE html>\n<html lang="en">\n<head>\n  <meta charset="UTF-8" />\n  <meta name="viewport" content="width=device-width, initial-scale=1.0" />\n  <title>${name}</title>\n  <link rel="stylesheet" href="style.css" />\n</head>\n<body>\n  <h1>${name}</h1>\n  <p>${description || 'New project'}</p>\n  <script src="script.js"></script>\n</body>\n</html>\n`);
+      fs.writeFileSync(path.join(projectDir, "style.css"), `body { font-family: system-ui, sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; }\n`);
+      fs.writeFileSync(path.join(projectDir, "script.js"), `console.log('${name} loaded');\n`);
+    } else {
+      fs.writeFileSync(path.join(projectDir, "README.md"), `# ${name}\n\n${description || ''}\n`);
+    }
+
+    fs.writeFileSync(path.join(projectDir, ".gitignore"), "node_modules\ndist\n.env\n*.log\n");
+
+    const files = fs.readdirSync(projectDir);
+    res.json({
+      success: true,
+      project: { name, slug, template: tmpl, path: `projects/${slug}`, description: description || "" },
+      files: files.map(f => ({ name: f, type: fs.statSync(path.join(projectDir, f)).isDirectory() ? "directory" : "file" })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/projects", async (_req, res): Promise<void> => {
+  const projectsDir = path.join(PROJECT_ROOT, "projects");
+  try {
+    if (!fs.existsSync(projectsDir)) {
+      res.json([]);
+      return;
+    }
+    const dirs = fs.readdirSync(projectsDir, { withFileTypes: true }).filter(d => d.isDirectory());
+    const projects = dirs.map(d => {
+      const dirPath = path.join(projectsDir, d.name);
+      let description = "";
+      let template = "blank";
+      try {
+        const pkgPath = path.join(dirPath, "package.json");
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+          description = pkg.description || "";
+          template = pkg.dependencies?.express ? "express" : pkg.dependencies?.react ? "react" : "node";
+        } else if (fs.existsSync(path.join(dirPath, "main.py"))) {
+          template = "python";
+        } else if (fs.existsSync(path.join(dirPath, "index.html"))) {
+          template = "html";
+        }
+      } catch {}
+      const files = fs.readdirSync(dirPath);
+      const stats = fs.statSync(dirPath);
+      return {
+        name: d.name,
+        slug: d.name,
+        path: `projects/${d.name}`,
+        description,
+        template,
+        fileCount: files.length,
+        createdAt: stats.birthtime?.toISOString() || stats.mtime.toISOString(),
+        modifiedAt: stats.mtime.toISOString(),
+      };
+    });
+    res.json(projects);
+  } catch (err: any) {
+    res.json([]);
+  }
+});
+
+router.delete("/projects/:slug", async (req, res): Promise<void> => {
+  const { slug } = req.params;
+  const projectDir = path.join(PROJECT_ROOT, "projects", slug);
+  try {
+    const relative = path.relative(path.join(PROJECT_ROOT, "projects"), projectDir);
+    if (relative.startsWith("..") || path.isAbsolute(relative) || relative.includes("/")) {
+      res.status(400).json({ error: "Invalid project slug" });
+      return;
+    }
+    if (!fs.existsSync(projectDir)) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    fs.rmSync(projectDir, { recursive: true, force: true });
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/upload", upload.array("files", 50), async (req, res): Promise<void> => {
+  const targetPath = (req.body?.path as string) || ".";
+  const files = req.files as Express.Multer.File[];
+
+  if (!files || files.length === 0) {
+    res.status(400).json({ error: "No files uploaded" });
+    return;
+  }
+
+  const results: any[] = [];
+
+  try {
+    const destDir = safePath(targetPath);
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+
+    for (const file of files) {
+      const originalName = file.originalname;
+      const isZip = originalName.toLowerCase().endsWith(".zip");
+
+      if (isZip) {
+        try {
+          const extractDir = path.join(destDir, path.basename(originalName, ".zip"));
+          if (!fs.existsSync(extractDir)) {
+            fs.mkdirSync(extractDir, { recursive: true });
+          }
+          execSync(`unzip -o "${file.path}" -d "${extractDir}"`, { timeout: 30000 });
+
+          let extractedFiles: string[] = [];
+          try {
+            extractedFiles = execSync(`find "${extractDir}" -type f | head -50`, { encoding: "utf-8", timeout: 5000 }).split("\n").filter(Boolean);
+          } catch {}
+
+          results.push({
+            name: originalName,
+            type: "zip",
+            extractedTo: path.relative(PROJECT_ROOT, extractDir),
+            fileCount: extractedFiles.length,
+            files: extractedFiles.slice(0, 20).map(f => path.relative(extractDir, f)),
+          });
+        } catch (err: any) {
+          fs.copyFileSync(file.path, path.join(destDir, originalName));
+          results.push({
+            name: originalName,
+            type: "file",
+            path: path.relative(PROJECT_ROOT, path.join(destDir, originalName)),
+            size: file.size,
+            note: "ZIP extraction failed, saved as file",
+            error: err.message,
+          });
+        }
+      } else {
+        const destFile = path.join(destDir, originalName);
+        fs.copyFileSync(file.path, destFile);
+        results.push({
+          name: originalName,
+          type: "file",
+          path: path.relative(PROJECT_ROOT, destFile),
+          size: file.size,
+          mimetype: file.mimetype,
+        });
+      }
+
+      try { fs.unlinkSync(file.path); } catch {}
+    }
+
+    res.json({ success: true, uploaded: results.length, files: results });
+  } catch (err: any) {
+    for (const file of files) {
+      try { fs.unlinkSync(file.path); } catch {}
+    }
+    res.status(500).json({ error: err.message });
   }
 });
 

@@ -10,6 +10,8 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ProjectManager from "@/components/workbench/ProjectManager";
+import { FolderPlus } from "lucide-react";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -907,6 +909,7 @@ const PANELS = [
   { id: "database", label: "Database", icon: Database, component: DatabasePanel },
   { id: "env", label: "Env Vars", icon: Key, component: EnvPanel },
   { id: "process", label: "Process", icon: Activity, component: ProcessPanel },
+  { id: "projects", label: "Projects", icon: FolderPlus, component: () => <ProjectManager catppuccin={false} /> },
 ] as const;
 
 type PanelId = typeof PANELS[number]["id"];
