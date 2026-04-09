@@ -87,47 +87,47 @@ function ShellPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-black/40 rounded-lg overflow-hidden" onClick={() => inputRef.current?.focus()}>
-      <div className="flex items-center justify-between px-3 py-1.5 bg-black/60 border-b border-white/5">
+    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden" onClick={() => inputRef.current?.focus()}>
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
         <div className="flex items-center gap-2">
           <Terminal className="h-3.5 w-3.5 text-green-400" />
-          <span className="text-xs text-white/80 font-mono">Shell</span>
+          <span className="text-xs text-[#cdd6f4] font-mono">Shell</span>
         </div>
-        <button className="p-1 rounded hover:bg-white/5 text-white/40 hover:text-white/80" onClick={() => setHistory([])}>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => setHistory([])}>
           <Trash2 className="h-3 w-3" />
         </button>
       </div>
       <div className="flex-1 overflow-y-auto p-2" ref={scrollRef}>
         <div className="font-mono text-xs space-y-1">
           {history.length === 0 && (
-            <div className="text-white/30 py-4 text-center">Type a command to get started. Use arrow keys for history.</div>
+            <div className="text-[#585b70] py-4 text-center">Type a command to get started. Use arrow keys for history.</div>
           )}
           {history.map((entry, i) => (
             <div key={i} className="mb-2">
               <div className="flex items-center gap-1">
                 <span className="text-green-400">$</span>
-                <span className="text-white/90">{entry.command}</span>
+                <span className="text-[#cdd6f4]">{entry.command}</span>
               </div>
-              {entry.stdout && <pre className="text-white/60 whitespace-pre-wrap break-all ml-3 mt-0.5">{entry.stdout}</pre>}
-              {entry.stderr && <pre className="text-red-400 whitespace-pre-wrap break-all ml-3 mt-0.5">{entry.stderr}</pre>}
+              {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5">{entry.stdout}</pre>}
+              {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5">{entry.stderr}</pre>}
             </div>
           ))}
           {shellMutation.isPending && (
-            <div className="flex items-center gap-2 text-blue-400">
+            <div className="flex items-center gap-2 text-[#89b4fa]">
               <Loader2 className="h-3 w-3 animate-spin" />
               <span>Running...</span>
             </div>
           )}
         </div>
       </div>
-      <form onSubmit={handleSubmit} className="flex items-center gap-1 px-2 py-1.5 border-t border-white/5 bg-black/60">
+      <form onSubmit={handleSubmit} className="flex items-center gap-1 px-2 py-1.5 border-t border-[#313244] bg-[#181825]">
         <span className="text-green-400 font-mono text-xs">$</span>
         <input
           ref={inputRef}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          className="flex-1 bg-transparent text-white/90 font-mono text-xs outline-none placeholder:text-white/30"
+          className="flex-1 bg-transparent text-[#cdd6f4] font-mono text-xs outline-none placeholder:text-[#585b70]"
           placeholder="Enter command..."
           disabled={shellMutation.isPending}
           autoFocus
@@ -172,22 +172,22 @@ function FileExplorerPanel() {
 
   const getFileIcon = (name: string) => {
     const ext = name.split(".").pop()?.toLowerCase();
-    if (["ts", "tsx", "js", "jsx"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-blue-400" />;
-    if (["json", "yaml", "yml", "toml"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-yellow-400" />;
-    if (["py"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-green-400" />;
-    if (["css", "scss"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-pink-400" />;
-    return <File className="h-3.5 w-3.5 text-white/40" />;
+    if (["ts", "tsx", "js", "jsx"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-[#89b4fa]" />;
+    if (["json", "yaml", "yml", "toml"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-[#f9e2af]" />;
+    if (["py"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-[#a6e3a1]" />;
+    if (["css", "scss"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-[#f5c2e7]" />;
+    return <File className="h-3.5 w-3.5 text-[#6c7086]" />;
   };
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
-        <div className="flex items-center gap-1 text-xs text-white/50 overflow-x-auto">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-1 text-xs text-[#6c7086] overflow-x-auto">
           {breadcrumbs.map((crumb, i) => (
             <span key={i} className="flex items-center gap-0.5">
               {i > 0 && <ChevronRight className="h-3 w-3" />}
               <button
-                className="hover:text-white transition-colors"
+                className="hover:text-[#cdd6f4] transition-colors"
                 onClick={() => {
                   if (i === 0) setCurrentPath(".");
                   else setCurrentPath(breadcrumbs.slice(1, i + 1).join("/"));
@@ -199,16 +199,16 @@ function FileExplorerPanel() {
             </span>
           ))}
         </div>
-        <button className="p-1 rounded hover:bg-white/5 text-white/40 hover:text-white/80" onClick={() => refetch()}>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#cdd6f4]" onClick={() => refetch()}>
           <RefreshCw className="h-3 w-3" />
         </button>
       </div>
       <div className="flex flex-1 min-h-0">
-        <div className="w-1/3 border-r border-white/5 overflow-y-auto">
+        <div className="w-1/3 border-r border-[#313244] overflow-y-auto">
           <div className="p-1">
             {currentPath !== "." && (
               <button
-                className="w-full text-left px-2 py-1 text-xs hover:bg-white/5 rounded flex items-center gap-1.5"
+                className="w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5"
                 onClick={() => {
                   const parts = currentPath.split("/");
                   parts.pop();
@@ -217,24 +217,24 @@ function FileExplorerPanel() {
                 }}
               >
                 <Folder className="h-3.5 w-3.5 text-yellow-500" />
-                <span className="text-white/50">..</span>
+                <span className="text-[#6c7086]">..</span>
               </button>
             )}
             {isLoading ? (
-              <div className="p-2 space-y-1">{[1,2,3,4].map(i => <div key={i} className="h-5 w-full bg-white/5 rounded animate-pulse" />)}</div>
+              <div className="p-2 space-y-1">{[1,2,3,4].map(i => <div key={i} className="h-5 w-full bg-[#313244] rounded animate-pulse" />)}</div>
             ) : (
               items.map(item => (
                 <button
                   key={item.path}
                   className={cn(
-                    "w-full text-left px-2 py-1 text-xs hover:bg-white/5 rounded flex items-center gap-1.5",
-                    selectedFile === item.path && "bg-white/10"
+                    "w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5",
+                    selectedFile === item.path && "bg-[#45475a]"
                   )}
                   onClick={() => handleClick(item)}
                 >
                   {item.type === "directory" ? <Folder className="h-3.5 w-3.5 text-yellow-500" /> : getFileIcon(item.name)}
-                  <span className="truncate flex-1 text-white/80">{item.name}</span>
-                  {item.size !== undefined && <span className="text-[10px] text-white/30">{formatBytes(item.size)}</span>}
+                  <span className="truncate flex-1 text-[#cdd6f4]">{item.name}</span>
+                  {item.size !== undefined && <span className="text-[10px] text-[#585b70]">{formatBytes(item.size)}</span>}
                 </button>
               ))
             )}
@@ -243,26 +243,26 @@ function FileExplorerPanel() {
         <div className="flex-1 overflow-y-auto">
           {selectedFile ? (
             contentLoading ? (
-              <div className="p-4 space-y-2">{[1,2,3].map(i => <div key={i} className="h-4 bg-white/5 rounded animate-pulse" style={{ width: `${70 - i * 15}%` }} />)}</div>
+              <div className="p-4 space-y-2">{[1,2,3].map(i => <div key={i} className="h-4 bg-[#313244] rounded animate-pulse" style={{ width: `${70 - i * 15}%` }} />)}</div>
             ) : fileContent?.error ? (
               <div className="p-4 text-sm text-red-400">{fileContent.error}</div>
             ) : (
               <div className="relative">
-                <div className="flex items-center justify-between px-3 py-1 bg-white/5 border-b border-white/5 sticky top-0">
-                  <span className="text-xs font-mono text-white/50">{selectedFile}</span>
+                <div className="flex items-center justify-between px-3 py-1 bg-[#313244] border-b border-[#313244] sticky top-0">
+                  <span className="text-xs font-mono text-[#6c7086]">{selectedFile}</span>
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-white/30">{formatBytes(fileContent?.size || 0)}</span>
-                    <button className="p-0.5 rounded hover:bg-white/10" onClick={() => navigator.clipboard.writeText(fileContent?.content || "")}>
-                      <Copy className="h-3 w-3 text-white/40" />
+                    <span className="text-[10px] text-[#585b70]">{formatBytes(fileContent?.size || 0)}</span>
+                    <button className="p-0.5 rounded hover:bg-[#45475a]" onClick={() => navigator.clipboard.writeText(fileContent?.content || "")}>
+                      <Copy className="h-3 w-3 text-[#6c7086]" />
                     </button>
                   </div>
                 </div>
-                <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all text-white/80">{fileContent?.content}</pre>
+                <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all text-[#cdd6f4]">{fileContent?.content}</pre>
               </div>
             )
           ) : (
-            <div className="p-8 text-center text-sm text-white/30">
-              <FileCode className="h-8 w-8 mx-auto mb-2 text-white/10" />
+            <div className="p-8 text-center text-sm text-[#585b70]">
+              <FileCode className="h-8 w-8 mx-auto mb-2 text-[#45475a]" />
               Select a file to view its contents
             </div>
           )}
@@ -295,60 +295,60 @@ function GitPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
         <div className="flex items-center gap-2">
           <GitBranch className="h-3.5 w-3.5 text-orange-400" />
-          <span className="text-xs font-medium text-white/80">Git</span>
+          <span className="text-xs font-medium text-[#cdd6f4]">Git</span>
           {data?.currentBranch && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-white/60">{data.currentBranch}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#313244] text-[#a6adc8]">{data.currentBranch}</span>
           )}
         </div>
         <div className="flex items-center gap-1">
-          <button className="px-2 py-0.5 text-[10px] rounded hover:bg-white/5 text-white/50" onClick={() => gitMutation.mutate("git pull")} disabled={gitMutation.isPending}>Pull</button>
-          <button className="px-2 py-0.5 text-[10px] rounded hover:bg-white/5 text-white/50" onClick={() => gitMutation.mutate("git fetch")} disabled={gitMutation.isPending}>Fetch</button>
-          <button className="p-1 rounded hover:bg-white/5 text-white/40" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+          <button className="px-2 py-0.5 text-[10px] rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => gitMutation.mutate("git pull")} disabled={gitMutation.isPending}>Pull</button>
+          <button className="px-2 py-0.5 text-[10px] rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => gitMutation.mutate("git fetch")} disabled={gitMutation.isPending}>Fetch</button>
+          <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
-          <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-6 w-full bg-white/5 rounded animate-pulse" />)}</div>
+          <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-6 w-full bg-[#313244] rounded animate-pulse" />)}</div>
         ) : data?.error ? (
           <div className="p-4 text-sm text-red-400">{data.error}</div>
         ) : (
           <div className="p-2 space-y-3">
             {data?.changes?.length > 0 && (
               <div>
-                <h4 className="text-xs font-medium text-white/40 mb-1 px-1">Changes ({data.changes.length})</h4>
+                <h4 className="text-xs font-medium text-[#6c7086] mb-1 px-1">Changes ({data.changes.length})</h4>
                 <div className="space-y-0.5">
                   {data.changes.map((c: any, i: number) => (
-                    <div key={i} className="flex items-center gap-1.5 px-1 py-0.5 rounded text-xs hover:bg-white/5">
+                    <div key={i} className="flex items-center gap-1.5 px-1 py-0.5 rounded text-xs hover:bg-[#313244]">
                       <span className={cn(
                         "text-[9px] px-1 rounded border",
                         c.status === "M" ? "text-yellow-500 border-yellow-500/30" :
                         c.status === "A" || c.status === "??" ? "text-green-500 border-green-500/30" :
-                        c.status === "D" ? "text-red-500 border-red-500/30" : "text-white/50 border-white/10"
+                        c.status === "D" ? "text-red-500 border-red-500/30" : "text-[#6c7086] border-[#313244]"
                       )}>{c.status}</span>
-                      <span className="truncate font-mono text-[11px] text-white/70">{c.file}</span>
+                      <span className="truncate font-mono text-[11px] text-[#a6adc8]">{c.file}</span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
             {data?.changes?.length === 0 && (
-              <div className="text-xs text-center text-white/30 py-2">Working tree clean</div>
+              <div className="text-xs text-center text-[#585b70] py-2">Working tree clean</div>
             )}
-            <div className="h-px bg-white/5" />
+            <div className="h-px bg-[#313244]" />
             <div>
-              <h4 className="text-xs font-medium text-white/40 mb-1 px-1">Recent Commits</h4>
+              <h4 className="text-xs font-medium text-[#6c7086] mb-1 px-1">Recent Commits</h4>
               <div className="space-y-0.5">
                 {data?.commits?.slice(0, 15).map((c: any, i: number) => (
-                  <div key={i} className="flex items-start gap-1.5 px-1 py-1 rounded text-xs hover:bg-white/5">
-                    <GitCommit className="h-3 w-3 mt-0.5 text-white/30 shrink-0" />
+                  <div key={i} className="flex items-start gap-1.5 px-1 py-1 rounded text-xs hover:bg-[#313244]">
+                    <GitCommit className="h-3 w-3 mt-0.5 text-[#585b70] shrink-0" />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[11px] text-white/70">{c.message}</p>
+                      <p className="truncate text-[11px] text-[#a6adc8]">{c.message}</p>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-white/30 font-mono">{c.hash?.substring(0, 7)}</span>
-                        <span className="text-[10px] text-white/30">{c.date}</span>
+                        <span className="text-[10px] text-[#585b70] font-mono">{c.hash?.substring(0, 7)}</span>
+                        <span className="text-[10px] text-[#585b70]">{c.date}</span>
                       </div>
                     </div>
                   </div>
@@ -394,12 +394,12 @@ function AgentActivityPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
         <div className="flex items-center gap-2">
           <Activity className="h-3.5 w-3.5 text-purple-400" />
-          <span className="text-xs font-medium text-white/80">Agent Activity</span>
+          <span className="text-xs font-medium text-[#cdd6f4]">Agent Activity</span>
           {data?.stats && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-white/50">
+            <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#313244] text-[#6c7086]">
               {data.stats.agentCommits} agent / {data.stats.totalCommits} total
             </span>
           )}
@@ -408,58 +408,58 @@ function AgentActivityPanel() {
           {(["all", "agent", "manual"] as const).map(f => (
             <button
               key={f}
-              className={cn("text-[10px] px-1.5 py-0.5 rounded capitalize", filter === f ? "bg-primary text-white" : "text-white/40 hover:bg-white/5")}
+              className={cn("text-[10px] px-1.5 py-0.5 rounded capitalize", filter === f ? "bg-primary text-white" : "text-[#6c7086] hover:bg-[#313244]")}
               onClick={() => setFilter(f)}
             >{f}</button>
           ))}
-          <button className="p-1 rounded hover:bg-white/5 text-white/40" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+          <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
         </div>
       </div>
       {data?.stats && (
-        <div className="flex items-center gap-3 px-3 py-1.5 border-b border-white/5 bg-white/[0.02]">
+        <div className="flex items-center gap-3 px-3 py-1.5 border-b border-[#313244] bg-[#181825]">
           <div className="flex items-center gap-1">
             <Bot className="h-3 w-3 text-purple-400" />
-            <span className="text-[10px] text-white/40">{data.stats.agentCommits} agent</span>
+            <span className="text-[10px] text-[#6c7086]">{data.stats.agentCommits} agent</span>
           </div>
           <div className="flex items-center gap-1">
             <User className="h-3 w-3 text-blue-400" />
-            <span className="text-[10px] text-white/40">{data.stats.manualCommits} manual</span>
+            <span className="text-[10px] text-[#6c7086]">{data.stats.manualCommits} manual</span>
           </div>
           <div className="flex items-center gap-1">
             <FileCode className="h-3 w-3 text-green-400" />
-            <span className="text-[10px] text-white/40">{data.stats.filesChanged} files</span>
+            <span className="text-[10px] text-[#6c7086]">{data.stats.filesChanged} files</span>
           </div>
         </div>
       )}
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
-          <div className="p-3 space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-10 w-full bg-white/5 rounded animate-pulse" />)}</div>
+          <div className="p-3 space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-10 w-full bg-[#313244] rounded animate-pulse" />)}</div>
         ) : entries.length === 0 ? (
-          <div className="p-4 text-sm text-center text-white/30">No activity found</div>
+          <div className="p-4 text-sm text-center text-[#585b70]">No activity found</div>
         ) : (
           <div className="p-1">
             {entries.map((entry: any) => {
               const expanded = expandedCommit === entry.hash;
               return (
-                <div key={entry.hash} className="border-b border-white/5 last:border-0">
+                <div key={entry.hash} className="border-b border-[#313244] last:border-0">
                   <button
-                    className="w-full flex items-start gap-2 px-2 py-1.5 text-left hover:bg-white/5 transition-colors"
+                    className="w-full flex items-start gap-2 px-2 py-1.5 text-left hover:bg-[#313244] transition-colors"
                     onClick={() => setExpandedCommit(expanded ? null : entry.hash)}
                   >
                     <div className="mt-0.5 shrink-0">
                       {entry.isAgent ? <Bot className="h-3.5 w-3.5 text-purple-400" /> : <User className="h-3.5 w-3.5 text-blue-400" />}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs leading-snug truncate text-white/80">{entry.message}</p>
+                      <p className="text-xs leading-snug truncate text-[#cdd6f4]">{entry.message}</p>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] text-white/30 font-mono">{entry.hash?.substring(0, 7)}</span>
-                        <span className="text-[10px] text-white/30">{formatDate(entry.date)}</span>
-                        {entry.files.length > 0 && <span className="text-[10px] text-white/30">{entry.files.length} file{entry.files.length !== 1 ? "s" : ""}</span>}
+                        <span className="text-[10px] text-[#585b70] font-mono">{entry.hash?.substring(0, 7)}</span>
+                        <span className="text-[10px] text-[#585b70]">{formatDate(entry.date)}</span>
+                        {entry.files.length > 0 && <span className="text-[10px] text-[#585b70]">{entry.files.length} file{entry.files.length !== 1 ? "s" : ""}</span>}
                       </div>
                     </div>
                     {entry.files.length > 0 && (
                       <div className="shrink-0 mt-0.5">
-                        {expanded ? <ChevronDown className="h-3 w-3 text-white/30" /> : <ChevronRight className="h-3 w-3 text-white/30" />}
+                        {expanded ? <ChevronDown className="h-3 w-3 text-[#585b70]" /> : <ChevronRight className="h-3 w-3 text-[#585b70]" />}
                       </div>
                     )}
                   </button>
@@ -471,9 +471,9 @@ function AgentActivityPanel() {
                             "text-[9px] px-1 rounded border",
                             f.status === "A" ? "text-green-500 border-green-500/30" :
                             f.status === "M" ? "text-yellow-500 border-yellow-500/30" :
-                            f.status === "D" ? "text-red-500 border-red-500/30" : "text-white/50 border-white/10"
+                            f.status === "D" ? "text-red-500 border-red-500/30" : "text-[#6c7086] border-[#313244]"
                           )}>{f.status === "A" ? "added" : f.status === "M" ? "modified" : f.status === "D" ? "deleted" : f.status}</span>
-                          <span className="font-mono truncate text-white/50">{f.file}</span>
+                          <span className="font-mono truncate text-[#6c7086]">{f.file}</span>
                         </div>
                       ))}
                     </div>
@@ -502,17 +502,17 @@ function DatabasePanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
         <div className="flex items-center gap-2">
           <Database className="h-3.5 w-3.5 text-blue-400" />
-          <span className="text-xs font-medium text-white/80">Database Explorer</span>
+          <span className="text-xs font-medium text-[#cdd6f4]">Database Explorer</span>
         </div>
       </div>
-      <div className="p-2 border-b border-white/5 space-y-1.5">
+      <div className="p-2 border-b border-[#313244] space-y-1.5">
         <textarea
           value={query}
           onChange={e => setQuery(e.target.value)}
-          className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-xs text-white/90 placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-violet-500/50 resize-y min-h-[60px]"
+          className="w-full rounded-lg border border-[#313244] bg-[#1e1e2e] px-3 py-2 font-mono text-xs text-[#cdd6f4] placeholder:text-[#585b70] focus:outline-none focus:ring-2 focus:ring-violet-500/50 resize-y min-h-[60px]"
           placeholder="SELECT * FROM ..."
         />
         <div className="flex items-center gap-2">
@@ -524,7 +524,7 @@ function DatabasePanel() {
             {queryMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
             Run Query
           </button>
-          {results && <span className="text-[10px] text-white/40">{results.rowCount} rows returned</span>}
+          {results && <span className="text-[10px] text-[#6c7086]">{results.rowCount} rows returned</span>}
         </div>
       </div>
       <div className="flex-1 overflow-auto">
@@ -533,18 +533,18 @@ function DatabasePanel() {
         ) : results?.rows?.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="bg-white/5 sticky top-0">
+              <thead className="bg-[#313244] sticky top-0">
                 <tr>
                   {results.fields.map((f: string) => (
-                    <th key={f} className="px-2 py-1.5 text-left font-medium text-white/50 border-b border-white/5">{f}</th>
+                    <th key={f} className="px-2 py-1.5 text-left font-medium text-[#6c7086] border-b border-[#313244]">{f}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {results.rows.map((row: any, i: number) => (
-                  <tr key={i} className="hover:bg-white/5 border-b border-white/[0.03]">
+                  <tr key={i} className="hover:bg-[#313244] border-b border-[#313244]/50">
                     {results.fields.map((f: string) => (
-                      <td key={f} className="px-2 py-1 font-mono text-[11px] max-w-[200px] truncate text-white/70">{String(row[f] ?? "NULL")}</td>
+                      <td key={f} className="px-2 py-1 font-mono text-[11px] max-w-[200px] truncate text-[#a6adc8]">{String(row[f] ?? "NULL")}</td>
                     ))}
                   </tr>
                 ))}
@@ -552,10 +552,10 @@ function DatabasePanel() {
             </table>
           </div>
         ) : results ? (
-          <div className="p-4 text-center text-xs text-white/30">No results</div>
+          <div className="p-4 text-center text-xs text-[#585b70]">No results</div>
         ) : (
-          <div className="p-8 text-center text-sm text-white/30">
-            <Database className="h-8 w-8 mx-auto mb-2 text-white/10" />
+          <div className="p-8 text-center text-sm text-[#585b70]">
+            <Database className="h-8 w-8 mx-auto mb-2 text-[#45475a]" />
             Run a query to see results
           </div>
         )}
@@ -580,34 +580,34 @@ function EnvPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
         <div className="flex items-center gap-2">
           <Key className="h-3.5 w-3.5 text-purple-400" />
-          <span className="text-xs font-medium text-white/80">Environment ({data?.count || 0})</span>
+          <span className="text-xs font-medium text-[#cdd6f4]">Environment ({data?.count || 0})</span>
         </div>
-        <button className="p-1 rounded hover:bg-white/5 text-white/40" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
       </div>
-      <div className="px-2 py-1.5 border-b border-white/5">
+      <div className="px-2 py-1.5 border-b border-[#313244]">
         <div className="relative">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-white/30" />
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-[#585b70]" />
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="w-full h-7 text-xs pl-7 rounded border border-white/10 bg-black/40 text-white/80 placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-violet-500/50"
+            className="w-full h-7 text-xs pl-7 rounded border border-[#313244] bg-[#1e1e2e] text-[#cdd6f4] placeholder:text-[#585b70] focus:outline-none focus:ring-1 focus:ring-violet-500/50"
             placeholder="Filter variables..."
           />
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
-          <div className="p-3 space-y-1">{[1,2,3,4].map(i => <div key={i} className="h-5 w-full bg-white/5 rounded animate-pulse" />)}</div>
+          <div className="p-3 space-y-1">{[1,2,3,4].map(i => <div key={i} className="h-5 w-full bg-[#313244] rounded animate-pulse" />)}</div>
         ) : (
           <div className="p-1">
             {vars.map((v: any) => (
-              <div key={v.key} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-white/5 text-xs">
-                <span className="font-mono font-medium text-[11px] min-w-0 shrink-0 text-white/80">{v.key}</span>
-                <span className="text-white/30">=</span>
-                <span className={cn("font-mono text-[11px] truncate", v.sensitive ? "text-yellow-500" : "text-white/50")}>{v.value}</span>
+              <div key={v.key} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#313244] text-xs">
+                <span className="font-mono font-medium text-[11px] min-w-0 shrink-0 text-[#cdd6f4]">{v.key}</span>
+                <span className="text-[#585b70]">=</span>
+                <span className={cn("font-mono text-[11px] truncate", v.sensitive ? "text-yellow-500" : "text-[#6c7086]")}>{v.value}</span>
                 {v.sensitive && <Key className="h-3 w-3 text-yellow-500 shrink-0" />}
               </div>
             ))}
@@ -630,16 +630,16 @@ function ProcessPanel() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-white/5">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
         <div className="flex items-center gap-2">
           <Activity className="h-3.5 w-3.5 text-emerald-400" />
-          <span className="text-xs font-medium text-white/80">Process Info</span>
+          <span className="text-xs font-medium text-[#cdd6f4]">Process Info</span>
         </div>
-        <button className="p-1 rounded hover:bg-white/5 text-white/40" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
       </div>
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
-          <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 w-full bg-white/5 rounded animate-pulse" />)}</div>
+          <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 w-full bg-[#313244] rounded animate-pulse" />)}</div>
         ) : data ? (
           <div className="p-3 space-y-3">
             <div className="grid grid-cols-2 gap-2">
@@ -651,15 +651,15 @@ function ProcessPanel() {
                 { icon: HardDrive, label: "Heap Used", value: formatBytes(data.memoryUsage?.heapUsed || 0) },
                 { icon: HardDrive, label: "RSS", value: formatBytes(data.memoryUsage?.rss || 0) },
               ].map((item, i) => (
-                <div key={i} className="p-2 rounded bg-white/5">
-                  <div className="flex items-center gap-1.5 text-[10px] text-white/40 mb-0.5">
+                <div key={i} className="p-2 rounded bg-[#313244]">
+                  <div className="flex items-center gap-1.5 text-[10px] text-[#6c7086] mb-0.5">
                     <item.icon className="h-3 w-3" /> {item.label}
                   </div>
-                  <div className="text-sm font-semibold text-white/90">{item.value}</div>
+                  <div className="text-sm font-semibold text-[#cdd6f4]">{item.value}</div>
                 </div>
               ))}
             </div>
-            <div className="h-px bg-white/5" />
+            <div className="h-px bg-[#313244]" />
             <div className="space-y-1 text-xs">
               {[
                 ["Platform", `${data.platform} (${data.arch})`],
@@ -669,8 +669,8 @@ function ProcessPanel() {
                 ["Total Memory", formatBytes(data.totalMemory || 0)],
               ].map(([label, value]) => (
                 <div key={label} className="flex justify-between">
-                  <span className="text-white/40">{label}</span>
-                  <span className="font-mono text-white/70 truncate ml-2">{value}</span>
+                  <span className="text-[#6c7086]">{label}</span>
+                  <span className="font-mono text-[#a6adc8] truncate ml-2">{value}</span>
                 </div>
               ))}
             </div>
@@ -795,14 +795,14 @@ function CodeChatPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-black/40 rounded-lg overflow-hidden" onClick={() => textareaRef.current?.focus()}>
-      <div className="flex items-center justify-between px-3 py-1.5 bg-black/60 border-b border-white/5">
+    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden" onClick={() => textareaRef.current?.focus()}>
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
         <div className="flex items-center gap-2">
           <Sparkles className="h-3.5 w-3.5 text-violet-400" />
-          <span className="text-xs text-white/80 font-mono">Code Assistant</span>
+          <span className="text-xs text-[#cdd6f4] font-mono">Code Assistant</span>
           <span className="text-[9px] px-1.5 py-0.5 rounded border border-violet-500/30 text-violet-400">Claude</span>
         </div>
-        <button className="p-1 rounded hover:bg-white/5 text-white/40 hover:text-white/80" onClick={() => setMessages([])}>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#cdd6f4]" onClick={() => setMessages([])}>
           <Trash2 className="h-3 w-3" />
         </button>
       </div>
@@ -817,8 +817,8 @@ function CodeChatPanel() {
                 </div>
               </div>
               <div>
-                <p className="text-white/90 text-sm font-medium">Code Assistant</p>
-                <p className="text-white/40 text-xs mt-1">Ask about code, debug issues, or get help writing new features.</p>
+                <p className="text-[#cdd6f4] text-sm font-medium">Code Assistant</p>
+                <p className="text-[#6c7086] text-xs mt-1">Ask about code, debug issues, or get help writing new features.</p>
               </div>
               <div className="flex flex-wrap gap-1.5 justify-center pt-1">
                 {[
@@ -830,7 +830,7 @@ function CodeChatPanel() {
                   <button
                     key={suggestion}
                     onClick={() => { setInput(suggestion); textareaRef.current?.focus(); }}
-                    className="text-[10px] px-2 py-1 rounded-full border border-white/10 text-white/50 hover:text-white/80 hover:border-violet-500/30 transition-colors"
+                    className="text-[10px] px-2 py-1 rounded-full border border-[#313244] text-[#6c7086] hover:text-[#cdd6f4] hover:border-violet-500/30 transition-colors"
                   >
                     {suggestion}
                   </button>
@@ -849,8 +849,8 @@ function CodeChatPanel() {
               <div className={cn(
                 "max-w-[85%] rounded-lg px-3 py-2 text-xs",
                 msg.role === "user"
-                  ? "bg-blue-600/20 text-white/90 border border-blue-500/20"
-                  : "bg-black/60 text-white/90 border border-white/5"
+                  ? "bg-blue-600/20 text-[#cdd6f4] border border-blue-500/20"
+                  : "bg-[#181825] text-[#cdd6f4] border border-[#313244]"
               )}>
                 <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed">{msg.content}</pre>
                 {msg.streaming && (
@@ -867,7 +867,7 @@ function CodeChatPanel() {
         </div>
       </div>
 
-      <div className="p-2 border-t border-white/5 bg-black/60">
+      <div className="p-2 border-t border-[#313244] bg-[#181825]">
         <div className="flex items-end gap-2">
           <textarea
             ref={textareaRef}
@@ -875,7 +875,7 @@ function CodeChatPanel() {
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Ask about code... (Enter to send, Shift+Enter for newline)"
-            className="flex-1 min-h-[36px] max-h-[120px] text-xs font-mono bg-black/40 border border-white/10 text-white/90 placeholder:text-white/30 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-violet-500/50"
+            className="flex-1 min-h-[36px] max-h-[120px] text-xs font-mono bg-[#1e1e2e] border border-[#313244] text-[#cdd6f4] placeholder:text-[#585b70] rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-violet-500/50"
             disabled={isStreaming}
           />
           {isStreaming ? (
@@ -909,7 +909,7 @@ const PANELS = [
   { id: "database", label: "Database", icon: Database, component: DatabasePanel },
   { id: "env", label: "Env Vars", icon: Key, component: EnvPanel },
   { id: "process", label: "Process", icon: Activity, component: ProcessPanel },
-  { id: "projects", label: "Projects", icon: FolderPlus, component: () => <ProjectManager catppuccin={false} /> },
+  { id: "projects", label: "Projects", icon: FolderPlus, component: () => <ProjectManager catppuccin={true} /> },
 ] as const;
 
 type PanelId = typeof PANELS[number]["id"];
@@ -938,7 +938,7 @@ export default function Workbench() {
             onClick={() => onChange(p.id)}
             className={cn(
               "flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors",
-              value === p.id ? "bg-primary text-white" : "text-white/40 hover:bg-white/5 hover:text-white/70"
+              value === p.id ? "bg-primary text-white" : "text-[#6c7086] hover:bg-[#313244] hover:text-[#a6adc8]"
             )}
           >
             <Icon className="h-3 w-3" />
@@ -950,20 +950,20 @@ export default function Workbench() {
   );
 
   return (
-    <div className="flex flex-col h-[calc(100vh-3.5rem)]">
-      <div className="flex items-center justify-between px-4 py-2 border-b border-white/5 bg-background/95 backdrop-blur">
+    <div className="flex flex-col h-[calc(100vh-3.5rem)] bg-[#1e1e2e]">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-[#313244] bg-[#181825]">
         <div className="flex items-center gap-3">
           <div className="h-6 w-6 rounded bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
             <Code2 className="h-3.5 w-3.5 text-white" />
           </div>
           <h1 className="text-base font-semibold tracking-tight text-white">Coding Workbench</h1>
-          <span className="text-[10px] px-1.5 py-0.5 rounded border border-white/10 text-white/50">IDE</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#313244] text-[#6c7086]">IDE</span>
         </div>
         <div className="flex items-center gap-2">
           <button
             className={cn(
               "px-3 py-1 rounded-lg text-xs font-medium transition-colors",
-              showBottom ? "bg-primary text-white" : "border border-white/10 text-white/60 hover:bg-white/5"
+              showBottom ? "bg-primary text-white" : "border border-[#313244] text-[#a6adc8] hover:bg-[#313244]"
             )}
             onClick={() => setShowBottom(!showBottom)}
           >
@@ -975,8 +975,8 @@ export default function Workbench() {
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
           <div className={cn("flex min-h-0", showBottom ? "h-[55%]" : "flex-1")}>
-            <div className="flex-1 flex flex-col border-r border-white/5 min-w-0">
-              <div className="px-2 py-1 border-b border-white/5 bg-white/[0.02]">
+            <div className="flex-1 flex flex-col border-r border-[#313244] min-w-0">
+              <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
                 <PanelSelector value={leftPanel} onChange={setLeftPanel} />
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
@@ -984,7 +984,7 @@ export default function Workbench() {
               </div>
             </div>
             <div className="flex-1 flex flex-col min-w-0">
-              <div className="px-2 py-1 border-b border-white/5 bg-white/[0.02]">
+              <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
                 <PanelSelector value={rightPanel} onChange={setRightPanel} />
               </div>
               <div className="flex-1 min-h-0 overflow-hidden">
@@ -995,10 +995,10 @@ export default function Workbench() {
 
           {showBottom && (
             <>
-              <div className="h-px bg-white/5" />
+              <div className="h-px bg-[#313244]" />
               <div className="h-[45%] flex min-h-0">
-                <div className="flex-1 flex flex-col border-r border-white/5 min-w-0">
-                  <div className="px-2 py-1 border-b border-white/5 bg-white/[0.02]">
+                <div className="flex-1 flex flex-col border-r border-[#313244] min-w-0">
+                  <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
                     <PanelSelector value={bottomPanel} onChange={setBottomPanel} />
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
@@ -1006,7 +1006,7 @@ export default function Workbench() {
                   </div>
                 </div>
                 <div className="flex-1 flex flex-col min-w-0">
-                  <div className="px-2 py-1 border-b border-white/5 bg-white/[0.02]">
+                  <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
                     <PanelSelector value={bottomRightPanel} onChange={setBottomRightPanel} />
                   </div>
                   <div className="flex-1 min-h-0 overflow-hidden">
