@@ -1,4 +1,4 @@
-ollamaimport { Router, type IRouter } from "express";
+import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { Agent } from "undici";
 import { db, llmConfigTable, documentsTable, documentChunksTable } from "@workspace/db";
@@ -975,12 +975,5 @@ router.post("/ollama/create", async (req, res): Promise<void> => {
           res.status(500).json({ error: err instanceof Error ? err.message : "Create failed" });
     }
 });
-    }
-          }
-          })
-    }
-    }
-    }
-})
 
 export default router;
