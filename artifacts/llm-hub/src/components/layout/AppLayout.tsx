@@ -46,6 +46,7 @@ import {
   PanelLeft,
   Settings2,
   Wrench,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetLlmStatus } from "@workspace/api-client-react";
@@ -102,6 +103,7 @@ const navSections: NavSection[] = [
       },
       { href: "/code", label: "Code Agent", icon: Code2, adminOnly: false },
       { href: "/workbench", label: "Workbench", icon: Wrench, adminOnly: false },
+      { href: "/claude-workbench", label: "Claude Workbench", icon: Sparkles, adminOnly: false },
       { href: "/claw-agent", label: "Claw Agent", icon: Bot, adminOnly: false },
       {
         href: "/playground",

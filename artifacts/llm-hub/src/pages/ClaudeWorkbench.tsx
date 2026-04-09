@@ -1,0 +1,1049 @@
+import { useState, useRef, useCallback, useEffect } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import {
+  Terminal, FolderTree, Eye, GitBranch, Database, Shield,
+  Key, Activity, ChevronRight, ChevronDown, File, Folder,
+  RefreshCw, Play, Search, Copy, Loader2, Server,
+  Clock, HardDrive, Cpu, AlertTriangle,
+  CheckCircle2, XCircle, FileCode, GitCommit, Trash2,
+  Sparkles, Send, Square, User, Bot, ExternalLink,
+  Globe, Lock, Code2, PanelLeftClose, PanelLeft,
+  Puzzle, Power, Zap, Brain, ChevronUp, Bug,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+
+function formatBytes(bytes: number) {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+}
+
+function formatUptime(seconds: number) {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
+type ShellEntry = { command: string; stdout: string; stderr: string; exitCode: number; timestamp: number };
+type FileItem = { name: string; type: "file" | "directory"; path: string; size?: number };
+type ChatMessage = { role: "user" | "assistant"; content: string; timestamp: number; streaming?: boolean; model?: string; tokens?: number };
+
+function ShellPanel() {
+  const [input, setInput] = useState("");
+  const [history, setHistory] = useState<ShellEntry[]>([]);
+  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const shellMutation = useMutation({
+    mutationFn: async (command: string) => {
+      const res = await fetch(`/api/workbench/shell`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command }) });
+      return res.json();
+    },
+    onSuccess: (data, command) => {
+      setHistory(h => [...h, { command, ...data, timestamp: Date.now() }]);
+      setCmdHistory(h => [command, ...h.slice(0, 49)]);
+      setHistoryIndex(-1);
+      setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+    if (input.trim() === "clear") { setHistory([]); setInput(""); return; }
+    shellMutation.mutate(input.trim());
+    setInput("");
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (historyIndex < cmdHistory.length - 1) { const n = historyIndex + 1; setHistoryIndex(n); setInput(cmdHistory[n]); }
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (historyIndex > 0) { const n = historyIndex - 1; setHistoryIndex(n); setInput(cmdHistory[n]); }
+      else { setHistoryIndex(-1); setInput(""); }
+    }
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden" onClick={() => inputRef.current?.focus()}>
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
+        <div className="flex items-center gap-2">
+          <Terminal className="h-3.5 w-3.5 text-green-400" />
+          <span className="text-xs text-[#cdd6f4] font-mono">Shell</span>
+        </div>
+        <button className="p-1 rounded hover:bg-white/5 text-white/40" onClick={() => setHistory([])}><Trash2 className="h-3 w-3" /></button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-2" ref={scrollRef}>
+        <div className="font-mono text-xs space-y-1">
+          {history.length === 0 && <div className="text-[#6c7086] py-4 text-center">Type a command to get started.</div>}
+          {history.map((entry, i) => (
+            <div key={i} className="mb-2">
+              <div className="flex items-center gap-1"><span className="text-green-400">$</span><span className="text-[#cdd6f4]">{entry.command}</span></div>
+              {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5">{entry.stdout}</pre>}
+              {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5">{entry.stderr}</pre>}
+            </div>
+          ))}
+          {shellMutation.isPending && <div className="flex items-center gap-2 text-[#89b4fa]"><Loader2 className="h-3 w-3 animate-spin" /><span>Running...</span></div>}
+        </div>
+      </div>
+      <form onSubmit={handleSubmit} className="flex items-center gap-1 px-2 py-1.5 border-t border-[#313244] bg-[#181825]">
+        <span className="text-green-400 font-mono text-xs">$</span>
+        <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+          className="flex-1 bg-transparent text-[#cdd6f4] font-mono text-xs outline-none placeholder:text-[#585b70]"
+          placeholder="Enter command..." disabled={shellMutation.isPending} autoFocus />
+      </form>
+    </div>
+  );
+}
+
+function FileExplorerPanel() {
+  const [currentPath, setCurrentPath] = useState(".");
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["wb-files", currentPath],
+    queryFn: async () => { const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}`); return res.json(); },
+  });
+
+  const { data: fileContent, isLoading: contentLoading } = useQuery<any>({
+    queryKey: ["wb-file-content", selectedFile],
+    queryFn: async () => { const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}`); return res.json(); },
+    enabled: !!selectedFile,
+  });
+
+  const items: FileItem[] = data?.items || [];
+  const breadcrumbs = currentPath === "." ? ["root"] : ["root", ...currentPath.split("/").filter(Boolean)];
+
+  const getFileIcon = (name: string) => {
+    const ext = name.split(".").pop()?.toLowerCase();
+    if (["ts", "tsx", "js", "jsx"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-[#89b4fa]" />;
+    if (["json", "yaml", "yml", "toml"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-[#f9e2af]" />;
+    if (["py"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-[#a6e3a1]" />;
+    return <File className="h-3.5 w-3.5 text-[#6c7086]" />;
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-1 text-xs text-[#6c7086] overflow-x-auto">
+          {breadcrumbs.map((crumb, i) => (
+            <span key={i} className="flex items-center gap-0.5">
+              {i > 0 && <ChevronRight className="h-3 w-3" />}
+              <button className="hover:text-[#cdd6f4]" onClick={() => { setCurrentPath(i === 0 ? "." : breadcrumbs.slice(1, i + 1).join("/")); setSelectedFile(null); }}>{crumb}</button>
+            </span>
+          ))}
+        </div>
+        <button className="p-1 rounded hover:bg-white/5 text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+      </div>
+      <div className="flex flex-1 min-h-0">
+        <div className="w-1/3 border-r border-[#313244] overflow-y-auto">
+          <div className="p-1">
+            {currentPath !== "." && (
+              <button className="w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5"
+                onClick={() => { const parts = currentPath.split("/"); parts.pop(); setCurrentPath(parts.length ? parts.join("/") : "."); setSelectedFile(null); }}>
+                <Folder className="h-3.5 w-3.5 text-[#fab387]" /><span className="text-[#6c7086]">..</span>
+              </button>
+            )}
+            {isLoading ? <div className="p-2 space-y-1">{[1,2,3,4].map(i => <div key={i} className="h-5 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
+              items.map(item => (
+                <button key={item.path} className={cn("w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5", selectedFile === item.path && "bg-[#313244]")}
+                  onClick={() => item.type === "directory" ? (setCurrentPath(item.path), setSelectedFile(null)) : setSelectedFile(item.path)}>
+                  {item.type === "directory" ? <Folder className="h-3.5 w-3.5 text-[#fab387]" /> : getFileIcon(item.name)}
+                  <span className="truncate flex-1 text-[#cdd6f4]">{item.name}</span>
+                  {item.size !== undefined && <span className="text-[10px] text-[#585b70]">{formatBytes(item.size)}</span>}
+                </button>
+              ))}
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto">
+          {selectedFile ? (contentLoading ? <div className="p-4"><Loader2 className="h-4 w-4 animate-spin text-[#6c7086]" /></div> :
+            fileContent?.error ? <div className="p-4 text-sm text-[#f38ba8]">{fileContent.error}</div> :
+            <div className="relative">
+              <div className="flex items-center justify-between px-3 py-1 bg-[#181825] border-b border-[#313244] sticky top-0">
+                <span className="text-xs font-mono text-[#6c7086]">{selectedFile}</span>
+                <button className="p-0.5 rounded hover:bg-[#313244]" onClick={() => navigator.clipboard.writeText(fileContent?.content || "")}>
+                  <Copy className="h-3 w-3 text-[#6c7086]" />
+                </button>
+              </div>
+              <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all text-[#cdd6f4]">{fileContent?.content}</pre>
+            </div>
+          ) : <div className="p-8 text-center text-sm text-[#585b70]"><FileCode className="h-8 w-8 mx-auto mb-2 opacity-30" />Select a file</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PreviewPanel() {
+  const [url, setUrl] = useState("");
+  const [currentUrl, setCurrentUrl] = useState(`https://${window.location.host}`);
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-2 py-1.5 border-b border-[#313244]">
+        <Eye className="h-3.5 w-3.5 text-[#6c7086]" />
+        <form className="flex-1 flex gap-1" onSubmit={e => { e.preventDefault(); if (url) setCurrentUrl(url); }}>
+          <input value={url} onChange={e => setUrl(e.target.value)} placeholder={currentUrl}
+            className="flex-1 h-7 text-xs font-mono px-2 rounded border border-[#313244] bg-[#1e1e2e] text-[#cdd6f4] placeholder:text-[#585b70] outline-none focus:ring-1 focus:ring-[#cba6f7]" />
+          <button type="submit" className="h-7 px-2 rounded border border-[#313244] hover:bg-[#313244]"><Play className="h-3 w-3 text-[#cdd6f4]" /></button>
+        </form>
+        <button className="h-7 px-2 rounded border border-[#313244] hover:bg-[#313244]" onClick={() => setCurrentUrl(currentUrl + "?" + Date.now())}><RefreshCw className="h-3 w-3 text-[#cdd6f4]" /></button>
+      </div>
+      <div className="flex-1"><iframe src={currentUrl} className="w-full h-full border-0" title="Preview" /></div>
+    </div>
+  );
+}
+
+function GitPanel() {
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["wb-git-status"],
+    queryFn: async () => { const res = await fetch(`/api/workbench/git-status`); return res.json(); },
+  });
+
+  const gitMutation = useMutation({
+    mutationFn: async (command: string) => { const res = await fetch(`/api/workbench/git`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command }) }); return res.json(); },
+    onSuccess: () => refetch(),
+  });
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-2">
+          <GitBranch className="h-3.5 w-3.5 text-[#fab387]" />
+          <span className="text-xs font-medium text-[#cdd6f4]">Git</span>
+          {data?.currentBranch && <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#313244] text-[#a6adc8]">{data.currentBranch}</span>}
+        </div>
+        <div className="flex items-center gap-1">
+          <button className="px-2 py-0.5 text-[10px] rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => gitMutation.mutate("git pull")} disabled={gitMutation.isPending}>Pull</button>
+          <button className="px-2 py-0.5 text-[10px] rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => gitMutation.mutate("git fetch")} disabled={gitMutation.isPending}>Fetch</button>
+          <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {isLoading ? <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-6 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
+        <div className="p-2 space-y-3">
+          {data?.changes?.length > 0 && (
+            <div>
+              <h4 className="text-xs font-medium text-[#6c7086] mb-1 px-1">Changes ({data.changes.length})</h4>
+              {data.changes.map((c: any, i: number) => (
+                <div key={i} className="flex items-center gap-1.5 px-1 py-0.5 text-xs hover:bg-[#313244] rounded">
+                  <span className={cn("text-[9px] px-1 rounded border",
+                    c.status === "M" ? "text-[#f9e2af] border-[#f9e2af]/30" :
+                    c.status === "A" || c.status === "??" ? "text-[#a6e3a1] border-[#a6e3a1]/30" :
+                    c.status === "D" ? "text-[#f38ba8] border-[#f38ba8]/30" : "text-[#6c7086] border-[#313244]"
+                  )}>{c.status}</span>
+                  <span className="truncate font-mono text-[11px] text-[#a6adc8]">{c.file}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {data?.changes?.length === 0 && <div className="text-xs text-center text-[#585b70] py-2">Working tree clean</div>}
+          <div className="h-px bg-[#313244]" />
+          <div>
+            <h4 className="text-xs font-medium text-[#6c7086] mb-1 px-1">Recent Commits</h4>
+            {data?.commits?.slice(0, 15).map((c: any, i: number) => (
+              <div key={i} className="flex items-start gap-1.5 px-1 py-1 text-xs hover:bg-[#313244] rounded">
+                <GitCommit className="h-3 w-3 mt-0.5 text-[#585b70] shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[11px] text-[#a6adc8]">{c.message}</p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-[#585b70] font-mono">{c.hash?.substring(0, 7)}</span>
+                    <span className="text-[10px] text-[#585b70]">{c.date}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>}
+      </div>
+    </div>
+  );
+}
+
+function AgentActivityPanel() {
+  const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["wb-agent-activity"],
+    queryFn: async () => { const res = await fetch(`/api/workbench/agent-activity`); return res.json(); },
+  });
+
+  const entries = data?.entries || [];
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-2">
+          <Activity className="h-3.5 w-3.5 text-[#cba6f7]" />
+          <span className="text-xs font-medium text-[#cdd6f4]">Agent Activity</span>
+          {data?.stats && <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#313244] text-[#6c7086]">{data.stats.agentCommits} agent / {data.stats.totalCommits} total</span>}
+        </div>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {isLoading ? <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-10 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
+        entries.length === 0 ? <div className="p-4 text-sm text-center text-[#585b70]">No activity found</div> :
+        <div className="p-1">{entries.map((entry: any) => {
+          const expanded = expandedCommit === entry.hash;
+          return (
+            <div key={entry.hash} className="border-b border-[#313244] last:border-0">
+              <button className="w-full flex items-start gap-2 px-2 py-1.5 text-left hover:bg-[#313244]" onClick={() => setExpandedCommit(expanded ? null : entry.hash)}>
+                <div className="mt-0.5 shrink-0">{entry.isAgent ? <Bot className="h-3.5 w-3.5 text-[#cba6f7]" /> : <User className="h-3.5 w-3.5 text-[#89b4fa]" />}</div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs truncate text-[#cdd6f4]">{entry.message}</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[10px] text-[#585b70] font-mono">{entry.hash?.substring(0, 7)}</span>
+                    <span className="text-[10px] text-[#585b70]">{entry.files.length} files</span>
+                  </div>
+                </div>
+                {entry.files.length > 0 && <div className="shrink-0 mt-0.5">{expanded ? <ChevronDown className="h-3 w-3 text-[#585b70]" /> : <ChevronRight className="h-3 w-3 text-[#585b70]" />}</div>}
+              </button>
+              {expanded && entry.files.length > 0 && (
+                <div className="pl-7 pr-2 pb-2 space-y-0.5">{entry.files.map((f: any, fi: number) => (
+                  <div key={fi} className="flex items-center gap-1.5 text-[11px]">
+                    <span className={cn("text-[9px] px-1 rounded border",
+                      f.status === "A" ? "text-[#a6e3a1] border-[#a6e3a1]/30" :
+                      f.status === "M" ? "text-[#f9e2af] border-[#f9e2af]/30" :
+                      f.status === "D" ? "text-[#f38ba8] border-[#f38ba8]/30" : "text-[#6c7086] border-[#313244]"
+                    )}>{f.status}</span>
+                    <span className="font-mono truncate text-[#6c7086]">{f.file}</span>
+                  </div>
+                ))}</div>
+              )}
+            </div>
+          );
+        })}</div>}
+      </div>
+    </div>
+  );
+}
+
+function DatabasePanel() {
+  const [query, setQuery] = useState("SELECT schemaname, relname as table_name, n_live_tup as row_count FROM pg_stat_user_tables ORDER BY n_live_tup DESC");
+  const [results, setResults] = useState<any>(null);
+
+  const queryMutation = useMutation({
+    mutationFn: async (q: string) => { const res = await fetch(`/api/workbench/db-query?q=${encodeURIComponent(q)}`); return res.json(); },
+    onSuccess: (data) => setResults(data),
+  });
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[#313244]">
+        <Database className="h-3.5 w-3.5 text-[#89b4fa]" />
+        <span className="text-xs font-medium text-[#cdd6f4]">Database</span>
+      </div>
+      <div className="p-2 border-b border-[#313244] space-y-1.5">
+        <textarea value={query} onChange={e => setQuery(e.target.value)}
+          className="w-full rounded-lg border border-[#313244] bg-[#1e1e2e] px-3 py-2 font-mono text-xs text-[#cdd6f4] placeholder:text-[#585b70] focus:outline-none focus:ring-1 focus:ring-[#cba6f7] resize-y min-h-[60px]" />
+        <div className="flex items-center gap-2">
+          <button className="flex items-center gap-1 px-3 py-1 rounded-lg bg-[#cba6f7] hover:bg-[#b4befe] text-[#1e1e2e] text-xs font-medium disabled:opacity-50"
+            onClick={() => queryMutation.mutate(query)} disabled={queryMutation.isPending || !query.trim()}>
+            {queryMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />} Run
+          </button>
+          {results && <span className="text-[10px] text-[#6c7086]">{results.rowCount} rows</span>}
+        </div>
+      </div>
+      <div className="flex-1 overflow-auto">
+        {results?.error ? <div className="p-3 text-xs text-[#f38ba8]">{results.error}</div> :
+         results?.rows?.length > 0 ? (
+          <table className="w-full text-xs">
+            <thead className="bg-[#181825] sticky top-0"><tr>{results.fields.map((f: string) => (
+              <th key={f} className="px-2 py-1.5 text-left font-medium text-[#6c7086] border-b border-[#313244]">{f}</th>
+            ))}</tr></thead>
+            <tbody>{results.rows.map((row: any, i: number) => (
+              <tr key={i} className="hover:bg-[#313244] border-b border-[#313244]/50">{results.fields.map((f: string) => (
+                <td key={f} className="px-2 py-1 font-mono text-[11px] max-w-[200px] truncate text-[#a6adc8]">{String(row[f] ?? "NULL")}</td>
+              ))}</tr>
+            ))}</tbody>
+          </table>
+        ) : <div className="p-8 text-center text-sm text-[#585b70]"><Database className="h-8 w-8 mx-auto mb-2 opacity-20" />Run a query</div>}
+      </div>
+    </div>
+  );
+}
+
+function SecurityPanel() {
+  const [scanText, setScanText] = useState("");
+  const { data: report, isLoading, refetch } = useQuery<any>({
+    queryKey: ["wb-security-report"],
+    queryFn: async () => { const res = await fetch(`/api/workbench/security-report`); return res.json(); },
+  });
+
+  const scanMutation = useMutation({
+    mutationFn: async (text: string) => { const res = await fetch(`/api/workbench/security-scan-text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }); return res.json(); },
+  });
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-2">
+          <Shield className="h-3.5 w-3.5 text-[#f38ba8]" />
+          <span className="text-xs font-medium text-[#cdd6f4]">Security Scanner</span>
+          {report?.summary && (
+            <span className={cn("text-[9px] px-1.5 py-0.5 rounded border",
+              report.summary.critical > 0 ? "border-[#f38ba8]/30 text-[#f38ba8]" :
+              report.summary.warning > 0 ? "border-[#f9e2af]/30 text-[#f9e2af]" : "border-[#a6e3a1]/30 text-[#a6e3a1]"
+            )}>{report.summary.total} findings</span>
+          )}
+        </div>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+      </div>
+      <div className="p-2 border-b border-[#313244] space-y-1.5">
+        <div className="flex gap-1">
+          <input value={scanText} onChange={e => setScanText(e.target.value)} placeholder="Paste text to scan for secrets..."
+            className="flex-1 h-7 text-xs px-2 rounded border border-[#313244] bg-[#1e1e2e] text-[#cdd6f4] placeholder:text-[#585b70] outline-none" />
+          <button className="h-7 px-2 rounded bg-[#f38ba8] hover:bg-[#eba0ac] text-[#1e1e2e] text-xs font-medium disabled:opacity-50"
+            onClick={() => scanMutation.mutate(scanText)} disabled={scanMutation.isPending || !scanText.trim()}>
+            {scanMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+          </button>
+        </div>
+        {scanMutation.data && (
+          <div className="text-xs p-2 rounded bg-[#181825] border border-[#313244]">
+            {scanMutation.data.findings?.length > 0 ? (
+              <div className="space-y-1">{scanMutation.data.findings.map((f: any, i: number) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className={cn("text-[9px] px-1 rounded", f.severity === "critical" ? "bg-[#f38ba8]/20 text-[#f38ba8]" : "bg-[#89b4fa]/20 text-[#89b4fa]")}>{f.severity}</span>
+                  <span className="text-[#a6adc8]">{f.type} ({f.count})</span>
+                </div>
+              ))}</div>
+            ) : <span className="text-[#a6e3a1]">No secrets found</span>}
+          </div>
+        )}
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {isLoading ? <div className="p-3"><Loader2 className="h-4 w-4 animate-spin text-[#6c7086]" /></div> :
+         report?.findings?.length > 0 ? (
+          <div className="p-2 space-y-1">{report.findings.map((f: any, i: number) => (
+            <div key={i} className={cn("p-2 rounded border text-xs",
+              f.severity === "critical" ? "border-[#f38ba8]/30 bg-[#f38ba8]/5" :
+              f.severity === "warning" ? "border-[#f9e2af]/30 bg-[#f9e2af]/5" : "border-[#313244] bg-[#181825]"
+            )}>
+              <div className="flex items-center gap-2 mb-0.5">
+                {f.severity === "critical" ? <XCircle className="h-3 w-3 text-[#f38ba8]" /> :
+                 f.severity === "warning" ? <AlertTriangle className="h-3 w-3 text-[#f9e2af]" /> :
+                 <CheckCircle2 className="h-3 w-3 text-[#89b4fa]" />}
+                <span className="font-medium text-[#cdd6f4]">{f.title}</span>
+                <span className="text-[9px] px-1 rounded bg-[#313244] text-[#6c7086]">{f.category}</span>
+              </div>
+              <p className="text-[#a6adc8] text-[11px] ml-5">{f.detail}</p>
+            </div>
+          ))}</div>
+        ) : <div className="p-4 text-center text-sm text-[#585b70]">No findings</div>}
+      </div>
+    </div>
+  );
+}
+
+function EnvPanel() {
+  const [search, setSearch] = useState("");
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["wb-env"],
+    queryFn: async () => { const res = await fetch(`/api/workbench/env`); return res.json(); },
+  });
+
+  const vars = (data?.variables || []).filter((v: any) => !search || v.key.toLowerCase().includes(search.toLowerCase()));
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-2"><Key className="h-3.5 w-3.5 text-[#cba6f7]" /><span className="text-xs font-medium text-[#cdd6f4]">Environment ({data?.count || 0})</span></div>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+      </div>
+      <div className="px-2 py-1.5 border-b border-[#313244]">
+        <div className="relative">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-[#585b70]" />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            className="w-full h-7 text-xs pl-7 rounded border border-[#313244] bg-[#1e1e2e] text-[#cdd6f4] placeholder:text-[#585b70] outline-none" placeholder="Filter..." />
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-1">
+        {isLoading ? <div className="p-3 space-y-1">{[1,2,3].map(i => <div key={i} className="h-5 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
+         vars.map((v: any) => (
+          <div key={v.key} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#313244] text-xs">
+            <span className="font-mono font-medium text-[11px] shrink-0 text-[#cdd6f4]">{v.key}</span>
+            <span className="text-[#585b70]">=</span>
+            <span className={cn("font-mono text-[11px] truncate", v.sensitive ? "text-[#f9e2af]" : "text-[#6c7086]")}>{v.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ProcessPanel() {
+  const { data, isLoading, refetch } = useQuery<any>({
+    queryKey: ["wb-process-info"],
+    queryFn: async () => { const res = await fetch(`/api/workbench/process-info`); return res.json(); },
+    refetchInterval: 10000,
+  });
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-2"><Activity className="h-3.5 w-3.5 text-[#a6e3a1]" /><span className="text-xs font-medium text-[#cdd6f4]">Process Info</span></div>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {isLoading ? <div className="p-3"><Loader2 className="h-4 w-4 animate-spin text-[#6c7086]" /></div> : data ? (
+          <div className="p-3 space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { icon: Clock, label: "Uptime", value: formatUptime(data.uptime), color: "text-[#a6e3a1]" },
+                { icon: Server, label: "Node", value: data.nodeVersion, color: "text-[#89b4fa]" },
+                { icon: Cpu, label: "CPUs", value: data.cpus, color: "text-[#f9e2af]" },
+                { icon: HardDrive, label: "Free Mem", value: formatBytes(data.freeMemory || 0), color: "text-[#cba6f7]" },
+                { icon: HardDrive, label: "Heap", value: formatBytes(data.memoryUsage?.heapUsed || 0), color: "text-[#fab387]" },
+                { icon: HardDrive, label: "RSS", value: formatBytes(data.memoryUsage?.rss || 0), color: "text-[#f38ba8]" },
+              ].map((item, i) => (
+                <div key={i} className="p-2 rounded bg-[#181825] border border-[#313244]">
+                  <div className={cn("flex items-center gap-1.5 text-[10px] mb-0.5", item.color)}><item.icon className="h-3 w-3" /> {item.label}</div>
+                  <div className="text-sm font-semibold text-[#cdd6f4]">{item.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SkillsPanel() {
+  const [search, setSearch] = useState("");
+  const { data: skills = [], isLoading, refetch } = useQuery<any[]>({
+    queryKey: ["wb-skills"],
+    queryFn: async () => { const res = await fetch(`/api/workbench/skills`); return res.json(); },
+  });
+
+  const filtered = skills.filter((s: any) => !search || s.name?.toLowerCase().includes(search.toLowerCase()) || s.description?.toLowerCase().includes(search.toLowerCase()));
+
+  const categories = Array.from(new Set(skills.map((s: any) => s.category).filter(Boolean))).sort();
+  const [catFilter, setCatFilter] = useState("all");
+  const items = filtered.filter((s: any) => catFilter === "all" || s.category === catFilter);
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-2">
+          <Puzzle className="h-3.5 w-3.5 text-[#cba6f7]" />
+          <span className="text-xs font-medium text-[#cdd6f4]">Skills</span>
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#313244] text-[#a6adc8]">{skills.length}</span>
+        </div>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
+      </div>
+      <div className="px-2 py-1.5 border-b border-[#313244] space-y-1.5">
+        <div className="flex gap-1">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-[#585b70]" />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search skills..."
+              className="w-full h-6 text-[10px] pl-7 rounded border border-[#313244] bg-[#1e1e2e] text-[#cdd6f4] placeholder:text-[#585b70] outline-none" />
+          </div>
+          <select value={catFilter} onChange={e => setCatFilter(e.target.value)}
+            className="h-6 text-[10px] px-1.5 rounded border border-[#313244] bg-[#1e1e2e] text-[#cdd6f4]">
+            <option value="all">All</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {isLoading ? <div className="p-3"><Loader2 className="h-4 w-4 animate-spin text-[#6c7086]" /></div> :
+         items.length === 0 ? <div className="p-4 text-center text-sm text-[#585b70]">No skills found</div> :
+         <div className="p-1 space-y-0.5">{items.map((s: any) => (
+           <div key={s.id} className="flex items-start gap-2 px-2 py-1.5 rounded hover:bg-[#313244]">
+             <Puzzle className="h-3.5 w-3.5 text-[#cba6f7] mt-0.5 shrink-0" />
+             <div className="min-w-0 flex-1">
+               <div className="flex items-center gap-1.5">
+                 <span className="text-xs font-medium text-[#cdd6f4]">{s.name}</span>
+                 <span className="text-[8px] px-1 rounded bg-[#313244] text-[#6c7086]">{s.category}</span>
+               </div>
+               {s.description && <p className="text-[10px] text-[#6c7086] truncate mt-0.5">{s.description}</p>}
+             </div>
+             <span className={cn("text-[8px] px-1 rounded", s.enabled ? "bg-[#a6e3a1]/20 text-[#a6e3a1]" : "bg-[#f38ba8]/20 text-[#f38ba8]")}>{s.enabled ? "active" : "off"}</span>
+           </div>
+         ))}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ClaudeCodePanel() {
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
+  }, []);
+
+  const handleStop = useCallback(() => {
+    if (abortController) {
+      abortController.abort(); setAbortController(null); setIsStreaming(false);
+      setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: m.content + "\n\n[Stopped]" } : m));
+    }
+  }, [abortController]);
+
+  const handleSubmit = useCallback(async () => {
+    if (!input.trim() || isStreaming) return;
+    const prompt = input.trim();
+    setInput("");
+    const userMsg: ChatMessage = { role: "user", content: prompt, timestamp: Date.now() };
+    const assistantMsg: ChatMessage = { role: "assistant", content: "", timestamp: Date.now(), streaming: true };
+    setMessages(prev => [...prev, userMsg, assistantMsg]);
+    setIsStreaming(true);
+    scrollToBottom();
+    const controller = new AbortController();
+    setAbortController(controller);
+
+    try {
+      const conversationHistory = messages.filter(m => !m.streaming).map(m => ({ role: m.role, content: m.content }));
+      const res = await fetch(`/api/workbench/code-chat`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, messages: conversationHistory }),
+        signal: controller.signal,
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({ error: "Failed" })); throw new Error(err.error || `HTTP ${res.status}`); }
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n"); buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === "chunk") { setMessages(prev => { const u = [...prev]; const l = u[u.length-1]; if (l?.streaming) u[u.length-1] = { ...l, content: l.content + data.content }; return u; }); scrollToBottom(); }
+              else if (data.type === "done") { setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m)); }
+              else if (data.type === "error") { setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: m.content + `\nError: ${data.content}` } : m)); }
+            } catch {}
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name === "AbortError") return;
+      setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: `Error: ${err.message}` } : m));
+    } finally { setIsStreaming(false); setAbortController(null); setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m)); scrollToBottom(); }
+  }, [input, isStreaming, messages, scrollToBottom]);
+
+  return (
+    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-3.5 w-3.5 text-[#fab387]" />
+          <span className="text-xs text-[#cdd6f4] font-mono">Claude Code</span>
+          <span className="text-[9px] px-1.5 py-0.5 rounded border border-[#fab387]/30 text-[#fab387]">Sonnet</span>
+        </div>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => setMessages([])}><Trash2 className="h-3 w-3" /></button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3" ref={scrollRef}>
+        <div className="space-y-3">
+          {messages.length === 0 && (
+            <div className="text-center py-8 space-y-3">
+              <div className="flex justify-center"><div className="h-12 w-12 rounded-full bg-gradient-to-br from-[#fab387] to-[#f9e2af] flex items-center justify-center"><Sparkles className="h-6 w-6 text-[#1e1e2e]" /></div></div>
+              <div><p className="text-[#cdd6f4] text-sm font-medium">Claude Code</p><p className="text-[#6c7086] text-xs mt-1">Production-ready code, debugging, and architecture.</p></div>
+              <div className="flex flex-wrap gap-1.5 justify-center pt-1">
+                {["Refactor this module", "Find security issues", "Write unit tests", "Explain architecture"].map(s => (
+                  <button key={s} onClick={() => { setInput(s); textareaRef.current?.focus(); }}
+                    className="text-[10px] px-2 py-1 rounded-full border border-[#313244] text-[#6c7086] hover:text-[#cdd6f4] hover:border-[#fab387]/30">{s}</button>
+                ))}
+              </div>
+            </div>
+          )}
+          {messages.map((msg, i) => (
+            <div key={i} className={cn("flex gap-2", msg.role === "user" ? "justify-end" : "justify-start")}>
+              {msg.role === "assistant" && <div className="h-5 w-5 rounded-full bg-[#fab387]/20 flex items-center justify-center shrink-0 mt-0.5"><Bot className="h-3 w-3 text-[#fab387]" /></div>}
+              <div className={cn("max-w-[85%] rounded-lg px-3 py-2 text-xs",
+                msg.role === "user" ? "bg-[#89b4fa]/10 text-[#cdd6f4] border border-[#89b4fa]/20" : "bg-[#181825] text-[#cdd6f4] border border-[#313244]"
+              )}>
+                <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed">{msg.content}</pre>
+                {msg.streaming && <span className="inline-block w-1.5 h-3.5 bg-[#fab387] animate-pulse ml-0.5 align-middle" />}
+              </div>
+              {msg.role === "user" && <div className="h-5 w-5 rounded-full bg-[#89b4fa]/20 flex items-center justify-center shrink-0 mt-0.5"><User className="h-3 w-3 text-[#89b4fa]" /></div>}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="p-2 border-t border-[#313244] bg-[#181825]">
+        <div className="flex items-end gap-2">
+          <textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
+            placeholder="Ask Claude Code... (Enter to send)"
+            className="flex-1 min-h-[36px] max-h-[120px] text-xs font-mono bg-[#1e1e2e] border border-[#313244] text-[#cdd6f4] placeholder:text-[#585b70] rounded-lg px-3 py-2 resize-none outline-none focus:ring-1 focus:ring-[#fab387]/50"
+            disabled={isStreaming} />
+          {isStreaming ? (
+            <button onClick={handleStop} className="h-9 px-3 rounded-lg text-[#f38ba8] hover:bg-[#f38ba8]/10 flex items-center justify-center"><Square className="h-3.5 w-3.5" /></button>
+          ) : (
+            <button onClick={handleSubmit} disabled={!input.trim()} className="h-9 px-3 rounded-lg bg-[#fab387] hover:bg-[#f9e2af] text-[#1e1e2e] flex items-center justify-center disabled:opacity-40"><Send className="h-3.5 w-3.5" /></button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AIRouterPanel() {
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [routingMode, setRoutingMode] = useState<string>("auto");
+  const [manualModel, setManualModel] = useState<string>("");
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const { data: config } = useQuery<any>({
+    queryKey: ["wb-router-config"],
+    queryFn: async () => { const res = await fetch(`/api/workbench/router-config`); return res.json(); },
+  });
+
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
+  }, []);
+
+  const handleSubmit = useCallback(async () => {
+    if (!input.trim() || isStreaming) return;
+    const prompt = input.trim();
+    setInput("");
+    const userMsg: ChatMessage = { role: "user", content: prompt, timestamp: Date.now() };
+    const assistantMsg: ChatMessage = { role: "assistant", content: "", timestamp: Date.now(), streaming: true };
+    setMessages(prev => [...prev, userMsg, assistantMsg]);
+    setIsStreaming(true);
+    scrollToBottom();
+    const controller = new AbortController();
+    setAbortController(controller);
+
+    try {
+      const body: Record<string, any> = { prompt, mode: routingMode, stream: true };
+      if (routingMode === "manual" && manualModel) body.model = manualModel;
+      const conversationHistory = messages.filter(m => !m.streaming).map(m => ({ role: m.role, content: m.content }));
+      body.messages = conversationHistory;
+
+      const res = await fetch(`/api/workbench/route-prompt`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body), signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n"); buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.type === "chunk") { setMessages(prev => { const u = [...prev]; const l = u[u.length-1]; if (l?.streaming) u[u.length-1] = { ...l, content: l.content + data.content, model: data.model }; return u; }); scrollToBottom(); }
+              else if (data.type === "model_selected") { setMessages(prev => { const u = [...prev]; const l = u[u.length-1]; if (l?.streaming) u[u.length-1] = { ...l, model: data.model }; return u; }); }
+              else if (data.type === "done") { setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, tokens: data.tokens } : m)); }
+              else if (data.type === "error") { setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: m.content + `\nError: ${data.content}` } : m)); }
+            } catch {}
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name === "AbortError") return;
+      setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: `Error: ${err.message}` } : m));
+    } finally { setIsStreaming(false); setAbortController(null); setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m)); scrollToBottom(); }
+  }, [input, isStreaming, routingMode, manualModel, messages, scrollToBottom]);
+
+  const availableModels = config?.models?.filter((m: any) => m.available) || [];
+  const modelColors: Record<string, string> = { "claude-sonnet-4-6": "text-[#fab387]", "claude-opus-4-6": "text-[#cba6f7]", "claude-haiku-4-5": "text-[#a6e3a1]" };
+
+  return (
+    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
+        <div className="flex items-center gap-2">
+          <Zap className="h-3.5 w-3.5 text-[#f9e2af]" />
+          <span className="text-xs text-[#cdd6f4] font-mono">AI Router</span>
+          {availableModels.length > 0 && <span className="text-[9px] px-1.5 py-0.5 rounded border border-[#a6e3a1]/30 text-[#a6e3a1]">{availableModels.length} models</span>}
+        </div>
+        <div className="flex items-center gap-1">
+          {(["auto", "manual"] as const).map(m => (
+            <button key={m} onClick={() => setRoutingMode(m)}
+              className={cn("text-[10px] px-1.5 py-0.5 rounded capitalize", routingMode === m ? "bg-[#f9e2af] text-[#1e1e2e]" : "text-[#6c7086] hover:bg-[#313244]")}>{m}</button>
+          ))}
+        </div>
+      </div>
+      {routingMode === "manual" && (
+        <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
+          <select value={manualModel} onChange={e => setManualModel(e.target.value)}
+            className="w-full h-6 text-[10px] rounded border border-[#313244] bg-[#1e1e2e] text-[#cdd6f4] outline-none">
+            <option value="">Auto-select</option>
+            {availableModels.map((m: any) => <option key={m.id} value={m.id}>{m.name} ({m.speed}, {m.cost})</option>)}
+          </select>
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto p-3" ref={scrollRef}>
+        <div className="space-y-3">
+          {messages.length === 0 && (
+            <div className="text-center py-8 space-y-2">
+              <Zap className="h-8 w-8 mx-auto text-[#f9e2af]/30" />
+              <p className="text-sm text-[#cdd6f4]">AI Router</p>
+              <p className="text-xs text-[#6c7086]">Auto-routes to the best Claude model for your task.</p>
+            </div>
+          )}
+          {messages.map((msg, i) => (
+            <div key={i} className={cn("flex gap-2", msg.role === "user" ? "justify-end" : "justify-start")}>
+              {msg.role === "assistant" && <div className="h-5 w-5 rounded-full bg-[#f9e2af]/20 flex items-center justify-center shrink-0 mt-0.5"><Zap className="h-3 w-3 text-[#f9e2af]" /></div>}
+              <div className={cn("max-w-[85%] rounded-lg px-3 py-2 text-xs",
+                msg.role === "user" ? "bg-[#89b4fa]/10 border border-[#89b4fa]/20" : "bg-[#181825] border border-[#313244]"
+              )}>
+                {msg.model && <div className="flex items-center gap-1 mb-1">
+                  <span className={cn("text-[9px] font-mono", modelColors[msg.model] || "text-[#6c7086]")}>{msg.model}</span>
+                  {msg.tokens && <span className="text-[9px] text-[#585b70]">{msg.tokens} tokens</span>}
+                </div>}
+                <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed text-[#cdd6f4]">{msg.content}</pre>
+                {msg.streaming && <span className="inline-block w-1.5 h-3.5 bg-[#f9e2af] animate-pulse ml-0.5 align-middle" />}
+              </div>
+              {msg.role === "user" && <div className="h-5 w-5 rounded-full bg-[#89b4fa]/20 flex items-center justify-center shrink-0 mt-0.5"><User className="h-3 w-3 text-[#89b4fa]" /></div>}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="p-2 border-t border-[#313244] bg-[#181825]">
+        <div className="flex items-end gap-2">
+          <textarea value={input} onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmit(); } }}
+            placeholder="Route a prompt... (Enter to send)"
+            className="flex-1 min-h-[36px] max-h-[120px] text-xs font-mono bg-[#1e1e2e] border border-[#313244] text-[#cdd6f4] placeholder:text-[#585b70] rounded-lg px-3 py-2 resize-none outline-none focus:ring-1 focus:ring-[#f9e2af]/50"
+            disabled={isStreaming} />
+          {isStreaming ? (
+            <button onClick={() => { abortController?.abort(); setAbortController(null); setIsStreaming(false); setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m)); }}
+              className="h-9 px-3 rounded-lg text-[#f38ba8] hover:bg-[#f38ba8]/10"><Square className="h-3.5 w-3.5" /></button>
+          ) : (
+            <button onClick={handleSubmit} disabled={!input.trim()} className="h-9 px-3 rounded-lg bg-[#f9e2af] hover:bg-[#f9e2af]/80 text-[#1e1e2e] disabled:opacity-40"><Send className="h-3.5 w-3.5" /></button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CodeReviewPanel() {
+  const [filterSeverity, setFilterSeverity] = useState<string>("all");
+
+  const reviewMutation = useMutation({
+    mutationFn: async () => { const res = await fetch(`/api/workbench/code-review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectSlug: "llm-hub" }) }); return res.json(); },
+  });
+
+  useEffect(() => { reviewMutation.mutate(); }, []);
+
+  const review = reviewMutation.data?.review;
+  const meta = reviewMutation.data?.meta;
+
+  const gradeColor = (g: string) => {
+    if (g === "A") return "text-[#a6e3a1] border-[#a6e3a1]/40 bg-[#a6e3a1]/10";
+    if (g === "B") return "text-[#89b4fa] border-[#89b4fa]/40 bg-[#89b4fa]/10";
+    if (g === "C") return "text-[#f9e2af] border-[#f9e2af]/40 bg-[#f9e2af]/10";
+    return "text-[#f38ba8] border-[#f38ba8]/40 bg-[#f38ba8]/10";
+  };
+
+  const filteredIssues = (review?.issues || []).filter((i: any) => filterSeverity === "all" || i.severity === filterSeverity);
+
+  if (reviewMutation.isPending) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 p-6">
+        <Loader2 className="h-8 w-8 animate-spin text-[#cba6f7]" />
+        <div className="text-center"><p className="text-sm font-medium text-[#cba6f7]">Reviewing codebase...</p><p className="text-xs text-[#6c7086] mt-1">Scanning files, analyzing patterns</p></div>
+      </div>
+    );
+  }
+
+  if (!review) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 p-6">
+        <XCircle className="h-6 w-6 text-[#f38ba8]" />
+        <p className="text-sm text-[#f38ba8]">Review failed</p>
+        <button className="px-3 py-1 text-xs rounded bg-[#313244] text-[#cdd6f4] hover:bg-[#45475a]" onClick={() => reviewMutation.mutate()}>Retry</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-2">
+          <Brain className="h-3.5 w-3.5 text-[#cba6f7]" />
+          <span className="text-xs font-medium text-[#cdd6f4]">Code Review</span>
+          {review.overallGrade && <span className={cn("text-[10px] px-1.5 py-0.5 rounded border font-bold", gradeColor(review.overallGrade))}>Grade: {review.overallGrade}</span>}
+        </div>
+        <div className="flex items-center gap-1">
+          {meta?.filesScanned && <span className="text-[10px] text-[#6c7086]">{meta.filesScanned} files</span>}
+          <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => reviewMutation.mutate()}><RefreshCw className="h-3 w-3" /></button>
+        </div>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        {review.overallSummary && <div className="p-2 rounded bg-[#181825] border border-[#313244]"><p className="text-xs text-[#a6adc8] leading-relaxed">{review.overallSummary}</p></div>}
+        <div className="grid grid-cols-3 gap-2">
+          <div className="p-2 rounded bg-[#181825] border border-[#313244] text-center">
+            <Shield className="h-4 w-4 mx-auto mb-1 text-[#89dceb]" />
+            <p className="text-lg font-bold text-[#89dceb]">{review.securityAudit?.score || "--"}/10</p>
+            <p className="text-[9px] text-[#6c7086]">Security</p>
+          </div>
+          <div className="p-2 rounded bg-[#181825] border border-[#313244] text-center">
+            <Bug className="h-4 w-4 mx-auto mb-1 text-[#f38ba8]" />
+            <p className="text-lg font-bold text-[#f38ba8]">{(review.issues || []).filter((i: any) => i.severity === "critical").length}</p>
+            <p className="text-[9px] text-[#6c7086]">Critical</p>
+          </div>
+          <div className="p-2 rounded bg-[#181825] border border-[#313244] text-center">
+            <AlertTriangle className="h-4 w-4 mx-auto mb-1 text-[#f9e2af]" />
+            <p className="text-lg font-bold text-[#f9e2af]">{(review.issues || []).filter((i: any) => i.severity === "warning").length}</p>
+            <p className="text-[9px] text-[#6c7086]">Warnings</p>
+          </div>
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-[#a6adc8]">Issues ({filteredIssues.length})</span>
+            <div className="flex gap-1">
+              {["all", "critical", "warning", "info"].map(s => (
+                <button key={s} onClick={() => setFilterSeverity(s)}
+                  className={cn("text-[9px] px-1.5 py-0.5 rounded capitalize", filterSeverity === s ? "bg-[#cba6f7] text-[#1e1e2e]" : "text-[#6c7086] hover:bg-[#313244]")}>{s}</button>
+              ))}
+            </div>
+          </div>
+          <div className="space-y-1.5">{filteredIssues.map((issue: any, idx: number) => (
+            <div key={idx} className={cn("p-2 rounded border text-xs",
+              issue.severity === "critical" ? "border-[#f38ba8]/30 bg-[#f38ba8]/5" :
+              issue.severity === "warning" ? "border-[#f9e2af]/30 bg-[#f9e2af]/5" : "border-[#313244] bg-[#181825]"
+            )}>
+              <div className="flex items-center gap-2">
+                {issue.severity === "critical" ? <XCircle className="h-3 w-3 text-[#f38ba8]" /> :
+                 issue.severity === "warning" ? <AlertTriangle className="h-3 w-3 text-[#f9e2af]" /> :
+                 <CheckCircle2 className="h-3 w-3 text-[#89b4fa]" />}
+                <span className="font-medium text-[#cdd6f4]">{issue.title}</span>
+                {issue.category && <span className="text-[8px] px-1 rounded bg-[#313244] text-[#6c7086]">{issue.category}</span>}
+              </div>
+              {issue.file && <div className="flex items-center gap-1 mt-1 ml-5"><FileCode className="h-2.5 w-2.5 text-[#6c7086]" /><span className="text-[9px] text-[#6c7086] font-mono">{issue.file}</span></div>}
+              {issue.detail && <p className="text-[10px] text-[#a6adc8] mt-1 ml-5">{issue.detail}</p>}
+              {issue.suggestion && <div className="mt-1 ml-5 p-1.5 rounded bg-[#1e1e2e] border border-[#313244]"><p className="text-[9px] text-[#a6e3a1] font-mono">{issue.suggestion}</p></div>}
+            </div>
+          ))}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const PANELS = [
+  { id: "claude", label: "Claude Code", icon: Sparkles, component: ClaudeCodePanel },
+  { id: "router", label: "AI Router", icon: Zap, component: AIRouterPanel },
+  { id: "shell", label: "Shell", icon: Terminal, component: ShellPanel },
+  { id: "files", label: "Files", icon: FolderTree, component: FileExplorerPanel },
+  { id: "preview", label: "Preview", icon: Eye, component: PreviewPanel },
+  { id: "git", label: "Git", icon: GitBranch, component: GitPanel },
+  { id: "activity", label: "Activity", icon: Bot, component: AgentActivityPanel },
+  { id: "database", label: "Database", icon: Database, component: DatabasePanel },
+  { id: "security", label: "Security", icon: Shield, component: SecurityPanel },
+  { id: "skills", label: "Skills", icon: Puzzle, component: SkillsPanel },
+  { id: "review", label: "Review", icon: Brain, component: CodeReviewPanel },
+  { id: "env", label: "Env Vars", icon: Key, component: EnvPanel },
+  { id: "process", label: "Process", icon: Activity, component: ProcessPanel },
+] as const;
+
+type PanelId = typeof PANELS[number]["id"];
+
+export default function ClaudeWorkbench() {
+  const [leftPanel, setLeftPanel] = useState<PanelId>("claude");
+  const [rightPanel, setRightPanel] = useState<PanelId>("files");
+  const [bottomPanel, setBottomPanel] = useState<PanelId>("shell");
+  const [bottomRightPanel, setBottomRightPanel] = useState<PanelId>("git");
+  const [showBottom, setShowBottom] = useState(false);
+
+  const renderPanel = (panelId: PanelId) => {
+    const panel = PANELS.find(p => p.id === panelId);
+    if (!panel) return null;
+    const Component = panel.component;
+    return <Component />;
+  };
+
+  const PanelSelector = ({ value, onChange }: { value: PanelId; onChange: (v: PanelId) => void }) => (
+    <div className="flex items-center gap-0.5 overflow-x-auto">
+      {PANELS.map(p => {
+        const Icon = p.icon;
+        return (
+          <button key={p.id} onClick={() => onChange(p.id)}
+            className={cn("flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap transition-colors",
+              value === p.id ? "bg-[#fab387] text-[#1e1e2e]" : "text-[#6c7086] hover:bg-[#313244] hover:text-[#cdd6f4]"
+            )}>
+            <Icon className="h-3 w-3" />{p.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col h-[calc(100vh-3.5rem)]">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-[#313244] bg-[#1e1e2e]/95 backdrop-blur">
+        <div className="flex items-center gap-3">
+          <div className="h-6 w-6 rounded bg-gradient-to-br from-[#fab387] to-[#f9e2af] flex items-center justify-center">
+            <Terminal className="h-3.5 w-3.5 text-[#1e1e2e]" />
+          </div>
+          <h1 className="text-base font-semibold tracking-tight text-[#cdd6f4]">Claude Workbench</h1>
+          <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#313244] text-[#6c7086]">IDE</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button className={cn("px-3 py-1 rounded-lg text-xs font-medium transition-colors",
+              showBottom ? "bg-[#fab387] text-[#1e1e2e]" : "border border-[#313244] text-[#a6adc8] hover:bg-[#313244]"
+            )} onClick={() => setShowBottom(!showBottom)}>
+            {showBottom ? "Hide Bottom" : "Show Bottom"}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 flex min-h-0">
+        <div className="flex-1 flex flex-col min-h-0 min-w-0">
+          <div className={cn("flex min-h-0", showBottom ? "h-[55%]" : "flex-1")}>
+            <div className="flex-1 flex flex-col border-r border-[#313244] min-w-0">
+              <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
+                <PanelSelector value={leftPanel} onChange={setLeftPanel} />
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">{renderPanel(leftPanel)}</div>
+            </div>
+            <div className="flex-1 flex flex-col min-w-0">
+              <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
+                <PanelSelector value={rightPanel} onChange={setRightPanel} />
+              </div>
+              <div className="flex-1 min-h-0 overflow-hidden">{renderPanel(rightPanel)}</div>
+            </div>
+          </div>
+
+          {showBottom && (
+            <>
+              <div className="h-px bg-[#313244]" />
+              <div className="h-[45%] flex min-h-0">
+                <div className="flex-1 flex flex-col border-r border-[#313244] min-w-0">
+                  <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
+                    <PanelSelector value={bottomPanel} onChange={setBottomPanel} />
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-hidden">{renderPanel(bottomPanel)}</div>
+                </div>
+                <div className="flex-1 flex flex-col min-w-0">
+                  <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
+                    <PanelSelector value={bottomRightPanel} onChange={setBottomRightPanel} />
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-hidden">{renderPanel(bottomRightPanel)}</div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

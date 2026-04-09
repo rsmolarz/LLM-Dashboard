@@ -43,6 +43,7 @@ import LlmManager from "@/pages/LlmManager";
 import ClawAgent from "@/pages/ClawAgent";
 import CreateLlm from "@/pages/CreateLlm";
 import Workbench from "@/pages/Workbench";
+import ClaudeWorkbench from "@/pages/ClaudeWorkbench";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -96,6 +97,7 @@ function Router() {
         <Route path="/claw-agent" component={ClawAgent} />
         <Route path="/create-llm" component={CreateLlm} />
         <Route path="/workbench" component={Workbench} />
+        <Route path="/claude-workbench" component={ClaudeWorkbench} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>
