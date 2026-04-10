@@ -46,6 +46,7 @@ function CreateProjectForm({ catppuccin, onCreated }: { catppuccin?: boolean; on
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
+        credentials: "include",
       });
       if (!res.ok) {
         const err = await res.json();
@@ -160,7 +161,7 @@ function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; onUpload
       const formData = new FormData();
       formData.append("path", uploadPath);
       Array.from(files).forEach(f => formData.append("files", f));
-      const res = await fetch(`/api/workbench/upload`, { method: "POST", body: formData });
+      const res = await fetch(`/api/workbench/upload`, { method: "POST", body: formData, credentials: "include" });
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || "Upload failed");
@@ -318,12 +319,12 @@ function ProjectsList({ catppuccin }: { catppuccin?: boolean }) {
   const queryClient = useQueryClient();
   const { data: projects = [], isLoading } = useQuery<any[]>({
     queryKey: ["wb-projects"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/projects`); return res.json(); },
+    queryFn: async () => { const res = await fetch(`/api/workbench/projects`, { credentials: "include" }); return res.json(); },
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (slug: string) => {
-      const res = await fetch(`/api/workbench/projects/${slug}`, { method: "DELETE" });
+      const res = await fetch(`/api/workbench/projects/${slug}`, { method: "DELETE", credentials: "include" });
       if (!res.ok) throw new Error("Delete failed");
       return res.json();
     },

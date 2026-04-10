@@ -46,6 +46,7 @@ function ShellPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ command }),
+        credentials: "include",
       });
       return res.json();
     },
@@ -144,7 +145,7 @@ function FileExplorerPanel() {
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["workbench-files", currentPath],
     queryFn: async () => {
-      const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}`);
+      const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}`, { credentials: "include" });
       return res.json();
     },
   });
@@ -152,7 +153,7 @@ function FileExplorerPanel() {
   const { data: fileContent, isLoading: contentLoading } = useQuery<any>({
     queryKey: ["workbench-file-content", selectedFile],
     queryFn: async () => {
-      const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}`);
+      const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}`, { credentials: "include" });
       return res.json();
     },
     enabled: !!selectedFile,
@@ -276,7 +277,7 @@ function GitPanel() {
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["workbench-git-status"],
     queryFn: async () => {
-      const res = await fetch(`/api/workbench/git-status`);
+      const res = await fetch(`/api/workbench/git-status`, { credentials: "include" });
       return res.json();
     },
   });
@@ -287,6 +288,7 @@ function GitPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ command }),
+        credentials: "include",
       });
       return res.json();
     },
@@ -368,7 +370,7 @@ function AgentActivityPanel() {
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["workbench-agent-activity"],
     queryFn: async () => {
-      const res = await fetch(`/api/workbench/agent-activity`);
+      const res = await fetch(`/api/workbench/agent-activity`, { credentials: "include" });
       return res.json();
     },
   });
@@ -494,7 +496,7 @@ function DatabasePanel() {
 
   const queryMutation = useMutation({
     mutationFn: async (q: string) => {
-      const res = await fetch(`/api/workbench/db-query?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`/api/workbench/db-query?q=${encodeURIComponent(q)}`, { credentials: "include" });
       return res.json();
     },
     onSuccess: (data) => setResults(data),
@@ -569,7 +571,7 @@ function EnvPanel() {
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["workbench-env"],
     queryFn: async () => {
-      const res = await fetch(`/api/workbench/env`);
+      const res = await fetch(`/api/workbench/env`, { credentials: "include" });
       return res.json();
     },
   });
@@ -622,7 +624,7 @@ function ProcessPanel() {
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["workbench-process-info"],
     queryFn: async () => {
-      const res = await fetch(`/api/workbench/process-info`);
+      const res = await fetch(`/api/workbench/process-info`, { credentials: "include" });
       return res.json();
     },
     refetchInterval: 10000,
@@ -734,6 +736,7 @@ function CodeChatPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, messages: conversationHistory }),
         signal: controller.signal,
+        credentials: "include",
       });
 
       if (!res.ok) {

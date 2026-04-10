@@ -6,6 +6,7 @@ import * as os from "os";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import multer from "multer";
+import AdmZip from "adm-zip";
 
 const router: IRouter = Router();
 const PROJECT_ROOT = path.resolve(process.cwd(), "../..");
@@ -943,12 +944,18 @@ router.post("/upload", upload.array("files", 50), async (req, res): Promise<void
           if (!fs.existsSync(extractDir)) {
             fs.mkdirSync(extractDir, { recursive: true });
           }
-          execSync(`unzip -o "${file.path}" -d "${extractDir}"`, { timeout: 30000 });
+          const zip = new AdmZip(file.path);
+          zip.extractAllTo(extractDir, true);
 
-          let extractedFiles: string[] = [];
-          try {
-            extractedFiles = execSync(`find "${extractDir}" -type f | head -50`, { encoding: "utf-8", timeout: 5000 }).split("\n").filter(Boolean);
-          } catch {}
+          const extractedFiles: string[] = [];
+          const walkDir = (dir: string) => {
+            for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, entry.name);
+              if (entry.isDirectory()) walkDir(full);
+              else if (extractedFiles.length < 50) extractedFiles.push(full);
+            }
+          };
+          try { walkDir(extractDir); } catch {}
 
           results.push({
             name: originalName,

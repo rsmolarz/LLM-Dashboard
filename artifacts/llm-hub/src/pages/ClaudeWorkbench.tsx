@@ -42,7 +42,7 @@ function ShellPanel() {
 
   const shellMutation = useMutation({
     mutationFn: async (command: string) => {
-      const res = await fetch(`/api/workbench/shell`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command }) });
+      const res = await fetch(`/api/workbench/shell`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command }), credentials: "include" });
       return res.json();
     },
     onSuccess: (data, command) => {
@@ -110,12 +110,12 @@ function FileExplorerPanel() {
 
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["wb-files", currentPath],
-    queryFn: async () => { const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}`); return res.json(); },
+    queryFn: async () => { const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}`, { credentials: "include" }); return res.json(); },
   });
 
   const { data: fileContent, isLoading: contentLoading } = useQuery<any>({
     queryKey: ["wb-file-content", selectedFile],
-    queryFn: async () => { const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}`); return res.json(); },
+    queryFn: async () => { const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}`, { credentials: "include" }); return res.json(); },
     enabled: !!selectedFile,
   });
 
@@ -205,11 +205,11 @@ function PreviewPanel() {
 function GitPanel() {
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["wb-git-status"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/git-status`); return res.json(); },
+    queryFn: async () => { const res = await fetch(`/api/workbench/git-status`, { credentials: "include" }); return res.json(); },
   });
 
   const gitMutation = useMutation({
-    mutationFn: async (command: string) => { const res = await fetch(`/api/workbench/git`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command }) }); return res.json(); },
+    mutationFn: async (command: string) => { const res = await fetch(`/api/workbench/git`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command }), credentials: "include" }); return res.json(); },
     onSuccess: () => refetch(),
   });
 
@@ -272,7 +272,7 @@ function AgentActivityPanel() {
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["wb-agent-activity"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/agent-activity`); return res.json(); },
+    queryFn: async () => { const res = await fetch(`/api/workbench/agent-activity`, { credentials: "include" }); return res.json(); },
   });
 
   const entries = data?.entries || [];
@@ -330,7 +330,7 @@ function DatabasePanel() {
   const [results, setResults] = useState<any>(null);
 
   const queryMutation = useMutation({
-    mutationFn: async (q: string) => { const res = await fetch(`/api/workbench/db-query?q=${encodeURIComponent(q)}`); return res.json(); },
+    mutationFn: async (q: string) => { const res = await fetch(`/api/workbench/db-query?q=${encodeURIComponent(q)}`, { credentials: "include" }); return res.json(); },
     onSuccess: (data) => setResults(data),
   });
 
@@ -374,11 +374,11 @@ function SecurityPanel() {
   const [scanText, setScanText] = useState("");
   const { data: report, isLoading, refetch } = useQuery<any>({
     queryKey: ["wb-security-report"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/security-report`); return res.json(); },
+    queryFn: async () => { const res = await fetch(`/api/workbench/security-report`, { credentials: "include" }); return res.json(); },
   });
 
   const scanMutation = useMutation({
-    mutationFn: async (text: string) => { const res = await fetch(`/api/workbench/security-scan-text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }); return res.json(); },
+    mutationFn: async (text: string) => { const res = await fetch(`/api/workbench/security-scan-text`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }), credentials: "include" }); return res.json(); },
   });
 
   return (
@@ -446,7 +446,7 @@ function EnvPanel() {
   const [search, setSearch] = useState("");
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["wb-env"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/env`); return res.json(); },
+    queryFn: async () => { const res = await fetch(`/api/workbench/env`, { credentials: "include" }); return res.json(); },
   });
 
   const vars = (data?.variables || []).filter((v: any) => !search || v.key.toLowerCase().includes(search.toLowerCase()));
@@ -481,7 +481,7 @@ function EnvPanel() {
 function ProcessPanel() {
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["wb-process-info"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/process-info`); return res.json(); },
+    queryFn: async () => { const res = await fetch(`/api/workbench/process-info`, { credentials: "include" }); return res.json(); },
     refetchInterval: 10000,
   });
 
@@ -520,7 +520,7 @@ function SkillsPanel() {
   const [search, setSearch] = useState("");
   const { data: skills = [], isLoading, refetch } = useQuery<any[]>({
     queryKey: ["wb-skills"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/skills`); return res.json(); },
+    queryFn: async () => { const res = await fetch(`/api/workbench/skills`, { credentials: "include" }); return res.json(); },
   });
 
   const filtered = skills.filter((s: any) => !search || s.name?.toLowerCase().includes(search.toLowerCase()) || s.description?.toLowerCase().includes(search.toLowerCase()));
@@ -610,7 +610,7 @@ function ClaudeCodePanel() {
       const res = await fetch(`/api/workbench/code-chat`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, messages: conversationHistory }),
-        signal: controller.signal,
+        signal: controller.signal, credentials: "include",
       });
       if (!res.ok) { const err = await res.json().catch(() => ({ error: "Failed" })); throw new Error(err.error || `HTTP ${res.status}`); }
       const reader = res.body?.getReader();
@@ -706,7 +706,7 @@ function AIRouterPanel() {
 
   const { data: config } = useQuery<any>({
     queryKey: ["wb-router-config"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/router-config`); return res.json(); },
+    queryFn: async () => { const res = await fetch(`/api/workbench/router-config`, { credentials: "include" }); return res.json(); },
   });
 
   const scrollToBottom = useCallback(() => {
@@ -733,7 +733,7 @@ function AIRouterPanel() {
 
       const res = await fetch(`/api/workbench/route-prompt`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body), signal: controller.signal,
+        body: JSON.stringify(body), signal: controller.signal, credentials: "include",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const reader = res.body?.getReader();
@@ -840,7 +840,7 @@ function CodeReviewPanel() {
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
 
   const reviewMutation = useMutation({
-    mutationFn: async () => { const res = await fetch(`/api/workbench/code-review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectSlug: "llm-hub" }) }); return res.json(); },
+    mutationFn: async () => { const res = await fetch(`/api/workbench/code-review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectSlug: "llm-hub" }), credentials: "include" }); return res.json(); },
   });
 
   useEffect(() => { reviewMutation.mutate(); }, []);
