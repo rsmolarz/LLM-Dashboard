@@ -73,7 +73,7 @@ function ShellPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden" onClick={() => inputRef.current?.focus()}>
+    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden">
       <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
         <div className="flex items-center gap-2">
           <Terminal className="h-3.5 w-3.5 text-green-400" />
@@ -87,8 +87,8 @@ function ShellPanel() {
           {history.map((entry, i) => (
             <div key={i} className="mb-2">
               <div className="flex items-center gap-1"><span className="text-green-400">$</span><span className="text-[#cdd6f4]">{entry.command}</span></div>
-              {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5">{entry.stdout}</pre>}
-              {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5">{entry.stderr}</pre>}
+              {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stdout}</pre>}
+              {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>}
             </div>
           ))}
           {shellMutation.isPending && <div className="flex items-center gap-2 text-[#89b4fa]"><Loader2 className="h-3 w-3 animate-spin" /><span>Running...</span></div>}
@@ -173,7 +173,7 @@ function FileExplorerPanel() {
                   <Copy className="h-3 w-3 text-[#6c7086]" />
                 </button>
               </div>
-              <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all text-[#cdd6f4]">{fileContent?.content}</pre>
+              <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all text-[#cdd6f4] select-text cursor-text">{fileContent?.content}</pre>
             </div>
           ) : <div className="p-8 text-center text-sm text-[#585b70]"><FileCode className="h-8 w-8 mx-auto mb-2 opacity-30" />Select a file</div>}
         </div>
@@ -669,7 +669,7 @@ function ClaudeCodePanel() {
               <div className={cn("max-w-[85%] rounded-lg px-3 py-2 text-xs",
                 msg.role === "user" ? "bg-[#89b4fa]/10 text-[#cdd6f4] border border-[#89b4fa]/20" : "bg-[#181825] text-[#cdd6f4] border border-[#313244]"
               )}>
-                <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed">{msg.content}</pre>
+                <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed select-text cursor-text">{msg.content}</pre>
                 {msg.streaming && <span className="inline-block w-1.5 h-3.5 bg-[#fab387] animate-pulse ml-0.5 align-middle" />}
               </div>
               {msg.role === "user" && <div className="h-5 w-5 rounded-full bg-[#89b4fa]/20 flex items-center justify-center shrink-0 mt-0.5"><User className="h-3 w-3 text-[#89b4fa]" /></div>}
@@ -809,7 +809,7 @@ function AIRouterPanel() {
                   <span className={cn("text-[9px] font-mono", modelColors[msg.model] || "text-[#6c7086]")}>{msg.model}</span>
                   {msg.tokens && <span className="text-[9px] text-[#585b70]">{msg.tokens} tokens</span>}
                 </div>}
-                <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed text-[#cdd6f4]">{msg.content}</pre>
+                <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed text-[#cdd6f4] select-text cursor-text">{msg.content}</pre>
                 {msg.streaming && <span className="inline-block w-1.5 h-3.5 bg-[#f9e2af] animate-pulse ml-0.5 align-middle" />}
               </div>
               {msg.role === "user" && <div className="h-5 w-5 rounded-full bg-[#89b4fa]/20 flex items-center justify-center shrink-0 mt-0.5"><User className="h-3 w-3 text-[#89b4fa]" /></div>}

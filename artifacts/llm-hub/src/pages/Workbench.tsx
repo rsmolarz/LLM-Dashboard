@@ -88,7 +88,7 @@ function ShellPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden" onClick={() => inputRef.current?.focus()}>
+    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden">
       <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
         <div className="flex items-center gap-2">
           <Terminal className="h-3.5 w-3.5 text-green-400" />
@@ -109,8 +109,8 @@ function ShellPanel() {
                 <span className="text-green-400">$</span>
                 <span className="text-[#cdd6f4]">{entry.command}</span>
               </div>
-              {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5">{entry.stdout}</pre>}
-              {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5">{entry.stderr}</pre>}
+              {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stdout}</pre>}
+              {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>}
             </div>
           ))}
           {shellMutation.isPending && (
@@ -258,7 +258,7 @@ function FileExplorerPanel() {
                     </button>
                   </div>
                 </div>
-                <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all text-[#cdd6f4]">{fileContent?.content}</pre>
+                <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all text-[#cdd6f4] select-text cursor-text">{fileContent?.content}</pre>
               </div>
             )
           ) : (
@@ -798,7 +798,7 @@ function CodeChatPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden" onClick={() => textareaRef.current?.focus()}>
+    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden">
       <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
         <div className="flex items-center gap-2">
           <Sparkles className="h-3.5 w-3.5 text-violet-400" />
@@ -855,7 +855,7 @@ function CodeChatPanel() {
                   ? "bg-blue-600/20 text-[#cdd6f4] border border-blue-500/20"
                   : "bg-[#181825] text-[#cdd6f4] border border-[#313244]"
               )}>
-                <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed">{msg.content}</pre>
+                <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed select-text cursor-text">{msg.content}</pre>
                 {msg.streaming && (
                   <span className="inline-block w-1.5 h-3.5 bg-violet-400 animate-pulse ml-0.5 align-middle" />
                 )}
