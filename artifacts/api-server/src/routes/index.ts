@@ -120,6 +120,6 @@ router.use(complianceRouter);
 router.use("/code-terminal", requireAuth, codeTerminalRouter);
 router.use(chatImportRouter);
 router.use(clawAgentRouter);
-router.use("/workbench", requireAuth, workbenchRouter);
+router.use("/workbench", workbenchRouter);
 
 export default router;
