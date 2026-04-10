@@ -149,7 +149,7 @@ function CreateProjectForm({ catppuccin, onCreated }: { catppuccin?: boolean; on
   );
 }
 
-function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; onUploaded?: () => void }) {
+export function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; onUploaded?: () => void }) {
   const [isDragging, setIsDragging] = useState(false);
   const [uploadPath, setUploadPath] = useState("projects");
   const [results, setResults] = useState<UploadResult[]>([]);

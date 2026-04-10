@@ -10,8 +10,8 @@ import {
   ChevronUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import ProjectManager from "@/components/workbench/ProjectManager";
-import { FolderPlus } from "lucide-react";
+import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
+import { FolderPlus, Upload } from "lucide-react";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -906,6 +906,7 @@ function CodeChatPanel() {
 const PANELS = [
   { id: "code-chat", label: "Code Chat", icon: Sparkles, component: CodeChatPanel },
   { id: "shell", label: "Shell", icon: Terminal, component: ShellPanel },
+  { id: "upload", label: "Upload", icon: Upload, component: () => <div className="p-3 h-full overflow-auto"><UploadArea catppuccin={true} /></div> },
   { id: "files", label: "Files", icon: FolderTree, component: FileExplorerPanel },
   { id: "git", label: "Git", icon: GitBranch, component: GitPanel },
   { id: "activity", label: "Activity", icon: Bot, component: AgentActivityPanel },
