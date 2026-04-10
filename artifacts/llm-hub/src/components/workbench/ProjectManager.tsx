@@ -153,6 +153,7 @@ export function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; o
   const [isDragging, setIsDragging] = useState(false);
   const [uploadPath, setUploadPath] = useState("projects");
   const [results, setResults] = useState<UploadResult[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -180,6 +181,7 @@ export function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; o
     e.preventDefault();
     setIsDragging(false);
     if (e.dataTransfer.files.length > 0) {
+      setPendingCount(e.dataTransfer.files.length);
       uploadMutation.mutate(e.dataTransfer.files);
     }
   }, [uploadPath]);
@@ -200,6 +202,7 @@ export function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; o
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
+      setPendingCount(e.target.files.length);
       uploadMutation.mutate(e.target.files);
       e.target.value = "";
     }
@@ -262,14 +265,14 @@ export function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; o
         )}
         <div className="text-center">
           <p className={cn("text-sm font-medium", text)}>
-            {uploadMutation.isPending ? "Uploading..." : isDragging ? "Drop files here" : "Drop files or click to upload"}
+            {uploadMutation.isPending ? `Uploading${pendingCount > 0 ? ` ${pendingCount} file${pendingCount > 1 ? "s" : ""}` : ""}...` : isDragging ? "Drop files here" : "Drop files or click to upload"}
           </p>
           <p className={cn("text-[10px] mt-0.5", textMuted)}>
-            ZIP files auto-extract | Code, configs, docs, and more
+            Multiple files supported | ZIP files auto-extract | Select or drag several at once
           </p>
         </div>
         <div className={cn("flex items-center gap-2 mt-1", textMuted)}>
-          <div className="flex items-center gap-1 text-[9px]"><FileArchive className="h-3 w-3" /> ZIP</div>
+          <div className="flex items-center gap-1 text-[9px]"><FileArchive className="h-3 w-3" /> Multiple ZIPs</div>
           <span className="text-[9px]">|</span>
           <div className="flex items-center gap-1 text-[9px]"><FileCode className="h-3 w-3" /> Code</div>
           <span className="text-[9px]">|</span>
@@ -289,7 +292,9 @@ export function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; o
       {results.length > 0 && (
         <div className="space-y-1">
           <div className="flex items-center justify-between">
-            <span className={cn("text-xs font-medium", textMuted)}>Uploaded ({results.length})</span>
+            <span className={cn("text-xs font-medium", catppuccin ? "text-[#a6e3a1]" : "text-green-600")}>
+              {results.length} file{results.length > 1 ? "s" : ""} uploaded successfully
+            </span>
             <button onClick={() => setResults([])} className={cn("text-[10px] hover:underline", textMuted)}>Clear</button>
           </div>
           {results.map((r, i) => (
@@ -301,10 +306,13 @@ export function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; o
               <div className="min-w-0 flex-1">
                 <span className={cn("font-medium", text)}>{r.name}</span>
                 {r.type === "zip" && r.fileCount !== undefined && (
-                  <span className={cn("ml-1.5 text-[10px]", textMuted)}>{r.fileCount} files extracted</span>
+                  <span className={cn("ml-1.5 text-[10px]", textMuted)}>{r.fileCount} files extracted → {r.extractedTo}</span>
                 )}
                 {r.size !== undefined && r.type === "file" && (
                   <span className={cn("ml-1.5 text-[10px]", textMuted)}>{(r.size / 1024).toFixed(1)} KB</span>
+                )}
+                {r.note && (
+                  <span className={cn("ml-1.5 text-[10px]", catppuccin ? "text-[#f9e2af]" : "text-amber-500")}>{r.note}</span>
                 )}
               </div>
               <Check className={cn("h-3 w-3 shrink-0", catppuccin ? "text-[#a6e3a1]" : "text-green-500")} />
