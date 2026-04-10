@@ -243,8 +243,7 @@ export function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; o
         <input
           ref={fileInputRef}
           type="file"
-          multiple
-          accept=".zip,.tar,.gz,.js,.ts,.tsx,.jsx,.py,.html,.css,.json,.md,.txt,.yaml,.yml,.xml,.csv,.sql,.sh,.env,.gitignore,.toml,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.hpp,.rb,.php,.swift,.kt,.dart,application/zip,application/x-zip-compressed,application/octet-stream"
+          multiple={true}
           onChange={handleFileChange}
           className="hidden"
         />
