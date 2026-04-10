@@ -19,7 +19,7 @@ The project is a pnpm monorepo with separate artifacts for the frontend, backend
 -   **API Design**: Zod schemas for validation and Orval-generated React Query hooks.
 -   **Core Features**:
     -   **LLM Management**: Connects to a self-hosted Ollama server for model management and chat.
-    -   **Chat System**: Multi-conversation chat with model selection, message rating, and "Model Profiles" for specialized AI coaches. Supports importing conversations from various sources.
+    -   **Chat System**: Multi-conversation chat with model selection, message rating, and "Model Profiles" for specialized AI coaches. Supports importing conversations from various sources. Features **Smart Routing** (Local/Cloud/Smart modes) that auto-routes between Ollama local models and cloud models (Anthropic Claude, OpenRouter GPT-4o/Gemini/Llama) based on task complexity.
     -   **Training & Customization**: Tools for Model Profiles, Training Data, Knowledge Base, fine-tuning, and Project Brain.
     -   **Deep Research Engine**: Multi-model research across local Ollama models and external services with session saving and citations.
     -   **Vision Studio**: Integrates image generation and vision analysis with domain-specific presets.

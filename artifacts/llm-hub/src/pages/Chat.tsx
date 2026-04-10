@@ -3,7 +3,8 @@ import { format } from "date-fns";
 import { 
   MessageSquare, Plus, Trash2, Send, Bot, User, 
   ChevronDown, HardDrive, ThumbsUp, ThumbsDown, BookOpen, Brain,
-  Download, FileText, Search, Filter, X
+  Download, FileText, Search, Filter, X, Cloud, Cpu, Sparkles, 
+  Zap, Globe, Router, Loader2, Check, Circle
 } from "lucide-react";
 import { 
   useListConversations, 
@@ -14,12 +15,15 @@ import {
   useListModels,
   useRateMessage,
   useListModelProfiles,
+  useGetLlmStatus,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL;
+
+type RoutingMode = "local" | "cloud" | "smart";
 
 interface ModelOption {
   id: string;
@@ -28,6 +32,15 @@ interface ModelOption {
   profileId?: number;
   baseModel?: string;
   systemPrompt?: string;
+  provider?: string;
+  speed?: string;
+  cost?: string;
+}
+
+interface CloudModelsResponse {
+  anthropicAvailable: boolean;
+  openrouterAvailable: boolean;
+  models: Array<{ id: string; name: string; provider: string; speed: string; cost: string }>;
 }
 
 export default function Chat() {
@@ -40,6 +53,14 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [streamingContent, setStreamingContent] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [routingMode, setRoutingMode] = useState<RoutingMode>(() => {
+    if (typeof window !== "undefined") {
+      return (localStorage.getItem("llm-hub-routing-mode") as RoutingMode) || "smart";
+    }
+    return "smart";
+  });
+  const [routingInfo, setRoutingInfo] = useState<{ provider: string; model: string; reason: string } | null>(null);
+  const [cloudModels, setCloudModels] = useState<CloudModelsResponse | null>(null);
 
   const { data: conversations = [], isLoading: convsLoading } = useListConversations();
   const { data: messages = [], isLoading: msgsLoading } = useGetMessages(selectedConvId || 0, {
@@ -47,12 +68,25 @@ export default function Chat() {
   });
   const { data: ollamaModels = [] } = useListModels();
   const { data: modelProfiles = [] } = useListModelProfiles();
+  const { data: status } = useGetLlmStatus({ query: { refetchInterval: 15000 } as any });
+  const runningModels = (status as any)?.runningModels || [];
 
   const [useRag, setUseRag] = useState(false);
   const [useBrain, setUseBrain] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [modelFilter, setModelFilter] = useState("all");
   const [showFilters, setShowFilters] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem("llm-hub-routing-mode", routingMode);
+  }, [routingMode]);
+
+  useEffect(() => {
+    fetch(`${BASE}api/llm/cloud-models`)
+      .then(r => r.json())
+      .then(data => setCloudModels(data))
+      .catch(() => {});
+  }, []);
 
   const filteredConversations = useMemo(() => {
     return conversations.filter((conv: any) => {
@@ -81,19 +115,37 @@ export default function Chat() {
     }
   }, [messages, streamingContent, isStreaming]);
 
-  const modelOptions: ModelOption[] = [
-    ...(modelProfiles as any[]).map((p: any) => ({
-      id: `profile:${p.id}`,
-      name: p.name,
-      isProfile: true,
-      profileId: p.id,
-      baseModel: p.baseModel,
-      systemPrompt: p.systemPrompt,
-    })),
-    ...(ollamaModels.length > 0
-      ? ollamaModels.map(m => ({ id: m.name, name: m.name }))
-      : [{ id: "llama3", name: "llama3" }]),
-  ];
+  const modelOptions: ModelOption[] = useMemo(() => {
+    const options: ModelOption[] = [];
+    
+    (modelProfiles as any[]).forEach((p: any) => {
+      options.push({
+        id: `profile:${p.id}`,
+        name: p.name,
+        isProfile: true,
+        profileId: p.id,
+        baseModel: p.baseModel,
+        systemPrompt: p.systemPrompt,
+        provider: "ollama",
+      });
+    });
+
+    if (ollamaModels.length > 0) {
+      ollamaModels.forEach(m => {
+        options.push({ id: m.name, name: m.name, provider: "ollama" });
+      });
+    } else {
+      options.push({ id: "llama3", name: "llama3", provider: "ollama" });
+    }
+
+    if (cloudModels?.models) {
+      cloudModels.models.forEach(m => {
+        options.push({ id: m.id, name: m.name, provider: m.provider, speed: m.speed, cost: m.cost });
+      });
+    }
+
+    return options;
+  }, [ollamaModels, modelProfiles, cloudModels]);
 
   const handleSelectModel = (option: ModelOption) => {
     setSelectedModel(option.id);
@@ -104,15 +156,19 @@ export default function Chat() {
       setActiveSystemPrompt(null);
       setActiveBaseModel(null);
     }
+    if (option.provider === "anthropic" || option.provider === "openrouter") {
+      setRoutingMode("cloud");
+    }
     setShowModelSelect(false);
   };
 
   const handleNewChat = () => {
     const option = modelOptions.find(m => m.id === selectedModel);
     const displayName = option?.name || selectedModel;
+    const modeLabel = routingMode === "smart" ? " (Smart)" : routingMode === "cloud" ? " (Cloud)" : "";
     createConv.mutate({
       data: {
-        title: displayName + " Chat",
+        title: displayName + modeLabel + " Chat",
         model: activeBaseModel || selectedModel,
         profileId: option?.profileId,
         systemPrompt: activeSystemPrompt || undefined,
@@ -139,6 +195,7 @@ export default function Chat() {
     if (!input.trim() || !selectedConvId || isStreaming) return;
     const userMsgContent = input;
     setInput("");
+    setRoutingInfo(null);
 
     await addMsg.mutateAsync({
       id: selectedConvId,
@@ -165,7 +222,13 @@ export default function Chat() {
       const response = await fetch(`${BASE}api/llm/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model: modelToUse, messages: formattedHistory, useRag, useBrain }),
+        body: JSON.stringify({ 
+          model: modelToUse, 
+          messages: formattedHistory, 
+          useRag, 
+          useBrain,
+          routingMode,
+        }),
         signal: abortRef.current.signal,
       });
 
@@ -188,11 +251,16 @@ export default function Chat() {
           if (!line.startsWith("data: ")) continue;
           try {
             const event = JSON.parse(line.slice(6));
-            if (event.type === "token") {
+            if (event.type === "routing") {
+              setRoutingInfo({ provider: event.provider, model: event.model, reason: event.reason });
+            } else if (event.type === "token") {
               fullContent += event.content;
               setStreamingContent(fullContent);
             } else if (event.type === "done") {
               fullContent = event.fullContent || fullContent;
+            } else if (event.type === "error") {
+              fullContent = `Error: ${event.error}`;
+              setStreamingContent(fullContent);
             }
           } catch {}
         }
@@ -212,11 +280,20 @@ export default function Chat() {
       if (err.name === "AbortError") return;
       await addMsg.mutateAsync({
         id: selectedConvId,
-        data: { role: 'assistant', content: `Error: ${err.message || "Could not connect to Ollama server."}` }
+        data: { role: 'assistant', content: `Error: ${err.message || "Could not connect to server."}` }
       });
       queryClient.invalidateQueries({ queryKey: [`/api/chat/conversations/${selectedConvId}/messages`] });
     }
-  }, [input, selectedConvId, isStreaming, messages, conversations, selectedModel, activeBaseModel, activeSystemPrompt, useRag, useBrain, addMsg, queryClient]);
+  }, [input, selectedConvId, isStreaming, messages, conversations, selectedModel, activeBaseModel, activeSystemPrompt, useRag, useBrain, routingMode, addMsg, queryClient]);
+
+  const routingModes: Array<{ mode: RoutingMode; label: string; icon: any; desc: string; color: string }> = [
+    { mode: "local", label: "Local", icon: Cpu, desc: "Ollama only (free & private)", color: "text-green-400" },
+    { mode: "cloud", label: "Cloud", icon: Cloud, desc: "Claude & OpenRouter", color: "text-blue-400" },
+    { mode: "smart", label: "Smart", icon: Sparkles, desc: "Auto-route by task complexity", color: "text-amber-400" },
+  ];
+
+  const currentSelectedOption = modelOptions.find(m => m.id === selectedModel);
+  const isModelRunning = (name: string) => runningModels.some((r: string) => r.startsWith(name.split(":")[0]));
 
   return (
     <div className="flex-1 flex overflow-hidden h-full">
@@ -226,6 +303,26 @@ export default function Chat() {
             <Plus className="w-4 h-4 text-primary" />
             New Chat
           </Button>
+
+          <div className="flex rounded-lg bg-white/5 border border-white/10 p-0.5">
+            {routingModes.map(rm => (
+              <button
+                key={rm.mode}
+                onClick={() => setRoutingMode(rm.mode)}
+                className={cn(
+                  "flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[10px] font-medium transition-all",
+                  routingMode === rm.mode
+                    ? `bg-white/10 ${rm.color} shadow-sm`
+                    : "text-muted-foreground hover:text-white hover:bg-white/5"
+                )}
+                title={rm.desc}
+              >
+                <rm.icon className="w-3 h-3" />
+                {rm.label}
+              </button>
+            ))}
+          </div>
+
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
             <input
@@ -325,7 +422,7 @@ export default function Chat() {
               </h3>
               <div className="flex items-center gap-2">
                 <div className="px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-xs text-muted-foreground flex items-center gap-2">
-                  <HardDrive className="w-3.5 h-3.5" />
+                  {routingMode === "cloud" ? <Cloud className="w-3.5 h-3.5 text-blue-400" /> : routingMode === "smart" ? <Sparkles className="w-3.5 h-3.5 text-amber-400" /> : <HardDrive className="w-3.5 h-3.5" />}
                   {conversations.find(c => c.id === selectedConvId)?.model}
                 </div>
                 <button
@@ -400,20 +497,34 @@ export default function Chat() {
                   ))
                 )}
                 {isStreaming && (
-                   <div className="flex gap-4">
-                     <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border bg-purple-500/20 border-purple-500/30 text-purple-400">
-                       <Bot className="w-4 h-4" />
-                     </div>
-                     <div className="max-w-[85%]">
-                       <div className="px-5 py-3.5 rounded-2xl rounded-tl-none text-[15px] leading-relaxed whitespace-pre-wrap bg-card/50 border border-white/10 text-foreground">
-                         {streamingContent || (
-                           <span className="flex gap-1 items-center h-5">
-                             <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" />
-                             <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay: '75ms'}} />
-                             <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay: '150ms'}} />
-                           </span>
-                         )}
-                         <span className="inline-block w-0.5 h-4 bg-purple-400 animate-pulse ml-0.5 align-text-bottom" />
+                   <div className="space-y-2">
+                     {routingInfo && (
+                       <div className="flex items-center gap-2 text-[11px] text-muted-foreground px-4 py-1.5 rounded-lg bg-white/5 border border-white/5 w-fit">
+                         <Router className="w-3 h-3" />
+                         <span className={routingInfo.provider === "anthropic" ? "text-blue-400" : "text-green-400"}>
+                           {routingInfo.provider === "anthropic" ? "Cloud" : "Local"}
+                         </span>
+                         <span>·</span>
+                         <span>{routingInfo.model}</span>
+                         <span>·</span>
+                         <span className="italic">{routingInfo.reason}</span>
+                       </div>
+                     )}
+                     <div className="flex gap-4">
+                       <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 border bg-purple-500/20 border-purple-500/30 text-purple-400">
+                         <Bot className="w-4 h-4" />
+                       </div>
+                       <div className="max-w-[85%]">
+                         <div className="px-5 py-3.5 rounded-2xl rounded-tl-none text-[15px] leading-relaxed whitespace-pre-wrap bg-card/50 border border-white/10 text-foreground">
+                           {streamingContent || (
+                             <span className="flex gap-1 items-center h-5">
+                               <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" />
+                               <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay: '75ms'}} />
+                               <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-bounce" style={{animationDelay: '150ms'}} />
+                             </span>
+                           )}
+                           <span className="inline-block w-0.5 h-4 bg-purple-400 animate-pulse ml-0.5 align-text-bottom" />
+                         </div>
                        </div>
                      </div>
                    </div>
@@ -430,7 +541,7 @@ export default function Chat() {
                   <textarea 
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    placeholder="Message your Ollama model..."
+                    placeholder={routingMode === "smart" ? "Message (auto-routed to best model)..." : routingMode === "cloud" ? "Message (via cloud models)..." : "Message your Ollama model..."}
                     className="w-full bg-transparent text-foreground placeholder:text-muted-foreground p-3 focus:outline-none resize-none min-h-[44px] max-h-[200px]"
                     rows={1}
                     onKeyDown={(e) => {
@@ -479,7 +590,11 @@ export default function Chat() {
                 </form>
                 <div className="text-center mt-2">
                   <p className="text-[10px] text-muted-foreground">
-                    All inference runs on your private server. {useRag && <span className="text-blue-400">Knowledge Base context enabled. </span>}{useBrain && <span className="text-purple-400">Project Brain context enabled.</span>}
+                    {routingMode === "local" && "All inference runs on your private server. "}
+                    {routingMode === "cloud" && "Using cloud models (Claude/OpenRouter). "}
+                    {routingMode === "smart" && "Smart routing: simple tasks → local, complex → cloud. "}
+                    {useRag && <span className="text-blue-400">Knowledge Base context enabled. </span>}
+                    {useBrain && <span className="text-purple-400">Project Brain context enabled.</span>}
                   </p>
                 </div>
               </div>
@@ -490,26 +605,50 @@ export default function Chat() {
             <div className="w-20 h-20 bg-gradient-to-br from-primary/20 to-purple-500/20 border border-white/10 rounded-3xl flex items-center justify-center mb-6 shadow-2xl backdrop-blur-xl">
               <MessageSquare className="w-10 h-10 text-white opacity-80" />
             </div>
-            <h2 className="text-3xl font-bold text-white mb-3">Chat with Ollama</h2>
+            <h2 className="text-3xl font-bold text-white mb-3">Chat with AI Models</h2>
             <p className="text-muted-foreground max-w-md mb-8">
-              Chat with your self-hosted models. All conversations are saved and all inference stays on your server.
+              Chat with local Ollama models or cloud AI. Smart routing picks the best model for each task automatically.
             </p>
+
+            <div className="flex gap-2 mb-6 p-1 rounded-xl bg-white/5 border border-white/10">
+              {routingModes.map(rm => (
+                <button
+                  key={rm.mode}
+                  onClick={() => setRoutingMode(rm.mode)}
+                  className={cn(
+                    "flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-medium transition-all",
+                    routingMode === rm.mode
+                      ? `bg-white/10 ${rm.color} shadow-md border border-white/10`
+                      : "text-muted-foreground hover:text-white hover:bg-white/5"
+                  )}
+                >
+                  <rm.icon className="w-4 h-4" />
+                  <div className="text-left">
+                    <div>{rm.label}</div>
+                    <div className="text-[9px] opacity-60 font-normal">{rm.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
             
             <div className="relative">
               <Button 
                 variant="outline" 
-                className="w-64 justify-between bg-[#18181B] border-white/10 hover:bg-[#27272A]"
+                className="w-72 justify-between bg-[#18181B] border-white/10 hover:bg-[#27272A]"
                 onClick={() => setShowModelSelect(!showModelSelect)}
               >
                 <span className="flex items-center gap-2">
-                  {activeSystemPrompt ? <Brain className="w-4 h-4 text-purple-400" /> : <HardDrive className="w-4 h-4 text-primary" />}
-                  {modelOptions.find(m => m.id === selectedModel)?.name || selectedModel}
+                  {currentSelectedOption?.provider === "anthropic" ? <Cloud className="w-4 h-4 text-blue-400" /> : currentSelectedOption?.provider === "openrouter" ? <Globe className="w-4 h-4 text-purple-400" /> : activeSystemPrompt ? <Brain className="w-4 h-4 text-purple-400" /> : <HardDrive className="w-4 h-4 text-primary" />}
+                  {currentSelectedOption?.name || selectedModel}
+                  {currentSelectedOption?.provider === "ollama" && isModelRunning(selectedModel) && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
+                  )}
                 </span>
                 <ChevronDown className="w-4 h-4 opacity-50" />
               </Button>
 
               {showModelSelect && (
-                <div className="absolute top-full left-0 w-full mt-2 bg-[#18181B] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50 max-h-80 overflow-y-auto">
+                <div className="absolute top-full left-0 w-80 mt-2 bg-[#18181B] border border-white/10 rounded-xl shadow-2xl overflow-hidden z-50 max-h-96 overflow-y-auto">
                   {modelOptions.some(m => m.isProfile) && (
                     <div className="px-4 py-2 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-white/5">AI Coaches & Profiles</div>
                   )}
@@ -517,32 +656,66 @@ export default function Chat() {
                     <button
                       key={m.id}
                       onClick={() => handleSelectModel(m)}
-                      className="w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-white/5 transition-colors text-white"
+                      className={cn("w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-white/5 transition-colors text-white", selectedModel === m.id && "bg-white/10")}
                     >
                       <Brain className="w-4 h-4 text-purple-400" />
                       {m.name}
                       <span className="ml-auto text-[10px] uppercase bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">Profile</span>
                     </button>
                   ))}
-                  {modelOptions.some(m => !m.isProfile) && (
-                    <div className="px-4 py-2 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-white/5">Base Models</div>
-                  )}
-                  {modelOptions.filter(m => !m.isProfile).map(m => (
+
+                  <div className="px-4 py-2 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-white/5 flex items-center gap-2">
+                    <Cpu className="w-3 h-3" />
+                    Local Models (Ollama)
+                    {!status?.online && <span className="text-red-400 ml-auto">offline</span>}
+                  </div>
+                  {modelOptions.filter(m => !m.isProfile && m.provider === "ollama").map(m => (
                     <button
                       key={m.id}
                       onClick={() => handleSelectModel(m)}
-                      className="w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-white/5 transition-colors text-white"
+                      className={cn("w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-white/5 transition-colors text-white", selectedModel === m.id && "bg-white/10")}
                     >
                       <HardDrive className="w-4 h-4 text-muted-foreground" />
-                      {m.name}
-                      <span className="ml-auto text-[10px] uppercase bg-primary/20 text-primary px-2 py-0.5 rounded">Local</span>
+                      <span className="flex-1">{m.name}</span>
+                      {isModelRunning(m.id) ? (
+                        <span className="flex items-center gap-1 text-[10px] text-green-400 bg-green-500/10 px-2 py-0.5 rounded">
+                          <Circle className="w-2 h-2 fill-current" /> Running
+                        </span>
+                      ) : (
+                        <span className="text-[10px] uppercase bg-primary/20 text-primary px-2 py-0.5 rounded">Local</span>
+                      )}
                     </button>
                   ))}
+
+                  {cloudModels?.models && cloudModels.models.length > 0 && (
+                    <>
+                      <div className="px-4 py-2 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-white/5 flex items-center gap-2">
+                        <Cloud className="w-3 h-3" />
+                        Cloud Models
+                      </div>
+                      {modelOptions.filter(m => m.provider === "anthropic" || m.provider === "openrouter").map(m => (
+                        <button
+                          key={m.id}
+                          onClick={() => handleSelectModel(m)}
+                          className={cn("w-full text-left px-4 py-3 text-sm flex items-center gap-3 hover:bg-white/5 transition-colors text-white", selectedModel === m.id && "bg-white/10")}
+                        >
+                          {m.provider === "anthropic" ? <Zap className="w-4 h-4 text-blue-400" /> : <Globe className="w-4 h-4 text-purple-400" />}
+                          <div className="flex-1">
+                            <div>{m.name}</div>
+                            <div className="text-[10px] text-muted-foreground">{m.speed} · {m.cost}</div>
+                          </div>
+                          <span className={cn("text-[10px] uppercase px-2 py-0.5 rounded", m.provider === "anthropic" ? "bg-blue-500/20 text-blue-400" : "bg-purple-500/20 text-purple-400")}>
+                            {m.provider === "anthropic" ? "Claude" : "OpenRouter"}
+                          </span>
+                        </button>
+                      ))}
+                    </>
+                  )}
                 </div>
               )}
             </div>
 
-            <Button onClick={handleNewChat} className="mt-6 w-64 shadow-primary/25 shadow-lg bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white">
+            <Button onClick={handleNewChat} className="mt-6 w-72 shadow-primary/25 shadow-lg bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white">
               Start Conversation
             </Button>
           </div>

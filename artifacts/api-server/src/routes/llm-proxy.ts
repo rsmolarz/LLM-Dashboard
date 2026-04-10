@@ -28,20 +28,34 @@ async function getServerUrl(): Promise<string | null> {
   return config.serverUrl;
 }
 
+async function checkOllamaReachable(serverUrl: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${serverUrl}/api/tags`, { signal: AbortSignal.timeout(3000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 router.get("/llm/status", async (_req, res): Promise<void> => {
   const serverUrl = await getServerUrl();
 
+  const anthropicAvailableEarly = !!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const openrouterAvailableEarly = !!process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY;
+
   if (!serverUrl) {
-    res.json(
-      GetLlmStatusResponse.parse({
-        online: false,
-        serverHealth: "not_configured",
-        version: null,
-        modelsCount: 0,
-        runningModels: [],
-        error: "Server URL not configured",
-      })
-    );
+    res.json({
+      online: false,
+      serverHealth: "not_configured",
+      version: null,
+      modelsCount: 0,
+      runningModels: [],
+      error: "Server URL not configured",
+      cloudAvailable: anthropicAvailableEarly || openrouterAvailableEarly,
+      anthropicAvailable: anthropicAvailableEarly,
+      openrouterAvailable: openrouterAvailableEarly,
+      anyModelAvailable: anthropicAvailableEarly || openrouterAvailableEarly,
+    });
     return;
   }
 
@@ -51,16 +65,18 @@ router.get("/llm/status", async (_req, res): Promise<void> => {
     });
 
     if (!tagsRes.ok) {
-      res.json(
-        GetLlmStatusResponse.parse({
-          online: false,
-          serverHealth: "error",
-          version: null,
-          modelsCount: 0,
-          runningModels: [],
-          error: `Server returned ${tagsRes.status}`,
-        })
-      );
+      res.json({
+        online: false,
+        serverHealth: "error",
+        version: null,
+        modelsCount: 0,
+        runningModels: [],
+        error: `Server returned ${tagsRes.status}`,
+        cloudAvailable: anthropicAvailableEarly || openrouterAvailableEarly,
+        anthropicAvailable: anthropicAvailableEarly,
+        openrouterAvailable: openrouterAvailableEarly,
+        anyModelAvailable: anthropicAvailableEarly || openrouterAvailableEarly,
+      });
       return;
     }
 
@@ -97,27 +113,31 @@ router.get("/llm/status", async (_req, res): Promise<void> => {
       // ps endpoint may not be available
     }
 
-    res.json(
-      GetLlmStatusResponse.parse({
-        online: true,
-        serverHealth: "ok",
-        version,
-        modelsCount,
-        runningModels,
-        error: null,
-      })
-    );
+    res.json({
+      online: true,
+      serverHealth: "ok",
+      version,
+      modelsCount,
+      runningModels,
+      error: null,
+      cloudAvailable: anthropicAvailableEarly || openrouterAvailableEarly,
+      anthropicAvailable: anthropicAvailableEarly,
+      openrouterAvailable: openrouterAvailableEarly,
+      anyModelAvailable: true,
+    });
   } catch (err) {
-    res.json(
-      GetLlmStatusResponse.parse({
-        online: false,
-        serverHealth: "offline",
-        version: null,
-        modelsCount: 0,
-        runningModels: [],
-        error: err instanceof Error ? err.message : "Connection failed",
-      })
-    );
+    res.json({
+      online: false,
+      serverHealth: "offline",
+      version: null,
+      modelsCount: 0,
+      runningModels: [],
+      error: err instanceof Error ? err.message : "Connection failed",
+      cloudAvailable: anthropicAvailableEarly || openrouterAvailableEarly,
+      anthropicAvailable: anthropicAvailableEarly,
+      openrouterAvailable: openrouterAvailableEarly,
+      anyModelAvailable: anthropicAvailableEarly || openrouterAvailableEarly,
+    });
   }
 });
 
@@ -828,43 +848,199 @@ router.post("/llm/chat", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/llm/chat/stream", async (req, res): Promise<void> => {
-  const parsed = SendChatMessageBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
+function determineSmartRoute(prompt: string, ollamaOnline: boolean): { provider: "ollama" | "anthropic"; model: string; reason: string } {
+  const lower = prompt.toLowerCase();
+  const isComplex = lower.length > 500 || /architect|complex|refactor|design pattern|optimize|security|review/i.test(lower);
+  const isCode = /code|function|class|implement|debug|typescript|javascript|python|sql|api|endpoint/i.test(lower);
+  const isSimple = lower.length < 100 && /fix|typo|rename|format|what is|define|explain briefly/i.test(lower);
+
+  if (!ollamaOnline) {
+    if (isSimple) return { provider: "anthropic", model: "claude-haiku-4-5", reason: "Ollama offline, using fast cloud model" };
+    if (isComplex) return { provider: "anthropic", model: "claude-opus-4-6", reason: "Ollama offline, complex task → Opus" };
+    return { provider: "anthropic", model: "claude-sonnet-4-6", reason: "Ollama offline, using cloud model" };
+  }
+
+  if (isComplex) return { provider: "anthropic", model: "claude-opus-4-6", reason: "Complex task routed to Claude Opus" };
+  if (isCode && lower.length > 300) return { provider: "anthropic", model: "claude-sonnet-4-6", reason: "Code task routed to Claude Sonnet" };
+  if (isSimple) return { provider: "ollama", model: "", reason: "Simple task handled locally (free & private)" };
+  return { provider: "ollama", model: "", reason: "Standard task handled locally (free & private)" };
+}
+
+async function streamAnthropicChat(
+  res: any,
+  messages: Array<{ role: string; content: string }>,
+  model: string,
+  temperature: number
+): Promise<void> {
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const baseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  if (!apiKey || !baseUrl) {
+    res.write(`data: ${JSON.stringify({ type: "error", error: "Anthropic API not configured" })}\n\n`);
+    res.end();
     return;
   }
 
-  const serverUrl = await getServerUrl();
-  if (!serverUrl) {
-    res.status(503).json({ error: "Ollama server not configured" });
+  const systemMsgs = messages.filter(m => m.role === "system");
+  const chatMsgs = messages.filter(m => m.role !== "system").map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content }));
+  const systemPrompt = systemMsgs.map(m => m.content).join("\n") || "You are a helpful AI assistant.";
+
+  try {
+    const response = await fetch(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        stream: true,
+        system: systemPrompt,
+        messages: chatMsgs.slice(-20),
+        temperature,
+      }),
+      signal: AbortSignal.timeout(120000),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      res.write(`data: ${JSON.stringify({ type: "error", error: `Anthropic error: ${errText}` })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) { res.write(`data: ${JSON.stringify({ type: "error", error: "No response body" })}\n\n`); res.end(); return; }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullContent = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (payload === "[DONE]") continue;
+        try {
+          const event = JSON.parse(payload);
+          if (event.type === "content_block_delta" && event.delta?.text) {
+            fullContent += event.delta.text;
+            res.write(`data: ${JSON.stringify({ type: "token", content: event.delta.text })}\n\n`);
+          }
+          if (event.type === "message_stop") {
+            res.write(`data: ${JSON.stringify({ type: "done", model, fullContent, provider: "anthropic" })}\n\n`);
+          }
+        } catch {}
+      }
+    }
+
+    if (!fullContent) {
+      res.write(`data: ${JSON.stringify({ type: "done", model, fullContent: "", provider: "anthropic" })}\n\n`);
+    }
+    res.end();
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ type: "error", error: err instanceof Error ? err.message : "Anthropic stream failed" })}\n\n`);
+    res.end();
+  }
+}
+
+async function streamOpenRouterChat(
+  res: any,
+  messages: Array<{ role: string; content: string }>,
+  model: string,
+  temperature: number
+): Promise<void> {
+  const apiKey = process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY;
+  if (!apiKey) {
+    res.write(`data: ${JSON.stringify({ type: "error", error: "OpenRouter API not configured" })}\n\n`);
+    res.end();
     return;
   }
 
-  const { messagesWithRag, ragContext, brainContext } = await prepareRagMessages(req, parsed);
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}`, "HTTP-Referer": "https://llm-hub.replit.app" },
+      body: JSON.stringify({ model, messages, stream: true, temperature }),
+      signal: AbortSignal.timeout(120000),
+    });
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
+    if (!response.ok) {
+      const errText = await response.text();
+      res.write(`data: ${JSON.stringify({ type: "error", error: `OpenRouter error: ${errText}` })}\n\n`);
+      res.end();
+      return;
+    }
 
-  if (ragContext || brainContext) {
-    const ctxLabel = [ragContext ? "Knowledge Base" : "", brainContext ? "Project Brain" : ""].filter(Boolean).join(" + ");
-    res.write(`data: ${JSON.stringify({ type: "context", context: ctxLabel })}\n\n`);
+    const reader = response.body?.getReader();
+    if (!reader) { res.write(`data: ${JSON.stringify({ type: "error", error: "No response body" })}\n\n`); res.end(); return; }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullContent = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const payload = line.slice(6).trim();
+        if (payload === "[DONE]") continue;
+        try {
+          const event = JSON.parse(payload);
+          const delta = event.choices?.[0]?.delta?.content;
+          if (delta) {
+            fullContent += delta;
+            res.write(`data: ${JSON.stringify({ type: "token", content: delta })}\n\n`);
+          }
+          if (event.choices?.[0]?.finish_reason) {
+            res.write(`data: ${JSON.stringify({ type: "done", model, fullContent, provider: "openrouter" })}\n\n`);
+          }
+        } catch {}
+      }
+    }
+
+    if (!fullContent) {
+      res.write(`data: ${JSON.stringify({ type: "done", model, fullContent: "", provider: "openrouter" })}\n\n`);
+    }
+    res.end();
+  } catch (err) {
+    res.write(`data: ${JSON.stringify({ type: "error", error: err instanceof Error ? err.message : "OpenRouter stream failed" })}\n\n`);
+    res.end();
   }
+}
 
+async function streamCloudChat(
+  res: any,
+  messages: Array<{ role: string; content: string }>,
+  model: string,
+  temperature: number
+): Promise<void> {
+  if (model.includes("/")) {
+    return streamOpenRouterChat(res, messages, model, temperature);
+  }
+  return streamAnthropicChat(res, messages, model, temperature);
+}
+
+async function streamOllamaChat(
+  res: any,
+  serverUrl: string,
+  messages: Array<{ role: string; content: string }>,
+  model: string,
+  temperature: number
+): Promise<void> {
   try {
     const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: parsed.data.model,
-        messages: messagesWithRag,
-        stream: true,
-        options: {
-          temperature: parsed.data.temperature ?? 0.7,
-        },
-      }),
+      body: JSON.stringify({ model, messages, stream: true, options: { temperature } }),
       signal: AbortSignal.timeout(300000),
       // @ts-ignore
       dispatcher: ollamaAgent,
@@ -877,11 +1053,7 @@ router.post("/llm/chat/stream", async (req, res): Promise<void> => {
     }
 
     const reader = ollamaRes.body?.getReader();
-    if (!reader) {
-      res.write(`data: ${JSON.stringify({ type: "error", error: "No response body" })}\n\n`);
-      res.end();
-      return;
-    }
+    if (!reader) { res.write(`data: ${JSON.stringify({ type: "error", error: "No response body" })}\n\n`); res.end(); return; }
 
     const decoder = new TextDecoder();
     let buffer = "";
@@ -890,7 +1062,6 @@ router.post("/llm/chat/stream", async (req, res): Promise<void> => {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
@@ -904,13 +1075,7 @@ router.post("/llm/chat/stream", async (req, res): Promise<void> => {
             res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
           }
           if (chunk.done) {
-            res.write(`data: ${JSON.stringify({
-              type: "done",
-              model: chunk.model,
-              totalDuration: chunk.total_duration,
-              evalCount: chunk.eval_count,
-              fullContent,
-            })}\n\n`);
+            res.write(`data: ${JSON.stringify({ type: "done", model: chunk.model, totalDuration: chunk.total_duration, evalCount: chunk.eval_count, fullContent, provider: "ollama" })}\n\n`);
           }
         } catch {}
       }
@@ -924,22 +1089,124 @@ router.post("/llm/chat/stream", async (req, res): Promise<void> => {
           res.write(`data: ${JSON.stringify({ type: "token", content: chunk.message.content })}\n\n`);
         }
         if (chunk.done) {
-          res.write(`data: ${JSON.stringify({
-            type: "done",
-            model: chunk.model,
-            totalDuration: chunk.total_duration,
-            evalCount: chunk.eval_count,
-            fullContent,
-          })}\n\n`);
+          res.write(`data: ${JSON.stringify({ type: "done", model: chunk.model, totalDuration: chunk.total_duration, evalCount: chunk.eval_count, fullContent, provider: "ollama" })}\n\n`);
         }
       } catch {}
     }
 
     res.end();
   } catch (err) {
-    res.write(`data: ${JSON.stringify({ type: "error", error: err instanceof Error ? err.message : "Stream failed" })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "error", error: err instanceof Error ? err.message : "Ollama stream failed" })}\n\n`);
     res.end();
   }
+}
+
+router.get("/llm/cloud-models", async (_req, res): Promise<void> => {
+  const anthropicKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const openrouterKey = process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY;
+
+  const models: Array<{ id: string; name: string; provider: string; speed: string; cost: string }> = [];
+
+  if (anthropicKey) {
+    models.push(
+      { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", provider: "anthropic", speed: "fast", cost: "$$" },
+      { id: "claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic", speed: "slow", cost: "$$$$" },
+      { id: "claude-haiku-4-5", name: "Claude Haiku 4.5", provider: "anthropic", speed: "fastest", cost: "$" },
+    );
+  }
+
+  if (openrouterKey) {
+    models.push(
+      { id: "openai/gpt-4o", name: "GPT-4o", provider: "openrouter", speed: "fast", cost: "$$$" },
+      { id: "google/gemini-2.0-flash-001", name: "Gemini 2.0 Flash", provider: "openrouter", speed: "fastest", cost: "$" },
+      { id: "meta-llama/llama-3.1-70b-instruct", name: "Llama 3.1 70B", provider: "openrouter", speed: "medium", cost: "$$" },
+    );
+  }
+
+  res.json({
+    anthropicAvailable: !!anthropicKey,
+    openrouterAvailable: !!openrouterKey,
+    models,
+  });
+});
+
+router.post("/llm/chat/stream", async (req, res): Promise<void> => {
+  const { model, messages, useRag, useBrain, temperature, routingMode, provider: requestedProvider } = req.body || {};
+
+  if (!messages || !Array.isArray(messages)) {
+    res.status(400).json({ error: "messages array required" });
+    return;
+  }
+
+  const serverUrl = await getServerUrl();
+  const ollamaOnline = !!serverUrl && await checkOllamaReachable(serverUrl);
+  const temp = temperature ?? 0.7;
+
+  let ragContext: string | null = null;
+  let brainContext: string | null = null;
+  let messagesWithRag = messages;
+
+  if (useRag || useBrain) {
+    const parsed = SendChatMessageBody.safeParse(req.body);
+    if (parsed.success) {
+      const prepared = await prepareRagMessages(req, parsed);
+      messagesWithRag = prepared.messagesWithRag;
+      ragContext = prepared.ragContext;
+      brainContext = prepared.brainContext;
+    }
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  if (ragContext || brainContext) {
+    const ctxLabel = [ragContext ? "Knowledge Base" : "", brainContext ? "Project Brain" : ""].filter(Boolean).join(" + ");
+    res.write(`data: ${JSON.stringify({ type: "context", context: ctxLabel })}\n\n`);
+  }
+
+  const effectiveMode = routingMode || "local";
+
+  if (effectiveMode === "cloud") {
+    const cloudModel = model || "claude-sonnet-4-6";
+    const cloudProvider = cloudModel.includes("/") ? "openrouter" : "anthropic";
+    res.write(`data: ${JSON.stringify({ type: "routing", provider: cloudProvider, model: cloudModel, reason: "Cloud mode selected" })}\n\n`);
+    await streamCloudChat(res, messagesWithRag, cloudModel, temp);
+    return;
+  }
+
+  if (effectiveMode === "smart") {
+    const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
+    const prompt = lastUserMsg?.content || "";
+    const route = determineSmartRoute(prompt, ollamaOnline);
+
+    if (route.provider === "anthropic") {
+      res.write(`data: ${JSON.stringify({ type: "routing", provider: "anthropic", model: route.model, reason: route.reason })}\n\n`);
+      await streamCloudChat(res, messagesWithRag, route.model, temp);
+    } else {
+      const isCloudModel = model && (model.includes("/") || model.startsWith("claude-"));
+      const ollamaModel = isCloudModel ? "llama3" : (model || "llama3");
+      res.write(`data: ${JSON.stringify({ type: "routing", provider: "ollama", model: ollamaModel, reason: route.reason })}\n\n`);
+      if (!serverUrl || !ollamaOnline) {
+        res.write(`data: ${JSON.stringify({ type: "routing", provider: "anthropic", model: "claude-sonnet-4-6", reason: "Ollama offline, falling back to cloud" })}\n\n`);
+        await streamCloudChat(res, messagesWithRag, "claude-sonnet-4-6", temp);
+      } else {
+        await streamOllamaChat(res, serverUrl, messagesWithRag, ollamaModel, temp);
+      }
+    }
+    return;
+  }
+
+  if (!serverUrl || !ollamaOnline) {
+    res.write(`data: ${JSON.stringify({ type: "error", error: "Ollama server is offline. Switch to Cloud or Smart mode to use cloud models." })}\n\n`);
+    res.end();
+    return;
+  }
+
+  const isCloudModelLocal = model && (model.includes("/") || model.startsWith("claude-"));
+  const ollamaModel = isCloudModelLocal ? "llama3" : (model || "llama3");
+  await streamOllamaChat(res, serverUrl, messagesWithRag, ollamaModel, temp);
 });
 
 router.post("/ollama/create", async (req, res): Promise<void> => {

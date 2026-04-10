@@ -447,23 +447,21 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 )}
               </button>
               <NotificationBell />
-              <div className="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full bg-black/40 border border-white/5">
-                <div
-                  className={cn(
-                    "w-2 h-2 rounded-full animate-pulse",
-                    status?.online
-                      ? "bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]"
-                      : "bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]",
-                  )}
-                />
-                <span
-                  className={cn(
-                    "hidden sm:inline",
-                    status?.online ? "text-green-400" : "text-red-400",
-                  )}
-                >
-                  {status?.online ? "Online" : "Offline"}
+              <div className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full bg-black/40 border border-white/5" title={`Ollama: ${status?.online ? "Connected" : "Offline"}${(status as any)?.runningModels?.length ? ` (${(status as any).runningModels.join(", ")})` : ""}${(status as any)?.cloudAvailable ? " | Cloud: Available" : ""}`}>
+                <div className={cn("w-2 h-2 rounded-full", status?.online ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)] animate-pulse" : (status as any)?.cloudAvailable ? "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)] animate-pulse" : "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]")} />
+                <span className={cn("hidden sm:inline", status?.online ? "text-green-400" : (status as any)?.cloudAvailable ? "text-amber-400" : "text-red-400")}>
+                  {status?.online ? "Online" : (status as any)?.cloudAvailable ? "Cloud" : "Offline"}
                 </span>
+                {status?.online && (status as any)?.runningModels?.length > 0 && (
+                  <span className="hidden md:inline text-[10px] text-muted-foreground ml-0.5">
+                    · {(status as any).runningModels[0].split(":")[0]}
+                  </span>
+                )}
+                {(status as any)?.cloudAvailable && (
+                  <span className="hidden lg:inline text-[10px] text-blue-400 ml-0.5">
+                    {status?.online ? " + Cloud" : ""}
+                  </span>
+                )}
               </div>
               {!authLoading &&
                 (isAuthenticated ? (
