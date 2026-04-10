@@ -9,7 +9,9 @@ import multer from "multer";
 import AdmZip from "adm-zip";
 
 const router: IRouter = Router();
-const PROJECT_ROOT = path.resolve(process.cwd(), "../..");
+const PROJECT_ROOT = process.env.NODE_ENV === "production"
+  ? process.cwd()
+  : path.resolve(process.cwd(), "../..");
 
 const upload = multer({
   dest: path.join(os.tmpdir(), "workbench-uploads"),
@@ -992,6 +994,7 @@ router.post("/upload", upload.array("files", 50), async (req, res): Promise<void
 
     res.json({ success: true, uploaded: results.length, files: results });
   } catch (err: any) {
+    console.error("[workbench/upload] Error:", err.message, "| destDir:", targetPath, "| PROJECT_ROOT:", PROJECT_ROOT);
     for (const file of files) {
       try { fs.unlinkSync(file.path); } catch {}
     }

@@ -163,8 +163,9 @@ function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; onUpload
       Array.from(files).forEach(f => formData.append("files", f));
       const res = await fetch(`/api/workbench/upload`, { method: "POST", body: formData, credentials: "include" });
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Upload failed");
+        let errMsg = `Upload failed (${res.status})`;
+        try { const err = await res.json(); errMsg = err.error || errMsg; } catch {}
+        throw new Error(errMsg);
       }
       return res.json();
     },
@@ -240,7 +241,7 @@ function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; onUpload
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".zip,.tar,.gz,.js,.ts,.tsx,.jsx,.py,.html,.css,.json,.md,.txt,.yaml,.yml,.xml,.csv,.sql,.sh,.env,.gitignore,.toml,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.hpp,.rb,.php,.swift,.kt,.dart"
+          accept=".zip,.tar,.gz,.js,.ts,.tsx,.jsx,.py,.html,.css,.json,.md,.txt,.yaml,.yml,.xml,.csv,.sql,.sh,.env,.gitignore,.toml,.cfg,.ini,.rs,.go,.java,.c,.cpp,.h,.hpp,.rb,.php,.swift,.kt,.dart,application/zip,application/x-zip-compressed,application/octet-stream"
           onChange={handleFileChange}
           className="hidden"
         />
