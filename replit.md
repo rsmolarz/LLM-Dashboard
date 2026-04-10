@@ -39,7 +39,7 @@ The project is a pnpm monorepo with separate artifacts for the frontend, backend
     -   **HIPAA Compliance**: Dashboard, audit logging for all API requests, session timeout, and database persistence for sensitive data. Includes HIPAA template documents and a compliance schedule/calendar.
     -   **Code Agent**: AI coding assistant with chat, file explorer, code editor, integrated terminal, model selector, code block actions, and repository cloning.
     -   **Claw Code Agent**: Integration of the Claw Code Agent Python framework with overview, source browser, and configuration.
-    -   **Coding Workbench**: Multi-panel IDE-like workbench with AI code chat, shell terminal, file explorer, Git panel, database explorer, and environment variables viewer.
+    -   **Coding Workbench**: Multi-panel IDE-like workbench (`/workbench`) with AI code chat, shell terminal, file explorer, Git panel, database explorer, environment variables viewer, and Catppuccin Mocha dark theme.
     -   **Claude Workbench**: Advanced IDE-like workbench (`/claude-workbench`) with 13 configurable panels in Catppuccin Mocha dark theme: Claude Code chat (Sonnet), AI Router (auto/manual model selection across Sonnet/Opus/Haiku), Shell, File Explorer, Preview (iframe), Git, Agent Activity, Database, Security Scanner, Skills Browser, Code Review (AI-powered with grades), Env Vars, and Process Info.
     -   **Specialized AI Domains**: Dedicated modules for Clinical ENT AI, Social Media AI, Hedge Fund AI, and Database Training Agent.
     -   **LLM Training Pipeline**: Includes fine-tuning, RLHF, knowledge distillation, and evaluation features.

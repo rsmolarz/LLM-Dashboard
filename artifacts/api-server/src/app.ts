@@ -17,7 +17,6 @@ app.use(authMiddleware);
 app.use(auditLog);
 
 app.use("/api", router);
-app.use(router);
 
 if (process.env.NODE_ENV === "production") {
   const currentDir = typeof __dirname !== "undefined"
@@ -28,6 +27,18 @@ if (process.env.NODE_ENV === "production") {
   app.get("{*path}", (_req, res) => {
     res.sendFile(path.join(staticDir, "index.html"));
   });
+} else {
+  const VITE_PORT = process.env.VITE_DEV_PORT || "18237";
+  const { createProxyMiddleware } = await import("http-proxy-middleware");
+  app.use(
+    "/",
+    createProxyMiddleware({
+      target: `http://localhost:${VITE_PORT}`,
+      changeOrigin: true,
+      ws: true,
+      logLevel: "silent",
+    })
+  );
 }
 
 export default app;

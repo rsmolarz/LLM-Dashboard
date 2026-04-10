@@ -17,11 +17,6 @@ paths = ["/"]
 [services.development]
 run = "pnpm --filter @workspace/llm-hub run dev"
 
-[services.production]
-build = "pnpm --filter @workspace/llm-hub run build"
-serve = "static"
-publicDir = "artifacts/llm-hub/dist/public"
-
 [services.env]
 PORT = "18237"
 BASE_PATH = "/"
