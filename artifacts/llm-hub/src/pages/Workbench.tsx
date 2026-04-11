@@ -1160,14 +1160,8 @@ const PANELS = [
 
 type PanelId = typeof PANELS[number]["id"];
 
-export default function Workbench() {
-  const [leftPanel, setLeftPanel] = useState<PanelId>("code-chat");
-  const [rightPanel, setRightPanel] = useState<PanelId>("files");
-  const [bottomPanel, setBottomPanel] = useState<PanelId>("shell");
-  const [bottomRightPanel, setBottomRightPanel] = useState<PanelId>("git");
-  const [showBottom, setShowBottom] = useState(false);
-
-  const PanelSelector = ({ value, onChange }: { value: PanelId; onChange: (v: PanelId) => void }) => (
+function WBPanelSelector({ value, onChange }: { value: PanelId; onChange: (v: PanelId) => void }) {
+  return (
     <div className="flex items-center gap-0.5 overflow-x-auto">
       {PANELS.map(p => {
         const Icon = p.icon;
@@ -1187,23 +1181,31 @@ export default function Workbench() {
       })}
     </div>
   );
+}
 
-  const PersistentPanelSlot = ({ activeId }: { activeId: PanelId }) => {
-    const [mounted, setMounted] = useState<Set<PanelId>>(new Set([activeId]));
-    useEffect(() => { setMounted(prev => { if (prev.has(activeId)) return prev; const next = new Set(prev); next.add(activeId); return next; }); }, [activeId]);
-    return (
-      <div className="relative flex-1 min-h-0">
-        {PANELS.filter(p => mounted.has(p.id)).map(p => {
-          const Component = p.component;
-          return (
-            <div key={p.id} className={cn("absolute inset-0 overflow-hidden", p.id === activeId ? "z-10 visible" : "z-0 invisible")}>
-              <Component />
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
+function WBPersistentPanelSlot({ activeId }: { activeId: PanelId }) {
+  const [mounted, setMounted] = useState<Set<PanelId>>(new Set([activeId]));
+  useEffect(() => { setMounted(prev => { if (prev.has(activeId)) return prev; const next = new Set(prev); next.add(activeId); return next; }); }, [activeId]);
+  return (
+    <div className="relative flex-1 min-h-0">
+      {PANELS.filter(p => mounted.has(p.id)).map(p => {
+        const Component = p.component;
+        return (
+          <div key={p.id} className={cn("absolute inset-0 overflow-hidden", p.id === activeId ? "z-10 visible" : "z-0 invisible")}>
+            <Component />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export default function Workbench() {
+  const [leftPanel, setLeftPanel] = useState<PanelId>("code-chat");
+  const [rightPanel, setRightPanel] = useState<PanelId>("files");
+  const [bottomPanel, setBottomPanel] = useState<PanelId>("shell");
+  const [bottomRightPanel, setBottomRightPanel] = useState<PanelId>("git");
+  const [showBottom, setShowBottom] = useState(false);
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] bg-[#1e1e2e]">
@@ -1233,15 +1235,15 @@ export default function Workbench() {
           <div className={cn("flex min-h-0", showBottom ? "h-[55%]" : "flex-1")}>
             <div className="flex-1 flex flex-col border-r border-[#313244] min-w-0">
               <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
-                <PanelSelector value={leftPanel} onChange={setLeftPanel} />
+                <WBPanelSelector value={leftPanel} onChange={setLeftPanel} />
               </div>
-              <PersistentPanelSlot activeId={leftPanel} />
+              <WBPersistentPanelSlot activeId={leftPanel} />
             </div>
             <div className="flex-1 flex flex-col min-w-0">
               <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
-                <PanelSelector value={rightPanel} onChange={setRightPanel} />
+                <WBPanelSelector value={rightPanel} onChange={setRightPanel} />
               </div>
-              <PersistentPanelSlot activeId={rightPanel} />
+              <WBPersistentPanelSlot activeId={rightPanel} />
             </div>
           </div>
 
@@ -1251,15 +1253,15 @@ export default function Workbench() {
               <div className="h-[45%] flex min-h-0">
                 <div className="flex-1 flex flex-col border-r border-[#313244] min-w-0">
                   <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
-                    <PanelSelector value={bottomPanel} onChange={setBottomPanel} />
+                    <WBPanelSelector value={bottomPanel} onChange={setBottomPanel} />
                   </div>
-                  <PersistentPanelSlot activeId={bottomPanel} />
+                  <WBPersistentPanelSlot activeId={bottomPanel} />
                 </div>
                 <div className="flex-1 flex flex-col min-w-0">
                   <div className="px-2 py-1 border-b border-[#313244] bg-[#181825]">
-                    <PanelSelector value={bottomRightPanel} onChange={setBottomRightPanel} />
+                    <WBPanelSelector value={bottomRightPanel} onChange={setBottomRightPanel} />
                   </div>
-                  <PersistentPanelSlot activeId={bottomRightPanel} />
+                  <WBPersistentPanelSlot activeId={bottomRightPanel} />
                 </div>
               </div>
             </>
