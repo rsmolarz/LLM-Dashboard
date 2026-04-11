@@ -343,14 +343,14 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
   try {
     let messages = conversationMessages.slice(-30);
     let iterationCount = 0;
-    const maxIterations = 10;
+    const maxIterations = 20;
 
     while (iterationCount < maxIterations) {
       iterationCount++;
       const response = await fetch(`${baseUrl}/v1/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 4096, system: systemPrompt, tools, messages }),
+        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 8192, system: systemPrompt, tools, messages }),
         signal: AbortSignal.timeout(120000),
       });
 
@@ -373,6 +373,12 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
         } else if (block.type === "tool_use") {
           toolUses.push(block);
         }
+      }
+
+      if (toolUses.length === 0 && result.stop_reason === "max_tokens") {
+        messages.push({ role: "assistant", content: result.content });
+        messages.push({ role: "user", content: "Continue from where you left off." });
+        continue;
       }
 
       if (toolUses.length === 0) {

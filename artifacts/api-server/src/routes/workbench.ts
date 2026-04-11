@@ -350,62 +350,81 @@ router.post("/code-chat", async (req, res): Promise<void> => {
 
     conversationMessages.push({ role: "user", content: prompt });
 
-    const response = await fetch(`${baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-5",
-        max_tokens: 4096,
-        stream: true,
-        system: `You are an expert coding assistant integrated into the LLM Hub Workbench. You help with code analysis, debugging, refactoring, and writing new code. You have access to a TypeScript/React project with Express backend.${projectContext ? "\n\n" + projectContext : ""}`,
-        messages: conversationMessages.slice(-20),
-      }),
-      signal: AbortSignal.timeout(120000),
-    });
+    const systemPrompt = `You are an expert coding assistant integrated into the LLM Hub Workbench. You help with code analysis, debugging, refactoring, and writing new code. You have access to a TypeScript/React project with Express backend.${projectContext ? "\n\n" + projectContext : ""}`;
+    let msgs = conversationMessages.slice(-20);
+    let continuations = 0;
+    const maxContinuations = 5;
 
-    if (!response.ok) {
-      const errText = await response.text();
-      res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
-      res.end();
-      return;
-    }
+    while (continuations <= maxContinuations) {
+      const response = await fetch(`${baseUrl}/v1/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-5",
+          max_tokens: 8192,
+          stream: true,
+          system: systemPrompt,
+          messages: msgs,
+        }),
+        signal: AbortSignal.timeout(120000),
+      });
 
-    const reader = response.body?.getReader();
-    if (!reader) {
-      res.write(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`);
-      res.end();
-      return;
-    }
+      if (!response.ok) {
+        const errText = await response.text();
+        res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
+        res.end();
+        return;
+      }
 
-    const decoder = new TextDecoder();
-    let buffer = "";
+      const reader = response.body?.getReader();
+      if (!reader) {
+        res.write(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`);
+        res.end();
+        return;
+      }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedText = "";
+      let stopReason = "end_turn";
 
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
 
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const data = line.slice(6).trim();
-          if (data === "[DONE]") continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-              res.write(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text })}\n\n`);
-            } else if (parsed.type === "message_stop") {
-              res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-            }
-          } catch {}
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim();
+            if (data === "[DONE]") continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+                accumulatedText += parsed.delta.text;
+                res.write(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text })}\n\n`);
+              } else if (parsed.type === "message_delta" && parsed.delta?.stop_reason) {
+                stopReason = parsed.delta.stop_reason;
+              }
+            } catch {}
+          }
         }
       }
+
+      if (stopReason === "max_tokens" && continuations < maxContinuations) {
+        msgs.push({ role: "assistant", content: accumulatedText });
+        msgs.push({ role: "user", content: "Continue from where you left off. Do not repeat what you already said." });
+        continuations++;
+        continue;
+      }
+
+      break;
     }
 
     res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
@@ -716,54 +735,67 @@ router.get("/claude-code", async (req, res): Promise<void> => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
+  const ccSystem = "You are Claude Code, an expert AI coding agent in the Claude Workbench. You write production-ready code, debug complex issues, and architect systems. Always provide complete working code with proper error handling.";
   try {
-    const response = await fetch(`${baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-6",
-        max_tokens: 8192,
-        stream: true,
-        system: "You are Claude Code, an expert AI coding agent in the Claude Workbench. You write production-ready code, debug complex issues, and architect systems. Always provide complete working code with proper error handling.",
-        messages: [{ role: "user", content: prompt }],
-      }),
-      signal: AbortSignal.timeout(120000),
-    });
+    let msgs: any[] = [{ role: "user", content: prompt }];
+    let continuations = 0;
+    const maxContinuations = 5;
 
-    if (!response.ok) {
-      const errText = await response.text();
-      res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
-      res.end();
-      return;
-    }
+    while (continuations <= maxContinuations) {
+      const response = await fetch(`${baseUrl}/v1/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 8192, stream: true, system: ccSystem, messages: msgs }),
+        signal: AbortSignal.timeout(120000),
+      });
 
-    const reader = response.body?.getReader();
-    if (!reader) { res.write(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`); res.end(); return; }
+      if (!response.ok) {
+        const errText = await response.text();
+        res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
+        res.end();
+        return;
+      }
 
-    const decoder = new TextDecoder();
-    let buffer = "";
+      const reader = response.body?.getReader();
+      if (!reader) { res.write(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`); res.end(); return; }
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let accumulatedText = "";
+      let stopReason = "end_turn";
 
-      for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const data = line.slice(6).trim();
-          if (data === "[DONE]") continue;
-          try {
-            const parsed = JSON.parse(data);
-            if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-              res.write(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text })}\n\n`);
-            } else if (parsed.type === "message_stop") {
-              res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-            }
-          } catch {}
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = line.slice(6).trim();
+            if (data === "[DONE]") continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+                accumulatedText += parsed.delta.text;
+                res.write(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text })}\n\n`);
+              } else if (parsed.type === "message_delta" && parsed.delta?.stop_reason) {
+                stopReason = parsed.delta.stop_reason;
+              }
+            } catch {}
+          }
         }
       }
+
+      if (stopReason === "max_tokens" && continuations < maxContinuations) {
+        msgs.push({ role: "assistant", content: accumulatedText });
+        msgs.push({ role: "user", content: "Continue from where you left off. Do not repeat what you already said." });
+        continuations++;
+        continue;
+      }
+
+      break;
     }
 
     res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
