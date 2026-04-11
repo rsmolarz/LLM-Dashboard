@@ -962,11 +962,19 @@ function CWSSHPanel() {
   const [cmdHistory, setCmdHistory] = usePersistedState<string[]>("cw-ssh-cmds", []);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [showConfig, setShowConfig] = useState(true);
-  const [mode, setMode] = usePersistedState<"terminal" | "ai">("cw-ssh-mode", "terminal");
+  const [mode, setMode] = usePersistedState<"terminal" | "ai" | "files">("cw-ssh-mode", "terminal");
   const [aiMessages, setAiMessages] = usePersistedState<CWSSHAIMessage[]>("cw-ssh-ai-messages", []);
   const [aiInput, setAiInput] = useState("");
   const [aiStreaming, setAiStreaming] = useState(false);
   const [aiAbort, setAiAbort] = useState<AbortController | null>(null);
+  const [remotePath, setRemotePath] = usePersistedState("cw-ssh-remote-path", "/");
+  const [remoteFiles, setRemoteFiles] = useState<{ name: string; type: string; size: number; modified: number }[]>([]);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [localFiles, setLocalFiles] = useState<{ name: string; type: string; size?: number; path: string }[]>([]);
+  const [localLoading, setLocalLoading] = useState(false);
+  const [transferring, setTransferring] = useState<string | null>(null);
+  const [transferResult, setTransferResult] = useState<{ file: string; success: boolean; error?: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const aiScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -1025,6 +1033,75 @@ function CWSSHPanel() {
     host, port: parseInt(port), username,
     ...(authType === "password" ? { password } : { privateKey }),
   });
+
+  const loadRemoteFiles = useCallback(async (p?: string) => {
+    const targetPath = p ?? remotePath;
+    setRemoteLoading(true);
+    setRemoteError(null);
+    try {
+      const res = await fetch(`/api/workbench/ssh/list-remote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...sshBodyBase(), path: targetPath }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Failed to list remote files"); }
+      const data = await res.json();
+      setRemoteFiles(data.entries || []);
+      if (p !== undefined) setRemotePath(p);
+    } catch (err: any) {
+      setRemoteError(err.message);
+      setRemoteFiles([]);
+    } finally {
+      setRemoteLoading(false);
+    }
+  }, [remotePath, host, port, username, authType, password, privateKey]);
+
+  const loadLocalFiles = useCallback(async () => {
+    setLocalLoading(true);
+    try {
+      const res = await fetch(`/api/workbench/files?path=projects`, { credentials: "include" });
+      const data = await res.json();
+      setLocalFiles((data.items || []).map((item: any) => ({
+        name: item.name,
+        type: item.type,
+        size: item.size,
+        path: item.path,
+      })));
+    } catch {
+      setLocalFiles([]);
+    } finally {
+      setLocalLoading(false);
+    }
+  }, []);
+
+  const transferToRemote = useCallback(async (localPath: string, fileName: string) => {
+    setTransferring(fileName);
+    setTransferResult(null);
+    try {
+      const remoteTarget = remotePath === "/" ? `/${fileName}` : `${remotePath}/${fileName}`;
+      const res = await fetch(`/api/workbench/ssh/upload-file`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...sshBodyBase(), localPath, remotePath: remoteTarget }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Transfer failed"); }
+      setTransferResult({ file: fileName, success: true });
+      loadRemoteFiles();
+    } catch (err: any) {
+      setTransferResult({ file: fileName, success: false, error: err.message });
+    } finally {
+      setTransferring(null);
+    }
+  }, [remotePath, host, port, username, authType, password, privateKey, loadRemoteFiles]);
+
+  useEffect(() => {
+    if (mode === "files" && connected) {
+      loadRemoteFiles();
+      loadLocalFiles();
+    }
+  }, [mode, connected]);
 
   const handleAISubmit = useCallback(async () => {
     if (!aiInput.trim() || aiStreaming) return;
@@ -1102,6 +1179,7 @@ function CWSSHPanel() {
               <div className="flex items-center gap-0.5 ml-1 bg-[#313244] rounded p-0.5">
                 <button className={cn("text-[9px] px-1.5 py-0.5 rounded transition-colors", mode === "terminal" ? "bg-[#fab387] text-[#1e1e2e]" : "text-[#6c7086] hover:text-[#cdd6f4]")} onClick={() => setMode("terminal")}>Terminal</button>
                 <button className={cn("text-[9px] px-1.5 py-0.5 rounded transition-colors flex items-center gap-0.5", mode === "ai" ? "bg-[#cba6f7] text-[#1e1e2e]" : "text-[#6c7086] hover:text-[#cdd6f4]")} onClick={() => setMode("ai")}><Sparkles className="h-2.5 w-2.5" />AI</button>
+                <button className={cn("text-[9px] px-1.5 py-0.5 rounded transition-colors flex items-center gap-0.5", mode === "files" ? "bg-[#89b4fa] text-[#1e1e2e]" : "text-[#6c7086] hover:text-[#cdd6f4]")} onClick={() => setMode("files")}><FolderTree className="h-2.5 w-2.5" />Files</button>
               </div>
             </>
           )}
@@ -1140,7 +1218,7 @@ function CWSSHPanel() {
         </div>
       )}
 
-      {mode === "terminal" ? (
+      {mode === "terminal" && (
         <>
           <div className="flex-1 overflow-y-auto p-2" ref={scrollRef}>
             <div className="font-mono text-xs space-y-1">
@@ -1172,7 +1250,9 @@ function CWSSHPanel() {
             </form>
           )}
         </>
-      ) : (
+      )}
+
+      {mode === "ai" && (
         <>
           <div className="flex-1 overflow-y-auto p-3 space-y-3" ref={aiScrollRef}>
             {aiMessages.length === 0 && (
@@ -1236,6 +1316,167 @@ function CWSSHPanel() {
             </div>
           )}
         </>
+      )}
+
+      {mode === "files" && (
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {!connected ? (
+            <div className="text-[#585b70] py-8 text-center">
+              <FolderTree className="h-6 w-6 mx-auto mb-2 opacity-40" />
+              <span className="text-xs">Connect to your VPS to browse files</span>
+            </div>
+          ) : (
+            <div className="flex flex-col flex-1 min-h-0">
+              <div className="border-b border-[#313244] bg-[#181825]/50 px-3 py-1.5 flex items-center justify-between">
+                <div className="flex items-center gap-1 text-[10px] text-[#6c7086] overflow-x-auto min-w-0">
+                  <Server className="h-3 w-3 text-[#fab387] shrink-0" />
+                  <span className="text-[#a6adc8] font-medium shrink-0">Remote:</span>
+                  {remotePath.split("/").filter(Boolean).length === 0 ? (
+                    <span className="text-[#cdd6f4]">/</span>
+                  ) : (
+                    <>
+                      <button className="hover:text-[#cdd6f4] transition-colors" onClick={() => loadRemoteFiles("/")}>/</button>
+                      {remotePath.split("/").filter(Boolean).map((seg, i, arr) => (
+                        <span key={i} className="flex items-center gap-0.5">
+                          <ChevronRight className="h-2.5 w-2.5" />
+                          <button
+                            className="hover:text-[#cdd6f4] transition-colors"
+                            onClick={() => loadRemoteFiles("/" + arr.slice(0, i + 1).join("/"))}
+                          >{seg}</button>
+                        </span>
+                      ))}
+                    </>
+                  )}
+                </div>
+                <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#cdd6f4] shrink-0" onClick={() => loadRemoteFiles()}>
+                  <RefreshCw className={cn("h-3 w-3", remoteLoading && "animate-spin")} />
+                </button>
+              </div>
+
+              <div className="flex flex-1 min-h-0">
+                <div className="flex-1 overflow-y-auto border-r border-[#313244]">
+                  <div className="px-2 py-1 bg-[#313244]/30 border-b border-[#313244]">
+                    <span className="text-[9px] font-semibold text-[#a6adc8] uppercase tracking-wider">Remote Server</span>
+                  </div>
+                  {remoteLoading ? (
+                    <div className="p-3 flex items-center justify-center">
+                      <Loader2 className="h-4 w-4 animate-spin text-[#89b4fa]" />
+                    </div>
+                  ) : remoteError ? (
+                    <div className="p-2 text-[10px] text-[#f38ba8]">{remoteError}</div>
+                  ) : (
+                    <div className="p-1">
+                      {remotePath !== "/" && (
+                        <button
+                          className="w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5"
+                          onClick={() => {
+                            const parts = remotePath.split("/").filter(Boolean);
+                            parts.pop();
+                            loadRemoteFiles("/" + parts.join("/") || "/");
+                          }}
+                        >
+                          <Folder className="h-3.5 w-3.5 text-[#f9e2af]" />
+                          <span className="text-[#6c7086]">..</span>
+                        </button>
+                      )}
+                      {remoteFiles.map(f => (
+                        <button
+                          key={f.name}
+                          className="w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5"
+                          onClick={() => {
+                            if (f.type === "directory") {
+                              loadRemoteFiles(remotePath === "/" ? `/${f.name}` : `${remotePath}/${f.name}`);
+                            }
+                          }}
+                        >
+                          {f.type === "directory" ? (
+                            <Folder className="h-3.5 w-3.5 text-[#f9e2af]" />
+                          ) : (
+                            <File className="h-3.5 w-3.5 text-[#6c7086]" />
+                          )}
+                          <span className="truncate flex-1 text-[#cdd6f4]">{f.name}</span>
+                          {f.type !== "directory" && f.size !== undefined && (
+                            <span className="text-[9px] text-[#585b70] shrink-0">{formatBytes(f.size)}</span>
+                          )}
+                        </button>
+                      ))}
+                      {remoteFiles.length === 0 && !remoteLoading && (
+                        <div className="text-[10px] text-[#585b70] p-2 text-center">Empty directory</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex-1 overflow-y-auto">
+                  <div className="px-2 py-1 bg-[#313244]/30 border-b border-[#313244] flex items-center justify-between">
+                    <span className="text-[9px] font-semibold text-[#a6adc8] uppercase tracking-wider">Local Files (projects/)</span>
+                    <button className="p-0.5 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#cdd6f4]" onClick={loadLocalFiles}>
+                      <RefreshCw className={cn("h-2.5 w-2.5", localLoading && "animate-spin")} />
+                    </button>
+                  </div>
+                  {localLoading ? (
+                    <div className="p-3 flex items-center justify-center">
+                      <Loader2 className="h-4 w-4 animate-spin text-[#89b4fa]" />
+                    </div>
+                  ) : localFiles.length === 0 ? (
+                    <div className="text-[10px] text-[#585b70] p-3 text-center">
+                      No files in projects/
+                      <br />Upload files via the Upload tab
+                    </div>
+                  ) : (
+                    <div className="p-1">
+                      {localFiles.map(f => (
+                        <div key={f.path} className="flex items-center gap-1 px-2 py-1 text-xs hover:bg-[#313244] rounded group">
+                          {f.type === "directory" ? (
+                            <Folder className="h-3.5 w-3.5 text-[#f9e2af] shrink-0" />
+                          ) : (
+                            <File className="h-3.5 w-3.5 text-[#6c7086] shrink-0" />
+                          )}
+                          <span className="truncate flex-1 text-[#cdd6f4]">{f.name}</span>
+                          {f.size !== undefined && (
+                            <span className="text-[9px] text-[#585b70] shrink-0">{formatBytes(f.size)}</span>
+                          )}
+                          {f.type !== "directory" && (
+                            <button
+                              className="p-0.5 rounded hover:bg-[#89b4fa]/20 text-[#6c7086] hover:text-[#89b4fa] opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                              title={`Transfer to ${remotePath}`}
+                              disabled={!!transferring}
+                              onClick={() => transferToRemote(f.path, f.name)}
+                            >
+                              {transferring === f.name ? (
+                                <Loader2 className="h-3 w-3 animate-spin text-[#89b4fa]" />
+                              ) : (
+                                <Upload className="h-3 w-3" />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {transferResult && (
+                <div className={cn(
+                  "px-3 py-1.5 border-t text-[10px] flex items-center gap-1.5",
+                  transferResult.success
+                    ? "border-[#a6e3a1]/20 bg-[#a6e3a1]/5 text-[#a6e3a1]"
+                    : "border-[#f38ba8]/20 bg-[#f38ba8]/5 text-[#f38ba8]"
+                )}>
+                  {transferResult.success ? (
+                    <><CheckCircle2 className="h-3 w-3" /> Transferred {transferResult.file} to {remotePath}</>
+                  ) : (
+                    <><XCircle className="h-3 w-3" /> Failed: {transferResult.error}</>
+                  )}
+                  <button className="ml-auto p-0.5 hover:bg-[#313244] rounded" onClick={() => setTransferResult(null)}>
+                    <XCircle className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
