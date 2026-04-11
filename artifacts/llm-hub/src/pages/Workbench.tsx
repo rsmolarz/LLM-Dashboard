@@ -903,9 +903,251 @@ function CodeChatPanel() {
   );
 }
 
+function SSHPanel() {
+  const [host, setHost] = useState(() => localStorage.getItem("ssh-host") || "");
+  const [port, setPort] = useState(() => localStorage.getItem("ssh-port") || "22");
+  const [username, setUsername] = useState(() => localStorage.getItem("ssh-username") || "");
+  const [authType, setAuthType] = useState<"password" | "key">(() => (localStorage.getItem("ssh-auth-type") as any) || "password");
+  const [password, setPassword] = useState("");
+  const [privateKey, setPrivateKey] = useState(() => localStorage.getItem("ssh-private-key") || "");
+  const [connected, setConnected] = useState(false);
+  const [input, setInput] = useState("");
+  const [history, setHistory] = useState<{ command: string; stdout?: string; stderr?: string; exitCode?: number; error?: string; timestamp: number }[]>([]);
+  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [showConfig, setShowConfig] = useState(true);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (host) localStorage.setItem("ssh-host", host);
+    if (port) localStorage.setItem("ssh-port", port);
+    if (username) localStorage.setItem("ssh-username", username);
+    localStorage.setItem("ssh-auth-type", authType);
+    if (privateKey) localStorage.setItem("ssh-private-key", privateKey);
+  }, [host, port, username, authType, privateKey]);
+
+  const sshCredentials = () => ({
+    host, port: parseInt(port), username,
+    ...(authType === "password" ? { password } : { privateKey }),
+  });
+
+  const testMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/workbench/ssh/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sshCredentials()),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Connection failed"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      setConnected(true);
+      setShowConfig(false);
+      setHistory(h => [...h, { command: "# Connected to " + host, stdout: `SSH connection established to ${username}@${host}:${port}`, timestamp: Date.now() }]);
+    },
+  });
+
+  const execMutation = useMutation({
+    mutationFn: async (command: string) => {
+      const res = await fetch(`/api/workbench/ssh/exec`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...sshCredentials(), command }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || "Command failed"); }
+      return res.json();
+    },
+    onSuccess: (data, command) => {
+      setHistory(h => [...h, { command, ...data, timestamp: Date.now() }]);
+      setCmdHistory(h => [command, ...h.slice(0, 49)]);
+      setHistoryIndex(-1);
+      setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
+    },
+    onError: (err, command) => {
+      setHistory(h => [...h, { command, error: (err as Error).message, timestamp: Date.now() }]);
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim()) return;
+    if (input.trim() === "clear") { setHistory([]); setInput(""); return; }
+    execMutation.mutate(input.trim());
+    setInput("");
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (historyIndex < cmdHistory.length - 1) {
+        const idx = historyIndex + 1;
+        setHistoryIndex(idx);
+        setInput(cmdHistory[idx]);
+      }
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (historyIndex > 0) {
+        const idx = historyIndex - 1;
+        setHistoryIndex(idx);
+        setInput(cmdHistory[idx]);
+      } else { setHistoryIndex(-1); setInput(""); }
+    }
+  };
+
+  const inputClass = "w-full h-7 text-xs px-2 rounded border border-[#313244] bg-[#181825] text-[#cdd6f4] outline-none focus:ring-1 focus:ring-[#cba6f7] placeholder:text-[#585b70] font-mono";
+
+  return (
+    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
+        <div className="flex items-center gap-2">
+          <Server className="h-3.5 w-3.5 text-[#fab387]" />
+          <span className="text-xs text-[#cdd6f4] font-mono">SSH</span>
+          {connected && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded border border-[#a6e3a1]/30 text-[#a6e3a1]">
+              {username}@{host}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            className="p-1 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#cdd6f4]"
+            onClick={() => setShowConfig(!showConfig)}
+            title="Connection settings"
+          >
+            <Key className="h-3 w-3" />
+          </button>
+          {connected && (
+            <button
+              className="p-1 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#f38ba8]"
+              onClick={() => { setConnected(false); setShowConfig(true); setHistory([]); }}
+              title="Disconnect"
+            >
+              <XCircle className="h-3 w-3" />
+            </button>
+          )}
+          <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => setHistory([])}>
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+
+      {showConfig && (
+        <div className="p-3 border-b border-[#313244] bg-[#181825]/50 space-y-2">
+          <div className="grid grid-cols-[1fr_80px] gap-2">
+            <div>
+              <label className="text-[10px] text-[#6c7086] block mb-0.5">Host</label>
+              <input value={host} onChange={e => setHost(e.target.value)} placeholder="192.168.1.100" className={inputClass} />
+            </div>
+            <div>
+              <label className="text-[10px] text-[#6c7086] block mb-0.5">Port</label>
+              <input value={port} onChange={e => setPort(e.target.value)} placeholder="22" className={inputClass} />
+            </div>
+          </div>
+          <div>
+            <label className="text-[10px] text-[#6c7086] block mb-0.5">Username</label>
+            <input value={username} onChange={e => setUsername(e.target.value)} placeholder="root" className={inputClass} />
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] text-[#6c7086]">Auth:</label>
+            <button
+              className={cn("text-[10px] px-2 py-0.5 rounded border", authType === "password" ? "border-[#cba6f7] text-[#cba6f7] bg-[#cba6f7]/10" : "border-[#313244] text-[#6c7086]")}
+              onClick={() => setAuthType("password")}
+            >Password</button>
+            <button
+              className={cn("text-[10px] px-2 py-0.5 rounded border", authType === "key" ? "border-[#cba6f7] text-[#cba6f7] bg-[#cba6f7]/10" : "border-[#313244] text-[#6c7086]")}
+              onClick={() => setAuthType("key")}
+            >Private Key</button>
+          </div>
+          {authType === "password" ? (
+            <div>
+              <label className="text-[10px] text-[#6c7086] block mb-0.5">Password</label>
+              <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" className={inputClass} />
+            </div>
+          ) : (
+            <div>
+              <label className="text-[10px] text-[#6c7086] block mb-0.5">Private Key (paste PEM)</label>
+              <textarea
+                value={privateKey}
+                onChange={e => setPrivateKey(e.target.value)}
+                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;..."
+                className="w-full h-16 text-[10px] px-2 py-1 rounded border border-[#313244] bg-[#181825] text-[#cdd6f4] outline-none focus:ring-1 focus:ring-[#cba6f7] placeholder:text-[#585b70] font-mono resize-none"
+              />
+            </div>
+          )}
+          <button
+            onClick={() => testMutation.mutate()}
+            disabled={testMutation.isPending || !host || !username}
+            className="w-full h-7 text-xs rounded bg-[#fab387] hover:bg-[#fab387]/80 text-[#1e1e2e] font-medium disabled:opacity-40 flex items-center justify-center gap-1.5"
+          >
+            {testMutation.isPending ? <><Loader2 className="h-3 w-3 animate-spin" /> Connecting...</> : <><Server className="h-3 w-3" /> Connect</>}
+          </button>
+          {testMutation.isError && (
+            <div className="text-[10px] text-[#f38ba8] bg-[#f38ba8]/10 rounded px-2 py-1 border border-[#f38ba8]/20">
+              {(testMutation.error as Error).message}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto p-2" ref={scrollRef}>
+        <div className="font-mono text-xs space-y-1">
+          {!connected && history.length === 0 && (
+            <div className="text-[#585b70] py-4 text-center">
+              <Server className="h-6 w-6 mx-auto mb-2 opacity-40" />
+              Configure your VPS connection above to get started.
+              <br /><span className="text-[10px]">Run commands, deploy code, manage services remotely.</span>
+            </div>
+          )}
+          {history.map((entry, i) => (
+            <div key={i} className="mb-2">
+              <div className="flex items-center gap-1">
+                <span className="text-[#fab387]">{username || "$"}@{host || "vps"} $</span>
+                <span className="text-[#cdd6f4] select-text cursor-text">{entry.command}</span>
+              </div>
+              {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stdout}</pre>}
+              {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>}
+              {entry.error && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">Error: {entry.error}</pre>}
+              {entry.exitCode !== undefined && entry.exitCode !== 0 && (
+                <span className="text-[10px] text-[#f9e2af] ml-3">exit code: {entry.exitCode}</span>
+              )}
+            </div>
+          ))}
+          {execMutation.isPending && (
+            <div className="flex items-center gap-2 text-[#89b4fa]">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>Running on remote...</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {connected && (
+        <form onSubmit={handleSubmit} className="flex items-center gap-1 px-2 py-1.5 border-t border-[#313244] bg-[#181825]">
+          <span className="text-[#fab387] font-mono text-xs shrink-0">{username}@{host} $</span>
+          <input
+            ref={inputRef}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            className="flex-1 bg-transparent text-[#cdd6f4] font-mono text-xs outline-none placeholder:text-[#585b70]"
+            placeholder="Enter command to run on VPS..."
+            disabled={execMutation.isPending}
+            autoFocus
+          />
+        </form>
+      )}
+    </div>
+  );
+}
+
 const PANELS = [
   { id: "code-chat", label: "Code Chat", icon: Sparkles, component: CodeChatPanel },
   { id: "shell", label: "Shell", icon: Terminal, component: ShellPanel },
+  { id: "ssh", label: "SSH", icon: Server, component: SSHPanel },
   { id: "upload", label: "Upload", icon: Upload, component: () => <div className="p-3 h-full overflow-auto"><UploadArea catppuccin={true} /></div> },
   { id: "files", label: "Files", icon: FolderTree, component: FileExplorerPanel },
   { id: "git", label: "Git", icon: GitBranch, component: GitPanel },
