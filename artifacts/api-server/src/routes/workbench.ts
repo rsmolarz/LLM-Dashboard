@@ -372,7 +372,7 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-5",
-          max_tokens: 16384,
+          max_tokens: 64000,
           stream: true,
           system: systemPrompt,
           messages: msgs,
@@ -763,7 +763,7 @@ router.get("/claude-code", async (req, res): Promise<void> => {
       const response = await fetch(`${baseUrl}/v1/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 16384, stream: true, system: ccSystem, messages: msgs }),
+        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 64000, stream: true, system: ccSystem, messages: msgs }),
         signal: AbortSignal.timeout(300000),
       });
 

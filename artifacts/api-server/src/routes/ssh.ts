@@ -352,7 +352,7 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       const response = await fetch(`${baseUrl}/v1/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 16384, system: systemPrompt, tools, messages }),
+        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 64000, system: systemPrompt, tools, messages }),
         signal: AbortSignal.timeout(120000),
       });
 
