@@ -330,6 +330,11 @@ router.post("/code-chat", async (req, res): Promise<void> => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  const keepAlive = setInterval(() => {
+    try { res.write(": keepalive\n\n"); } catch { clearInterval(keepAlive); }
+  }, 15000);
 
   try {
     let projectContext = "";
@@ -350,7 +355,9 @@ router.post("/code-chat", async (req, res): Promise<void> => {
 
     conversationMessages.push({ role: "user", content: prompt });
 
-    const systemPrompt = `You are an expert coding assistant integrated into the LLM Hub Workbench. You help with code analysis, debugging, refactoring, and writing new code. You have access to a TypeScript/React project with Express backend.${projectContext ? "\n\n" + projectContext : ""}`;
+    const systemPrompt = `You are an expert coding assistant integrated into the LLM Hub Workbench. You help with code analysis, debugging, refactoring, and writing new code. You have access to a TypeScript/React project with Express backend.
+
+IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing code, include the FULL implementation — never truncate, abbreviate, or use "..." placeholders. When explaining concepts, cover all important aspects. If your response is long, that is expected and preferred. The user needs complete, production-ready answers.${projectContext ? "\n\n" + projectContext : ""}`;
     let msgs = conversationMessages.slice(-20);
     let continuations = 0;
     const maxContinuations = 5;
@@ -365,12 +372,12 @@ router.post("/code-chat", async (req, res): Promise<void> => {
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-5",
-          max_tokens: 8192,
+          max_tokens: 16384,
           stream: true,
           system: systemPrompt,
           messages: msgs,
         }),
-        signal: AbortSignal.timeout(120000),
+        signal: AbortSignal.timeout(300000),
       });
 
       if (!response.ok) {
@@ -417,7 +424,10 @@ router.post("/code-chat", async (req, res): Promise<void> => {
         }
       }
 
+      console.log(`[code-chat] stop_reason=${stopReason}, textLen=${accumulatedText.length}, continuation=${continuations}`);
+
       if (stopReason === "max_tokens" && continuations < maxContinuations) {
+        console.log(`[code-chat] Auto-continuing (${continuations + 1}/${maxContinuations})...`);
         msgs.push({ role: "assistant", content: accumulatedText });
         msgs.push({ role: "user", content: "Continue from where you left off. Do not repeat what you already said." });
         continuations++;
@@ -427,9 +437,12 @@ router.post("/code-chat", async (req, res): Promise<void> => {
       break;
     }
 
+    clearInterval(keepAlive);
     res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
     res.end();
   } catch (err: any) {
+    clearInterval(keepAlive);
+    console.error(`[code-chat] Error:`, err.message);
     try {
       res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`);
       res.end();
@@ -734,8 +747,13 @@ router.get("/claude-code", async (req, res): Promise<void> => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
 
-  const ccSystem = "You are Claude Code, an expert AI coding agent in the Claude Workbench. You write production-ready code, debug complex issues, and architect systems. Always provide complete working code with proper error handling.";
+  const ccKeepAlive = setInterval(() => {
+    try { res.write(": keepalive\n\n"); } catch { clearInterval(ccKeepAlive); }
+  }, 15000);
+
+  const ccSystem = "You are Claude Code, an expert AI coding agent in the Claude Workbench. You write production-ready code, debug complex issues, and architect systems. Always provide complete working code with proper error handling.\n\nIMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing code, include the FULL implementation — never truncate, abbreviate, or use \"...\" placeholders. When explaining concepts, cover all important aspects. If your response is long, that is expected and preferred. The user needs complete, production-ready answers.";
   try {
     let msgs: any[] = [{ role: "user", content: prompt }];
     let continuations = 0;
@@ -745,8 +763,8 @@ router.get("/claude-code", async (req, res): Promise<void> => {
       const response = await fetch(`${baseUrl}/v1/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 8192, stream: true, system: ccSystem, messages: msgs }),
-        signal: AbortSignal.timeout(120000),
+        body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 16384, stream: true, system: ccSystem, messages: msgs }),
+        signal: AbortSignal.timeout(300000),
       });
 
       if (!response.ok) {
@@ -788,7 +806,10 @@ router.get("/claude-code", async (req, res): Promise<void> => {
         }
       }
 
+      console.log(`[claude-code] stop_reason=${stopReason}, textLen=${accumulatedText.length}, continuation=${continuations}`);
+
       if (stopReason === "max_tokens" && continuations < maxContinuations) {
+        console.log(`[claude-code] Auto-continuing (${continuations + 1}/${maxContinuations})...`);
         msgs.push({ role: "assistant", content: accumulatedText });
         msgs.push({ role: "user", content: "Continue from where you left off. Do not repeat what you already said." });
         continuations++;
@@ -798,9 +819,12 @@ router.get("/claude-code", async (req, res): Promise<void> => {
       break;
     }
 
+    clearInterval(ccKeepAlive);
     res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
     res.end();
   } catch (err: any) {
+    clearInterval(ccKeepAlive);
+    console.error(`[claude-code] Error:`, err.message);
     try { res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`); res.end(); } catch {}
   }
 });

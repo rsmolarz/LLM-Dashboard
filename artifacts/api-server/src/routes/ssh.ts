@@ -335,7 +335,9 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
     },
   ];
 
-  const systemPrompt = `You are an expert Linux server administrator with SSH access to ${config.username}@${config.host}:${config.port}. You can execute commands on this server using the run_ssh_command and run_ssh_commands tools. When the user asks you to do something on the server, use these tools to actually execute the commands. Always show the user what you're running and the results. Be proactive — run commands first, then explain the results.`;
+  const systemPrompt = `You are an expert Linux server administrator with SSH access to ${config.username}@${config.host}:${config.port}. You can execute commands on this server using the run_ssh_command and run_ssh_commands tools. When the user asks you to do something on the server, use these tools to actually execute the commands. Always show the user what you're running and the results. Be proactive — run commands first, then explain the results.
+
+IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing command output, include all relevant details. When explaining system configurations, cover all important aspects. If your response is long, that is expected and preferred.`;
 
   const conversationMessages = (history || []).map((m: any) => ({ role: m.role, content: m.content }));
   conversationMessages.push({ role: "user", content: prompt });
@@ -350,7 +352,7 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
       const response = await fetch(`${baseUrl}/v1/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 8192, system: systemPrompt, tools, messages }),
+        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 16384, system: systemPrompt, tools, messages }),
         signal: AbortSignal.timeout(120000),
       });
 
