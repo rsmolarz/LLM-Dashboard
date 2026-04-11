@@ -286,4 +286,138 @@ router.post("/ssh/list-remote", async (req, res): Promise<void> => {
     });
 });
 
+function execSSH(config: SSHConfig, command: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return new Promise((resolve, reject) => {
+    const conn = new Client();
+    const timeout = setTimeout(() => { conn.end(); reject(new Error("Command timed out after 30s")); }, 30000);
+    conn
+      .on("ready", () => {
+        conn.exec(command, (err, stream) => {
+          if (err) { clearTimeout(timeout); conn.end(); reject(err); return; }
+          let stdout = "";
+          let stderr = "";
+          stream
+            .on("close", (code: number) => { clearTimeout(timeout); conn.end(); resolve({ stdout, stderr, exitCode: code }); })
+            .on("data", (d: Buffer) => { stdout += d.toString(); })
+            .stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
+        });
+      })
+      .on("error", (err) => { clearTimeout(timeout); reject(err); })
+      .connect({ host: config.host, port: config.port, username: config.username, password: config.password, privateKey: config.privateKey, readyTimeout: 10000 });
+  });
+}
+
+router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
+  const config = getSSHConfig(req.body);
+  const { prompt, messages: history } = req.body;
+
+  if (!prompt) { res.status(400).json({ error: "prompt is required" }); return; }
+  if (!config.host || !config.username) { res.status(400).json({ error: "SSH not configured" }); return; }
+
+  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const baseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  if (!apiKey || !baseUrl) { res.status(503).json({ error: "Anthropic AI integration not configured" }); return; }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+
+  const tools = [
+    {
+      name: "run_ssh_command",
+      description: "Execute a command on the remote server via SSH. Returns stdout, stderr, and exit code.",
+      input_schema: { type: "object" as const, properties: { command: { type: "string" as const, description: "The shell command to execute" } }, required: ["command"] },
+    },
+    {
+      name: "run_ssh_commands",
+      description: "Execute multiple commands sequentially on the remote server. Use for multi-step operations.",
+      input_schema: { type: "object" as const, properties: { commands: { type: "array" as const, items: { type: "string" as const }, description: "Array of shell commands to execute in order" } }, required: ["commands"] },
+    },
+  ];
+
+  const systemPrompt = `You are an expert Linux server administrator with SSH access to ${config.username}@${config.host}:${config.port}. You can execute commands on this server using the run_ssh_command and run_ssh_commands tools. When the user asks you to do something on the server, use these tools to actually execute the commands. Always show the user what you're running and the results. Be proactive — run commands first, then explain the results.`;
+
+  const conversationMessages = (history || []).map((m: any) => ({ role: m.role, content: m.content }));
+  conversationMessages.push({ role: "user", content: prompt });
+
+  try {
+    let messages = conversationMessages.slice(-30);
+    let iterationCount = 0;
+    const maxIterations = 10;
+
+    while (iterationCount < maxIterations) {
+      iterationCount++;
+      const response = await fetch(`${baseUrl}/v1/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 4096, system: systemPrompt, tools, messages }),
+        signal: AbortSignal.timeout(120000),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
+        res.end();
+        return;
+      }
+
+      const result = await response.json() as any;
+
+      let textContent = "";
+      const toolUses: any[] = [];
+
+      for (const block of result.content) {
+        if (block.type === "text") {
+          textContent += block.text;
+          res.write(`data: ${JSON.stringify({ type: "text", content: block.text })}\n\n`);
+        } else if (block.type === "tool_use") {
+          toolUses.push(block);
+        }
+      }
+
+      if (toolUses.length === 0) {
+        res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+        res.end();
+        return;
+      }
+
+      messages.push({ role: "assistant", content: result.content });
+
+      const toolResults: any[] = [];
+      for (const tool of toolUses) {
+        try {
+          if (tool.name === "run_ssh_command") {
+            const cmd = tool.input.command;
+            res.write(`data: ${JSON.stringify({ type: "command", command: cmd })}\n\n`);
+            const cmdResult = await execSSH(config, cmd);
+            res.write(`data: ${JSON.stringify({ type: "command_result", command: cmd, ...cmdResult })}\n\n`);
+            toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: JSON.stringify(cmdResult) });
+          } else if (tool.name === "run_ssh_commands") {
+            const results: any[] = [];
+            for (const cmd of tool.input.commands) {
+              res.write(`data: ${JSON.stringify({ type: "command", command: cmd })}\n\n`);
+              const cmdResult = await execSSH(config, cmd);
+              res.write(`data: ${JSON.stringify({ type: "command_result", command: cmd, ...cmdResult })}\n\n`);
+              results.push({ command: cmd, ...cmdResult });
+            }
+            toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: JSON.stringify(results) });
+          }
+        } catch (err: any) {
+          const errMsg = `Error: ${err.message}`;
+          res.write(`data: ${JSON.stringify({ type: "command_error", error: errMsg })}\n\n`);
+          toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: errMsg, is_error: true });
+        }
+      }
+
+      messages.push({ role: "user", content: toolResults });
+    }
+
+    res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+    res.end();
+  } catch (err: any) {
+    res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`);
+    res.end();
+  }
+});
+
 export default router;

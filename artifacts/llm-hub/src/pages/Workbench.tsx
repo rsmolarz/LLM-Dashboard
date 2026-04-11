@@ -903,6 +903,13 @@ function CodeChatPanel() {
   );
 }
 
+interface SSHAIMessage {
+  role: "user" | "assistant";
+  content: string;
+  commands?: { command: string; stdout?: string; stderr?: string; exitCode?: number; error?: string }[];
+  streaming?: boolean;
+}
+
 function SSHPanel() {
   const [host, setHost] = useState(() => localStorage.getItem("ssh-host") || "");
   const [port, setPort] = useState(() => localStorage.getItem("ssh-port") || "22");
@@ -916,8 +923,15 @@ function SSHPanel() {
   const [cmdHistory, setCmdHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [showConfig, setShowConfig] = useState(true);
+  const [mode, setMode] = useState<"terminal" | "ai">("terminal");
+  const [aiMessages, setAiMessages] = useState<SSHAIMessage[]>([]);
+  const [aiInput, setAiInput] = useState("");
+  const [aiStreaming, setAiStreaming] = useState(false);
+  const [aiAbort, setAiAbort] = useState<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const aiScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const aiInputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (host) localStorage.setItem("ssh-host", host);
@@ -998,6 +1012,128 @@ function SSHPanel() {
     }
   };
 
+  const sshBodyBase = () => ({
+    host, port: parseInt(port), username,
+    ...(authType === "password" ? { password } : { privateKey }),
+  });
+
+  const handleAISubmit = useCallback(async () => {
+    if (!aiInput.trim() || aiStreaming) return;
+    const prompt = aiInput.trim();
+    setAiInput("");
+
+    const userMsg: SSHAIMessage = { role: "user", content: prompt };
+    const assistantMsg: SSHAIMessage = { role: "assistant", content: "", commands: [], streaming: true };
+    setAiMessages(prev => [...prev, userMsg, assistantMsg]);
+    setAiStreaming(true);
+
+    const controller = new AbortController();
+    setAiAbort(controller);
+
+    try {
+      const convHistory = aiMessages.filter(m => !m.streaming).map(m => ({ role: m.role, content: m.content }));
+      const res = await fetch(`/api/workbench/ssh/ai-chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...sshBodyBase(), prompt, messages: convHistory }),
+        signal: controller.signal,
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "Request failed" }));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      if (reader) {
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const evt = JSON.parse(line.slice(6));
+              if (evt.type === "text") {
+                setAiMessages(prev => {
+                  const msgs = [...prev];
+                  const last = msgs[msgs.length - 1];
+                  if (last?.streaming) msgs[msgs.length - 1] = { ...last, content: last.content + evt.content };
+                  return msgs;
+                });
+              } else if (evt.type === "command") {
+                setAiMessages(prev => {
+                  const msgs = [...prev];
+                  const last = msgs[msgs.length - 1];
+                  if (last?.streaming) {
+                    const cmds = [...(last.commands || []), { command: evt.command }];
+                    msgs[msgs.length - 1] = { ...last, commands: cmds };
+                  }
+                  return msgs;
+                });
+              } else if (evt.type === "command_result") {
+                setAiMessages(prev => {
+                  const msgs = [...prev];
+                  const last = msgs[msgs.length - 1];
+                  if (last?.streaming && last.commands) {
+                    const cmds = [...last.commands];
+                    const idx = cmds.findIndex(c => c.command === evt.command && !c.stdout && !c.stderr && !c.error);
+                    if (idx >= 0) cmds[idx] = { ...cmds[idx], stdout: evt.stdout, stderr: evt.stderr, exitCode: evt.exitCode };
+                    msgs[msgs.length - 1] = { ...last, commands: cmds };
+                  }
+                  return msgs;
+                });
+              } else if (evt.type === "command_error") {
+                setAiMessages(prev => {
+                  const msgs = [...prev];
+                  const last = msgs[msgs.length - 1];
+                  if (last?.streaming && last.commands) {
+                    const cmds = [...last.commands];
+                    const idx = cmds.length - 1;
+                    if (idx >= 0) cmds[idx] = { ...cmds[idx], error: evt.error };
+                    msgs[msgs.length - 1] = { ...last, commands: cmds };
+                  }
+                  return msgs;
+                });
+              } else if (evt.type === "done" || evt.type === "error") {
+                if (evt.type === "error") {
+                  setAiMessages(prev => {
+                    const msgs = [...prev];
+                    const last = msgs[msgs.length - 1];
+                    if (last?.streaming) msgs[msgs.length - 1] = { ...last, content: last.content + "\n\nError: " + evt.content };
+                    return msgs;
+                  });
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== "AbortError") {
+        setAiMessages(prev => {
+          const msgs = [...prev];
+          const last = msgs[msgs.length - 1];
+          if (last?.streaming) msgs[msgs.length - 1] = { ...last, content: last.content + "\n\nError: " + err.message };
+          return msgs;
+        });
+      }
+    } finally {
+      setAiMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m));
+      setAiStreaming(false);
+      setAiAbort(null);
+    }
+  }, [aiInput, aiStreaming, aiMessages, host, port, username, authType, password, privateKey]);
+
+  useEffect(() => {
+    if (aiScrollRef.current) aiScrollRef.current.scrollTo({ top: aiScrollRef.current.scrollHeight });
+  }, [aiMessages]);
+
   const inputClass = "w-full h-7 text-xs px-2 rounded border border-[#313244] bg-[#181825] text-[#cdd6f4] outline-none focus:ring-1 focus:ring-[#cba6f7] placeholder:text-[#585b70] font-mono";
 
   return (
@@ -1007,9 +1143,21 @@ function SSHPanel() {
           <Server className="h-3.5 w-3.5 text-[#fab387]" />
           <span className="text-xs text-[#cdd6f4] font-mono">SSH</span>
           {connected && (
-            <span className="text-[9px] px-1.5 py-0.5 rounded border border-[#a6e3a1]/30 text-[#a6e3a1]">
-              {username}@{host}
-            </span>
+            <>
+              <span className="text-[9px] px-1.5 py-0.5 rounded border border-[#a6e3a1]/30 text-[#a6e3a1]">
+                {username}@{host}
+              </span>
+              <div className="flex items-center gap-0.5 ml-1 bg-[#313244] rounded p-0.5">
+                <button
+                  className={cn("text-[9px] px-1.5 py-0.5 rounded transition-colors", mode === "terminal" ? "bg-[#fab387] text-[#1e1e2e]" : "text-[#6c7086] hover:text-[#cdd6f4]")}
+                  onClick={() => setMode("terminal")}
+                >Terminal</button>
+                <button
+                  className={cn("text-[9px] px-1.5 py-0.5 rounded transition-colors flex items-center gap-0.5", mode === "ai" ? "bg-[#cba6f7] text-[#1e1e2e]" : "text-[#6c7086] hover:text-[#cdd6f4]")}
+                  onClick={() => setMode("ai")}
+                ><Sparkles className="h-2.5 w-2.5" />AI</button>
+              </div>
+            </>
           )}
         </div>
         <div className="flex items-center gap-1">
@@ -1029,7 +1177,7 @@ function SSHPanel() {
               <XCircle className="h-3 w-3" />
             </button>
           )}
-          <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => setHistory([])}>
+          <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => { setHistory([]); setAiMessages([]); }}>
             <Trash2 className="h-3 w-3" />
           </button>
         </div>
@@ -1093,52 +1241,131 @@ function SSHPanel() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-2" ref={scrollRef}>
-        <div className="font-mono text-xs space-y-1">
-          {!connected && history.length === 0 && (
-            <div className="text-[#585b70] py-4 text-center">
-              <Server className="h-6 w-6 mx-auto mb-2 opacity-40" />
-              Configure your VPS connection above to get started.
-              <br /><span className="text-[10px]">Run commands, deploy code, manage services remotely.</span>
-            </div>
-          )}
-          {history.map((entry, i) => (
-            <div key={i} className="mb-2">
-              <div className="flex items-center gap-1">
-                <span className="text-[#fab387]">{username || "$"}@{host || "vps"} $</span>
-                <span className="text-[#cdd6f4] select-text cursor-text">{entry.command}</span>
-              </div>
-              {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stdout}</pre>}
-              {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>}
-              {entry.error && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">Error: {entry.error}</pre>}
-              {entry.exitCode !== undefined && entry.exitCode !== 0 && (
-                <span className="text-[10px] text-[#f9e2af] ml-3">exit code: {entry.exitCode}</span>
+      {mode === "terminal" ? (
+        <>
+          <div className="flex-1 overflow-y-auto p-2" ref={scrollRef}>
+            <div className="font-mono text-xs space-y-1">
+              {!connected && history.length === 0 && (
+                <div className="text-[#585b70] py-4 text-center">
+                  <Server className="h-6 w-6 mx-auto mb-2 opacity-40" />
+                  Configure your VPS connection above to get started.
+                  <br /><span className="text-[10px]">Run commands, deploy code, manage services remotely.</span>
+                </div>
+              )}
+              {history.map((entry, i) => (
+                <div key={i} className="mb-2">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[#fab387]">{username || "$"}@{host || "vps"} $</span>
+                    <span className="text-[#cdd6f4] select-text cursor-text">{entry.command}</span>
+                  </div>
+                  {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stdout}</pre>}
+                  {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>}
+                  {entry.error && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">Error: {entry.error}</pre>}
+                  {entry.exitCode !== undefined && entry.exitCode !== 0 && (
+                    <span className="text-[10px] text-[#f9e2af] ml-3">exit code: {entry.exitCode}</span>
+                  )}
+                </div>
+              ))}
+              {execMutation.isPending && (
+                <div className="flex items-center gap-2 text-[#89b4fa]">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span>Running on remote...</span>
+                </div>
               )}
             </div>
-          ))}
-          {execMutation.isPending && (
-            <div className="flex items-center gap-2 text-[#89b4fa]">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span>Running on remote...</span>
+          </div>
+          {connected && (
+            <form onSubmit={handleSubmit} className="flex items-center gap-1 px-2 py-1.5 border-t border-[#313244] bg-[#181825]">
+              <span className="text-[#fab387] font-mono text-xs shrink-0">{username}@{host} $</span>
+              <input
+                ref={inputRef}
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="flex-1 bg-transparent text-[#cdd6f4] font-mono text-xs outline-none placeholder:text-[#585b70]"
+                placeholder="Enter command to run on VPS..."
+                disabled={execMutation.isPending}
+                autoFocus
+              />
+            </form>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="flex-1 overflow-y-auto p-3 space-y-3" ref={aiScrollRef}>
+            {aiMessages.length === 0 && (
+              <div className="text-[#585b70] py-4 text-center">
+                <Sparkles className="h-6 w-6 mx-auto mb-2 opacity-40" />
+                <span className="text-xs">AI Server Assistant</span>
+                <br /><span className="text-[10px]">Ask me to check services, debug issues, deploy code, manage files — I'll run the commands for you.</span>
+              </div>
+            )}
+            {aiMessages.map((msg, i) => (
+              <div key={i} className={cn("text-xs", msg.role === "user" ? "flex justify-end" : "")}>
+                {msg.role === "user" ? (
+                  <div className="bg-[#cba6f7]/15 border border-[#cba6f7]/20 rounded-lg px-3 py-2 max-w-[85%] text-[#cdd6f4] select-text cursor-text whitespace-pre-wrap">{msg.content}</div>
+                ) : (
+                  <div className="space-y-2">
+                    {msg.content && (
+                      <div className="text-[#cdd6f4] select-text cursor-text whitespace-pre-wrap leading-relaxed">{msg.content}</div>
+                    )}
+                    {msg.commands && msg.commands.map((cmd, j) => (
+                      <div key={j} className="bg-[#181825] rounded border border-[#313244] overflow-hidden">
+                        <div className="flex items-center gap-1.5 px-2 py-1 bg-[#313244]/50 border-b border-[#313244]">
+                          <Terminal className="h-3 w-3 text-[#fab387]" />
+                          <code className="text-[10px] text-[#fab387] select-text cursor-text">{cmd.command}</code>
+                          {cmd.exitCode !== undefined && cmd.exitCode !== 0 && (
+                            <span className="text-[9px] text-[#f38ba8] ml-auto">exit {cmd.exitCode}</span>
+                          )}
+                          {cmd.exitCode === 0 && (
+                            <span className="text-[9px] text-[#a6e3a1] ml-auto">ok</span>
+                          )}
+                          {cmd.exitCode === undefined && !cmd.error && (
+                            <Loader2 className="h-2.5 w-2.5 animate-spin text-[#89b4fa] ml-auto" />
+                          )}
+                        </div>
+                        {cmd.stdout && <pre className="text-[10px] text-[#a6adc8] p-2 whitespace-pre-wrap break-all select-text cursor-text max-h-40 overflow-y-auto">{cmd.stdout}</pre>}
+                        {cmd.stderr && <pre className="text-[10px] text-[#f38ba8] p-2 whitespace-pre-wrap break-all select-text cursor-text max-h-40 overflow-y-auto">{cmd.stderr}</pre>}
+                        {cmd.error && <pre className="text-[10px] text-[#f38ba8] p-2 select-text cursor-text">{cmd.error}</pre>}
+                      </div>
+                    ))}
+                    {msg.streaming && (
+                      <div className="flex items-center gap-1.5 text-[#89b4fa]">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        <span className="text-[10px]">Thinking...</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          {connected && (
+            <div className="border-t border-[#313244] bg-[#181825] p-2">
+              <div className="flex items-end gap-1.5">
+                <textarea
+                  ref={aiInputRef}
+                  value={aiInput}
+                  onChange={e => setAiInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleAISubmit(); } }}
+                  className="flex-1 bg-[#1e1e2e] text-[#cdd6f4] text-xs rounded border border-[#313244] px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#cba6f7] placeholder:text-[#585b70] resize-none min-h-[28px] max-h-[80px]"
+                  placeholder="Ask AI to run commands on your server..."
+                  rows={1}
+                  disabled={aiStreaming}
+                />
+                {aiStreaming ? (
+                  <button onClick={() => aiAbort?.abort()} className="p-1.5 rounded bg-[#f38ba8] text-[#1e1e2e] hover:bg-[#f38ba8]/80">
+                    <XCircle className="h-3.5 w-3.5" />
+                  </button>
+                ) : (
+                  <button onClick={handleAISubmit} disabled={!aiInput.trim()} className="p-1.5 rounded bg-[#cba6f7] text-[#1e1e2e] hover:bg-[#cba6f7]/80 disabled:opacity-40">
+                    <Send className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           )}
-        </div>
-      </div>
-
-      {connected && (
-        <form onSubmit={handleSubmit} className="flex items-center gap-1 px-2 py-1.5 border-t border-[#313244] bg-[#181825]">
-          <span className="text-[#fab387] font-mono text-xs shrink-0">{username}@{host} $</span>
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="flex-1 bg-transparent text-[#cdd6f4] font-mono text-xs outline-none placeholder:text-[#585b70]"
-            placeholder="Enter command to run on VPS..."
-            disabled={execMutation.isPending}
-            autoFocus
-          />
-        </form>
+        </>
       )}
     </div>
   );
