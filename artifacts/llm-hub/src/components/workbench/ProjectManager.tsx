@@ -215,6 +215,13 @@ export function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; o
 
   return (
     <div className="space-y-3">
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        onChange={handleFileChange}
+        style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap", border: 0 }}
+      />
       <div>
         <label className={cn("text-xs font-medium mb-1 block", textMuted)}>Upload Destination</label>
         <input
@@ -240,13 +247,6 @@ export function UploadArea({ catppuccin, onUploaded }: { catppuccin?: boolean; o
           uploadMutation.isPending && "pointer-events-none opacity-60"
         )}
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple={true}
-          onChange={handleFileChange}
-          className="hidden"
-        />
         {uploadMutation.isPending ? (
           <Loader2 className={cn("h-8 w-8 animate-spin", catppuccin ? "text-[#fab387]" : "text-primary")} />
         ) : (
