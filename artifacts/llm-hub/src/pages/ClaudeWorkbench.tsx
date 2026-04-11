@@ -8,7 +8,7 @@ import {
   CheckCircle2, XCircle, FileCode, GitCommit, Trash2,
   Sparkles, Send, Square, User, Bot, ExternalLink,
   Globe, Lock, Code2, PanelLeftClose, PanelLeft,
-  Puzzle, Power, Zap, Brain, ChevronUp, Bug,
+  Puzzle, Power, Zap, Brain, ChevronUp, Bug, ChevronLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
@@ -973,6 +973,7 @@ function CWSSHPanel() {
   const [remoteError, setRemoteError] = useState<string | null>(null);
   const [localFiles, setLocalFiles] = useState<{ name: string; type: string; size?: number; path: string }[]>([]);
   const [localLoading, setLocalLoading] = useState(false);
+  const [localPath, setLocalPath] = useState("projects");
   const [transferring, setTransferring] = useState<string | null>(null);
   const [transferResult, setTransferResult] = useState<{ file: string; success: boolean; error?: string } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -1057,10 +1058,11 @@ function CWSSHPanel() {
     }
   }, [remotePath, host, port, username, authType, password, privateKey]);
 
-  const loadLocalFiles = useCallback(async () => {
+  const loadLocalFiles = useCallback(async (browsePath?: string) => {
+    const p = browsePath ?? localPath;
     setLocalLoading(true);
     try {
-      const res = await fetch(`/api/workbench/files?path=projects`, { credentials: "include" });
+      const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(p)}`, { credentials: "include" });
       const data = await res.json();
       setLocalFiles((data.items || []).map((item: any) => ({
         name: item.name,
@@ -1068,12 +1070,13 @@ function CWSSHPanel() {
         size: item.size,
         path: item.path,
       })));
+      if (browsePath !== undefined) setLocalPath(browsePath);
     } catch {
       setLocalFiles([]);
     } finally {
       setLocalLoading(false);
     }
-  }, []);
+  }, [localPath]);
 
   const transferToRemote = useCallback(async (localPath: string, fileName: string) => {
     setTransferring(fileName);
@@ -1409,8 +1412,11 @@ function CWSSHPanel() {
 
                 <div className="flex-1 overflow-y-auto">
                   <div className="px-2 py-1 bg-[#313244]/30 border-b border-[#313244] flex items-center justify-between">
-                    <span className="text-[9px] font-semibold text-[#a6adc8] uppercase tracking-wider">Local Files (projects/)</span>
-                    <button className="p-0.5 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#cdd6f4]" onClick={loadLocalFiles}>
+                    <div className="flex items-center gap-1 min-w-0 flex-1">
+                      <span className="text-[9px] font-semibold text-[#a6adc8] uppercase tracking-wider shrink-0">Local</span>
+                      <span className="text-[9px] text-[#585b70] truncate">{localPath}/</span>
+                    </div>
+                    <button className="p-0.5 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#cdd6f4]" onClick={() => loadLocalFiles()}>
                       <RefreshCw className={cn("h-2.5 w-2.5", localLoading && "animate-spin")} />
                     </button>
                   </div>
@@ -1420,35 +1426,53 @@ function CWSSHPanel() {
                     </div>
                   ) : localFiles.length === 0 ? (
                     <div className="text-[10px] text-[#585b70] p-3 text-center">
-                      No files in projects/
+                      No files in {localPath}/
                       <br />Upload files via the Upload tab
                     </div>
                   ) : (
                     <div className="p-1">
+                      {localPath !== "projects" && (
+                        <button
+                          className="flex items-center gap-1 px-2 py-1 text-xs hover:bg-[#313244] rounded w-full text-left text-[#6c7086] hover:text-[#cdd6f4]"
+                          onClick={() => {
+                            const parent = localPath.includes("/") ? localPath.substring(0, localPath.lastIndexOf("/")) : "projects";
+                            loadLocalFiles(parent || "projects");
+                          }}
+                        >
+                          <ChevronLeft className="h-3 w-3 shrink-0" />
+                          <span>..</span>
+                        </button>
+                      )}
                       {localFiles.map(f => (
                         <div key={f.path} className="flex items-center gap-1 px-2 py-1 text-xs hover:bg-[#313244] rounded group">
                           {f.type === "directory" ? (
-                            <Folder className="h-3.5 w-3.5 text-[#f9e2af] shrink-0" />
-                          ) : (
-                            <File className="h-3.5 w-3.5 text-[#6c7086] shrink-0" />
-                          )}
-                          <span className="truncate flex-1 text-[#cdd6f4]">{f.name}</span>
-                          {f.size !== undefined && (
-                            <span className="text-[9px] text-[#585b70] shrink-0">{formatBytes(f.size)}</span>
-                          )}
-                          {f.type !== "directory" && (
                             <button
-                              className="p-0.5 rounded hover:bg-[#89b4fa]/20 text-[#6c7086] hover:text-[#89b4fa] opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
-                              title={`Transfer to ${remotePath}`}
-                              disabled={!!transferring}
-                              onClick={() => transferToRemote(f.path, f.name)}
+                              className="flex items-center gap-1 min-w-0 flex-1 text-left"
+                              onClick={() => loadLocalFiles(f.path)}
                             >
-                              {transferring === f.name ? (
-                                <Loader2 className="h-3 w-3 animate-spin text-[#89b4fa]" />
-                              ) : (
-                                <Upload className="h-3 w-3" />
-                              )}
+                              <Folder className="h-3.5 w-3.5 text-[#f9e2af] shrink-0" />
+                              <span className="truncate flex-1 text-[#cdd6f4]">{f.name}</span>
                             </button>
+                          ) : (
+                            <>
+                              <File className="h-3.5 w-3.5 text-[#6c7086] shrink-0" />
+                              <span className="truncate flex-1 text-[#cdd6f4]">{f.name}</span>
+                              {f.size !== undefined && (
+                                <span className="text-[9px] text-[#585b70] shrink-0">{formatBytes(f.size)}</span>
+                              )}
+                              <button
+                                className="p-0.5 rounded hover:bg-[#89b4fa]/20 text-[#6c7086] hover:text-[#89b4fa] opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                                title={`Transfer to ${remotePath}`}
+                                disabled={!!transferring}
+                                onClick={() => transferToRemote(f.path, f.name)}
+                              >
+                                {transferring === f.name ? (
+                                  <Loader2 className="h-3 w-3 animate-spin text-[#89b4fa]" />
+                                ) : (
+                                  <Upload className="h-3 w-3" />
+                                )}
+                              </button>
+                            </>
                           )}
                         </div>
                       ))}
