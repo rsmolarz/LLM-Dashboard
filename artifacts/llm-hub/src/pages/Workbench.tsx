@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
 import { FolderPlus, Upload } from "lucide-react";
+import { usePersistedState } from "@/hooks/usePersistedState";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -34,8 +35,8 @@ type FileItem = { name: string; type: "file" | "directory"; path: string; size?:
 
 function ShellPanel() {
   const [input, setInput] = useState("");
-  const [history, setHistory] = useState<ShellEntry[]>([]);
-  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
+  const [history, setHistory] = usePersistedState<ShellEntry[]>("wb-shell-history", []);
+  const [cmdHistory, setCmdHistory] = usePersistedState<string[]>("wb-shell-cmds", []);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -139,8 +140,8 @@ function ShellPanel() {
 }
 
 function FileExplorerPanel() {
-  const [currentPath, setCurrentPath] = useState(".");
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [currentPath, setCurrentPath] = usePersistedState("wb-file-path", ".");
+  const [selectedFile, setSelectedFile] = usePersistedState<string | null>("wb-file-selected", null);
 
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["workbench-files", currentPath],
@@ -491,7 +492,7 @@ function AgentActivityPanel() {
 }
 
 function DatabasePanel() {
-  const [query, setQuery] = useState("SELECT schemaname, relname as table_name, n_live_tup as row_count FROM pg_stat_user_tables ORDER BY n_live_tup DESC");
+  const [query, setQuery] = usePersistedState("wb-db-query", "SELECT schemaname, relname as table_name, n_live_tup as row_count FROM pg_stat_user_tables ORDER BY n_live_tup DESC");
   const [results, setResults] = useState<any>(null);
 
   const queryMutation = useMutation({
@@ -692,7 +693,7 @@ type ChatMessage = {
 
 function CodeChatPanel() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = usePersistedState<ChatMessage[]>("wb-chat-messages", []);
   const [isStreaming, setIsStreaming] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -919,12 +920,12 @@ function SSHPanel() {
   const [privateKey, setPrivateKey] = useState(() => localStorage.getItem("ssh-private-key") || "");
   const [connected, setConnected] = useState(false);
   const [input, setInput] = useState("");
-  const [history, setHistory] = useState<{ command: string; stdout?: string; stderr?: string; exitCode?: number; error?: string; timestamp: number }[]>([]);
-  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
+  const [history, setHistory] = usePersistedState<{ command: string; stdout?: string; stderr?: string; exitCode?: number; error?: string; timestamp: number }[]>("wb-ssh-history", []);
+  const [cmdHistory, setCmdHistory] = usePersistedState<string[]>("wb-ssh-cmds", []);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [showConfig, setShowConfig] = useState(true);
-  const [mode, setMode] = useState<"terminal" | "ai">("terminal");
-  const [aiMessages, setAiMessages] = useState<SSHAIMessage[]>([]);
+  const [mode, setMode] = usePersistedState<"terminal" | "ai">("wb-ssh-mode", "terminal");
+  const [aiMessages, setAiMessages] = usePersistedState<SSHAIMessage[]>("wb-ssh-ai-messages", []);
   const [aiInput, setAiInput] = useState("");
   const [aiStreaming, setAiStreaming] = useState(false);
   const [aiAbort, setAiAbort] = useState<AbortController | null>(null);
@@ -1428,11 +1429,11 @@ function WBPersistentPanelSlot({ activeId }: { activeId: PanelId }) {
 }
 
 export default function Workbench() {
-  const [leftPanel, setLeftPanel] = useState<PanelId>("code-chat");
-  const [rightPanel, setRightPanel] = useState<PanelId>("files");
-  const [bottomPanel, setBottomPanel] = useState<PanelId>("shell");
-  const [bottomRightPanel, setBottomRightPanel] = useState<PanelId>("git");
-  const [showBottom, setShowBottom] = useState(false);
+  const [leftPanel, setLeftPanel] = usePersistedState<PanelId>("wb-left-panel", "code-chat");
+  const [rightPanel, setRightPanel] = usePersistedState<PanelId>("wb-right-panel", "files");
+  const [bottomPanel, setBottomPanel] = usePersistedState<PanelId>("wb-bottom-panel", "shell");
+  const [bottomRightPanel, setBottomRightPanel] = usePersistedState<PanelId>("wb-bottom-right-panel", "git");
+  const [showBottom, setShowBottom] = usePersistedState("wb-show-bottom", false);
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] bg-[#1e1e2e]">

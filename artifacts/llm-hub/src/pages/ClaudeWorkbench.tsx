@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
 import { FolderPlus, Upload } from "lucide-react";
+import { usePersistedState } from "@/hooks/usePersistedState";
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return "0 B";
@@ -34,8 +35,8 @@ type ChatMessage = { role: "user" | "assistant"; content: string; timestamp: num
 
 function ShellPanel() {
   const [input, setInput] = useState("");
-  const [history, setHistory] = useState<ShellEntry[]>([]);
-  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
+  const [history, setHistory] = usePersistedState<ShellEntry[]>("cw-shell-history", []);
+  const [cmdHistory, setCmdHistory] = usePersistedState<string[]>("cw-shell-cmds", []);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -105,8 +106,8 @@ function ShellPanel() {
 }
 
 function FileExplorerPanel() {
-  const [currentPath, setCurrentPath] = useState(".");
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [currentPath, setCurrentPath] = usePersistedState("cw-file-path", ".");
+  const [selectedFile, setSelectedFile] = usePersistedState<string | null>("cw-file-selected", null);
 
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["wb-files", currentPath],
@@ -184,7 +185,7 @@ function FileExplorerPanel() {
 
 function PreviewPanel() {
   const [url, setUrl] = useState("");
-  const [currentUrl, setCurrentUrl] = useState(`https://${window.location.host}`);
+  const [currentUrl, setCurrentUrl] = usePersistedState("cw-preview-url", `https://${window.location.host}`);
 
   return (
     <div className="flex flex-col h-full">
@@ -326,7 +327,7 @@ function AgentActivityPanel() {
 }
 
 function DatabasePanel() {
-  const [query, setQuery] = useState("SELECT schemaname, relname as table_name, n_live_tup as row_count FROM pg_stat_user_tables ORDER BY n_live_tup DESC");
+  const [query, setQuery] = usePersistedState("cw-db-query", "SELECT schemaname, relname as table_name, n_live_tup as row_count FROM pg_stat_user_tables ORDER BY n_live_tup DESC");
   const [results, setResults] = useState<any>(null);
 
   const queryMutation = useMutation({
@@ -576,7 +577,7 @@ function SkillsPanel() {
 
 function ClaudeCodePanel() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = usePersistedState<ChatMessage[]>("cw-claude-messages", []);
   const [isStreaming, setIsStreaming] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -697,11 +698,11 @@ function ClaudeCodePanel() {
 
 function AIRouterPanel() {
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = usePersistedState<ChatMessage[]>("cw-router-messages", []);
   const [isStreaming, setIsStreaming] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
-  const [routingMode, setRoutingMode] = useState<string>("auto");
-  const [manualModel, setManualModel] = useState<string>("");
+  const [routingMode, setRoutingMode] = usePersistedState<string>("cw-routing-mode", "auto");
+  const [manualModel, setManualModel] = usePersistedState<string>("cw-manual-model", "");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const { data: config } = useQuery<any>({
@@ -957,12 +958,12 @@ function CWSSHPanel() {
   const [privateKey, setPrivateKey] = useState(() => localStorage.getItem("ssh-private-key") || "");
   const [connected, setConnected] = useState(false);
   const [input, setInput] = useState("");
-  const [history, setHistory] = useState<{ command: string; stdout?: string; stderr?: string; exitCode?: number; error?: string; timestamp: number }[]>([]);
-  const [cmdHistory, setCmdHistory] = useState<string[]>([]);
+  const [history, setHistory] = usePersistedState<{ command: string; stdout?: string; stderr?: string; exitCode?: number; error?: string; timestamp: number }[]>("cw-ssh-history", []);
+  const [cmdHistory, setCmdHistory] = usePersistedState<string[]>("cw-ssh-cmds", []);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [showConfig, setShowConfig] = useState(true);
-  const [mode, setMode] = useState<"terminal" | "ai">("terminal");
-  const [aiMessages, setAiMessages] = useState<CWSSHAIMessage[]>([]);
+  const [mode, setMode] = usePersistedState<"terminal" | "ai">("cw-ssh-mode", "terminal");
+  const [aiMessages, setAiMessages] = usePersistedState<CWSSHAIMessage[]>("cw-ssh-ai-messages", []);
   const [aiInput, setAiInput] = useState("");
   const [aiStreaming, setAiStreaming] = useState(false);
   const [aiAbort, setAiAbort] = useState<AbortController | null>(null);
@@ -1297,11 +1298,11 @@ function CWPersistentPanelSlot({ activeId }: { activeId: PanelId }) {
 }
 
 export default function ClaudeWorkbench() {
-  const [leftPanel, setLeftPanel] = useState<PanelId>("claude");
-  const [rightPanel, setRightPanel] = useState<PanelId>("files");
-  const [bottomPanel, setBottomPanel] = useState<PanelId>("shell");
-  const [bottomRightPanel, setBottomRightPanel] = useState<PanelId>("git");
-  const [showBottom, setShowBottom] = useState(false);
+  const [leftPanel, setLeftPanel] = usePersistedState<PanelId>("cw-left-panel", "claude");
+  const [rightPanel, setRightPanel] = usePersistedState<PanelId>("cw-right-panel", "files");
+  const [bottomPanel, setBottomPanel] = usePersistedState<PanelId>("cw-bottom-panel", "shell");
+  const [bottomRightPanel, setBottomRightPanel] = usePersistedState<PanelId>("cw-bottom-right-panel", "git");
+  const [showBottom, setShowBottom] = usePersistedState("cw-show-bottom", false);
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
