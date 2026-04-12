@@ -1149,77 +1149,54 @@ function CWSSHPanel() {
 
   const aiFileInputRef = useRef<HTMLInputElement>(null);
 
-  const uploadFilesToVPS = useCallback(async (files: File[]) => {
+  const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     setAiUploading(true);
-    const uploaded: { name: string; remotePath: string; size: number; isZip: boolean }[] = [];
-    for (const file of files) {
-      try {
-        const isZip = file.name.endsWith(".zip") || file.name.endsWith(".tar.gz") || file.name.endsWith(".tgz");
-        const rp = `/tmp/uploads/${file.name}`;
-        let body: any;
-        if (isZip || file.type.startsWith("application/") || file.type === "") {
-          const arrayBuf = await file.arrayBuffer();
-          const bytes = new Uint8Array(arrayBuf);
-          let binary = "";
-          const chunkSize = 8192;
-          for (let i = 0; i < bytes.length; i += chunkSize) {
-            binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
-          }
-          const base64 = btoa(binary);
-          body = { ...sshBodyBase(), remotePath: rp, contentBase64: base64 };
-        } else {
-          const content = await file.text();
-          body = { ...sshBodyBase(), remotePath: rp, content };
+    try {
+      const formData = new FormData();
+      formData.append("path", "attached_assets");
+      for (const file of files) {
+        formData.append("files", file);
+      }
+      const res = await fetch(`/api/workbench/upload`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const uploaded = (data.files || []).map((f: any) => ({
+          name: f.name,
+          remotePath: f.path || f.extractedTo || f.name,
+          size: f.size || 0,
+        }));
+        if (uploaded.length > 0) {
+          setAiAttachedFiles(prev => [...prev, ...uploaded]);
+          const fileList = (data.files || []).map((f: any) => {
+            if (f.type === "zip") return `${f.name} (zip, ${f.fileCount} files extracted)`;
+            return `${f.name} (${formatBytes(f.size || 0)})`;
+          }).join(", ");
+          setAiMessages(prev => [...prev, { role: "user", content: `Attached ${uploaded.length} file${uploaded.length > 1 ? "s" : ""}: ${fileList}` }]);
         }
-        const res = await fetch(`/api/workbench/ssh/upload-file`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify(body),
-        });
-        if (res.ok) {
-          uploaded.push({ name: file.name, remotePath: rp, size: file.size, isZip });
-          if (isZip) {
-            const extractDir = `/tmp/uploads/${file.name.replace(/\.(zip|tar\.gz|tgz)$/, "")}`;
-            const unzipCmd = file.name.endsWith(".zip")
-              ? `mkdir -p ${extractDir} && cd ${extractDir} && unzip -o ${rp}`
-              : `mkdir -p ${extractDir} && tar -xzf ${rp} -C ${extractDir}`;
-            await fetch(`/api/workbench/ssh/exec`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              credentials: "include",
-              body: JSON.stringify({ ...sshBodyBase(), command: unzipCmd }),
-            });
-          }
-        }
-      } catch {}
-    }
-    if (uploaded.length > 0) {
-      setAiAttachedFiles(prev => [...prev, ...uploaded]);
-      const fileList = uploaded.map(f => {
-        const extractDir = f.name.replace(/\.(zip|tar\.gz|tgz)$/, "");
-        return f.isZip ? `${f.name} (${formatBytes(f.size)}) -> extracted to /tmp/uploads/${extractDir}/` : `${f.name} (${formatBytes(f.size)})`;
-      }).join(", ");
-      setAiMessages(prev => [...prev, { role: "user", content: `Uploaded ${uploaded.length} file${uploaded.length > 1 ? "s" : ""} to VPS: ${fileList}\nPaths: ${uploaded.map(f => f.remotePath).join(", ")}` }]);
-    }
+      }
+    } catch {}
     setAiUploading(false);
-  }, [sshBodyBase]);
+  }, []);
 
   const handleAIDrop = useCallback(async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setAiDragOver(false);
-    uploadFilesToVPS(Array.from(e.dataTransfer.files));
-  }, [uploadFilesToVPS]);
+    uploadFiles(Array.from(e.dataTransfer.files));
+  }, [uploadFiles]);
 
   const handleAIFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      uploadFilesToVPS(Array.from(files));
+      uploadFiles(Array.from(files));
     }
     if (aiFileInputRef.current) aiFileInputRef.current.value = "";
-  }, [uploadFilesToVPS]);
+  }, [uploadFiles]);
 
   const handleAISubmit = useCallback(async () => {
     if (!aiInput.trim() || aiStreaming) return;
@@ -1389,8 +1366,8 @@ function CWSSHPanel() {
               <div className="absolute inset-0 flex items-center justify-center bg-[#1e1e2e]/80 z-10 rounded pointer-events-none">
                 <div className="text-center">
                   <Upload className="h-8 w-8 mx-auto mb-2 text-[#cba6f7]" />
-                  <div className="text-xs text-[#cba6f7] font-medium">Drop files to upload to VPS</div>
-                  <div className="text-[10px] text-[#6c7086]">Files will be uploaded to /tmp/uploads/</div>
+                  <div className="text-xs text-[#cba6f7] font-medium">Drop files to attach</div>
+                  <div className="text-[10px] text-[#6c7086]">Files will be available as context for AI</div>
                 </div>
               </div>
             )}
@@ -1462,7 +1439,7 @@ function CWSSHPanel() {
               {aiUploading && (
                 <div className="flex items-center gap-1.5 text-[#89b4fa] text-[10px] mb-1.5 px-1">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  <span>Uploading files to VPS...</span>
+                  <span>Uploading files...</span>
                 </div>
               )}
               {aiAttachedFiles.length > 0 && (
@@ -1490,7 +1467,7 @@ function CWSSHPanel() {
                   onClick={() => aiFileInputRef.current?.click()}
                   disabled={aiUploading || aiStreaming}
                   className="p-1.5 rounded text-[#6c7086] hover:text-[#cba6f7] hover:bg-[#313244] disabled:opacity-40 transition-colors"
-                  title="Attach files to upload to VPS"
+                  title="Attach files"
                 >
                   <Paperclip className="h-3.5 w-3.5" />
                 </button>
