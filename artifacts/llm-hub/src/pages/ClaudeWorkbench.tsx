@@ -1203,7 +1203,7 @@ function CWSSHPanel() {
     let prompt = aiInput.trim();
     if (aiAttachedFiles.length > 0) {
       const fileContext = aiAttachedFiles.map(f => `${f.name} at ${f.remotePath}`).join(", ");
-      prompt += `\n\n[Attached files on VPS: ${fileContext}]`;
+      prompt += `\n\n[Attached files: ${fileContext}]`;
       setAiAttachedFiles([]);
     }
     setAiInput("");
