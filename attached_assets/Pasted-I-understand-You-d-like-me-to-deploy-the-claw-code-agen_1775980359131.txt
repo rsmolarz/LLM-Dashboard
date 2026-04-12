@@ -1,0 +1,71 @@
+I understand. You'd like me to deploy the `claw-code-agent-main` project, which is located in my local `attached_assets/claw-code-agent-main/` directory, to the VPS.
+
+I will now proceed with deploying `claw-code-agent-main`. I will follow the standard deployment procedure: create a directory on the VPS, transfer the files, install dependencies, build, and then set up a way to run it.
+
+First, I will list the contents of the local `attached_assets/claw-code-agent-main/` directory to understand its structure.
+
+Okay, I see the contents of `attached_assets/claw-code-agent-main/`. It contains a `src` directory, `package.json`, `bun.lockb`, `tsconfig.json`, `README.md`, and other files. This indicates it's another Bun/TypeScript project, similar to the previous one.
+
+I will follow the same deployment steps:
+
+1.  **Create Project Directory**: Create a dedicated directory for the project on the VPS, e.g., `/root/claw-code-agent`.
+2.  **Transfer Files**: Transfer all files from `attached_assets/claw-code-agent-main/` to `/root/claw-code-agent/`.
+3.  **Install Dependencies**: Run `bun install` in the project directory to install all dependencies.
+4.  **Build Project**: Run `bun run build` to build the project.
+5.  **Configure and Run**: Determine the entry point and set up a way to run it.
+
+Let's start by creating the project directory on the VPS.
+
+Now I will transfer the files from the local `attached_assets/claw-code-agent-main/` directory to `/root/claw-code-agent/` on the VPS.
+
+Now that the files are transferred, I will install the dependencies using `bun install` in the `/root/claw-code-agent/` directory.
+
+The dependencies have been installed. Now I will build the project using `bun run build`.
+
+The build process completed successfully. Now I need to determine how to run this application.
+
+I will examine the `package.json` file in `/root/claw-code-agent/` to understand the scripts and entry points.
+
+The `package.json` for `claw-code-agent` is similar to `claude-code`.
+
+*   **Name**: `claw-code-agent`
+*   **Version**: `0.0.1`
+*   **Dependencies**: Similar set of dependencies, including `@clerk/clerk-js`, `@growthbook/growthbook`, `@sentry/bun`, `bun-types`, `esbuild`, `next`, `react`, `typescript`, etc.
+*   **Scripts**:
+    *   `dev`: `bun run src/main.tsx`
+    *   `build`: `bun run src/build.ts`
+    *   `test`: `jest`
+    *   `lint`: `eslint .`
+    *   `format`: `prettier --write .`
+    *   `typecheck`: `tsc --noEmit`
+
+This project also appears to be a Bun/TypeScript application with a CLI component, and potentially a Next.js web component.
+
+Similar to `claude-code`, the `build` script likely bundles the CLI part into `dist/main.js`. I will verify this by checking `src/build.ts` in `/root/claw-code-agent/`.
+
+The `src/build.ts` for `claw-code-agent` is identical to `claude-code`, confirming that it bundles `src/main.tsx` into `dist/main.js` and `dist/preload.js`, and copies assets.
+
+Therefore, the entry point for the CLI part of `claw-code-agent` is `dist/main.js`.
+
+I will create a wrapper script `run-claw-code-agent.sh` in `/root/claw-code-agent/` to execute `bun dist/main.js`.
+
+Now I will make the script executable.
+
+Now, I will create a symbolic link to this script in `/usr/local/bin` so that the `claw-code-agent` command is available globally.
+
+Now, the `claw-code-agent` command should be available globally. Let's test it by running `claw-code-agent --help`.
+
+The `claw-code-agent --help` command executed successfully, displaying the help message for the CLI tool. This confirms that `claw-code-agent` is deployed and accessible globally on the VPS.
+
+**Summary of Deployment for `claw-code-agent`:**
+
+1.  Created project directory `/root/claw-code-agent`.
+2.  Transferred all project files to `/root/claw-code-agent`.
+3.  Installed dependencies using `bun install`.
+4.  Built the project using `bun run build`.
+5.  Created a wrapper script `run-claw-code-agent.sh` to execute the CLI.
+6.  Made the wrapper script executable.
+7.  Created a symbolic link in `/usr/local/bin` for easy access to the `claw-code-agent` command.
+
+Both `claude-code` and `claw-code-agent` are now deployed as global CLI tools on the VPS.
+
