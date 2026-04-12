@@ -473,15 +473,27 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
 
     while (iterationCount < maxIterations) {
       iterationCount++;
-      const response = await fetch(`${baseUrl}/v1/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 64000, system: systemPrompt, tools, messages }),
-        signal: AbortSignal.timeout(120000),
-      });
+      let response: Response | null = null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        response = await fetch(`${baseUrl}/v1/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+          body: JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 64000, system: systemPrompt, tools, messages }),
+          signal: AbortSignal.timeout(120000),
+        });
 
-      if (!response.ok) {
-        const errText = await response.text();
+        if (response.status === 429) {
+          const retryAfter = parseInt(response.headers.get("retry-after") || "0", 10);
+          const waitMs = Math.max((retryAfter || Math.pow(2, attempt + 1)) * 1000, 2000);
+          res.write(`data: ${JSON.stringify({ type: "text", content: `\n⏳ Rate limited, retrying in ${Math.ceil(waitMs / 1000)}s...\n` })}\n\n`);
+          await new Promise(r => setTimeout(r, waitMs));
+          continue;
+        }
+        break;
+      }
+
+      if (!response || !response.ok) {
+        const errText = response ? await response.text() : "No response after retries";
         res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
         res.end();
         return;
