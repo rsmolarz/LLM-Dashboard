@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
-import { FolderPlus, Upload } from "lucide-react";
+import { FolderPlus, Upload, Paperclip } from "lucide-react";
 import { usePersistedState } from "@/hooks/usePersistedState";
 
 function formatBytes(bytes: number) {
@@ -1147,11 +1147,9 @@ function CWSSHPanel() {
     }
   }, [mode, connected]);
 
-  const handleAIDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setAiDragOver(false);
-    const files = Array.from(e.dataTransfer.files);
+  const aiFileInputRef = useRef<HTMLInputElement>(null);
+
+  const uploadFilesToVPS = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     setAiUploading(true);
     const uploaded: { name: string; remotePath: string; size: number; isZip: boolean }[] = [];
@@ -1162,7 +1160,13 @@ function CWSSHPanel() {
         let body: any;
         if (isZip || file.type.startsWith("application/") || file.type === "") {
           const arrayBuf = await file.arrayBuffer();
-          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+          const bytes = new Uint8Array(arrayBuf);
+          let binary = "";
+          const chunkSize = 8192;
+          for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+          }
+          const base64 = btoa(binary);
           body = { ...sshBodyBase(), remotePath: rp, contentBase64: base64 };
         } else {
           const content = await file.text();
@@ -1195,12 +1199,27 @@ function CWSSHPanel() {
       setAiAttachedFiles(prev => [...prev, ...uploaded]);
       const fileList = uploaded.map(f => {
         const extractDir = f.name.replace(/\.(zip|tar\.gz|tgz)$/, "");
-        return f.isZip ? `${f.name} (${formatBytes(f.size)}) → extracted to /tmp/uploads/${extractDir}/` : `${f.name} (${formatBytes(f.size)})`;
+        return f.isZip ? `${f.name} (${formatBytes(f.size)}) -> extracted to /tmp/uploads/${extractDir}/` : `${f.name} (${formatBytes(f.size)})`;
       }).join(", ");
-      setAiMessages(prev => [...prev, { role: "user", content: `📎 Uploaded ${uploaded.length} file${uploaded.length > 1 ? "s" : ""} to VPS: ${fileList}\nPaths: ${uploaded.map(f => f.remotePath).join(", ")}` }]);
+      setAiMessages(prev => [...prev, { role: "user", content: `Uploaded ${uploaded.length} file${uploaded.length > 1 ? "s" : ""} to VPS: ${fileList}\nPaths: ${uploaded.map(f => f.remotePath).join(", ")}` }]);
     }
     setAiUploading(false);
   }, [sshBodyBase]);
+
+  const handleAIDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setAiDragOver(false);
+    uploadFilesToVPS(Array.from(e.dataTransfer.files));
+  }, [uploadFilesToVPS]);
+
+  const handleAIFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      uploadFilesToVPS(Array.from(files));
+    }
+    if (aiFileInputRef.current) aiFileInputRef.current.value = "";
+  }, [uploadFilesToVPS]);
 
   const handleAISubmit = useCallback(async () => {
     if (!aiInput.trim() || aiStreaming) return;
@@ -1459,14 +1478,29 @@ function CWSSHPanel() {
                   ))}
                 </div>
               )}
+              <input
+                type="file"
+                ref={aiFileInputRef}
+                onChange={handleAIFileSelect}
+                multiple
+                className="hidden"
+              />
               <div className="flex items-end gap-1.5">
+                <button
+                  onClick={() => aiFileInputRef.current?.click()}
+                  disabled={aiUploading || aiStreaming}
+                  className="p-1.5 rounded text-[#6c7086] hover:text-[#cba6f7] hover:bg-[#313244] disabled:opacity-40 transition-colors"
+                  title="Attach files to upload to VPS"
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                </button>
                 <textarea
                   ref={aiInputRef}
                   value={aiInput}
                   onChange={e => setAiInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleAISubmit(); } }}
                   className="flex-1 bg-[#1e1e2e] text-[#cdd6f4] text-xs rounded border border-[#313244] px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#cba6f7] placeholder:text-[#585b70] resize-none min-h-[28px] max-h-[80px]"
-                  placeholder={aiAttachedFiles.length > 0 ? "Ask about the uploaded files..." : "Ask AI to run commands, or drag & drop files here..."}
+                  placeholder={aiAttachedFiles.length > 0 ? "Ask about the uploaded files..." : "Ask AI to run commands, or attach files..."}
                   rows={1}
                   disabled={aiStreaming}
                 />
