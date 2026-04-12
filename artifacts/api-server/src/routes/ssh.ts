@@ -1,7 +1,22 @@
 import { Router, type IRouter } from "express";
 import { Client } from "ssh2";
+import * as fs from "fs";
+import * as path from "path";
 
 const router: IRouter = Router();
+
+const PROJECT_ROOT = process.env.NODE_ENV === "production"
+  ? process.cwd()
+  : path.resolve(process.cwd(), "../..");
+
+function safePath(requestedPath: string): string {
+  const resolved = path.resolve(PROJECT_ROOT, requestedPath);
+  const relative = path.relative(PROJECT_ROOT, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Path traversal not allowed");
+  }
+  return resolved;
+}
 
 interface SSHConfig {
   host: string;
@@ -175,11 +190,6 @@ router.post("/ssh/upload-file", async (req, res): Promise<void> => {
           });
           writeStream.end(content);
         } else if (localPath) {
-          const fs = require("fs");
-          const path = require("path");
-          const PROJECT_ROOT = process.env.NODE_ENV === "production"
-            ? process.cwd()
-            : path.resolve(process.cwd(), "../..");
           const fullLocal = path.resolve(PROJECT_ROOT, localPath);
           const relative = path.relative(PROJECT_ROOT, fullLocal);
           if (relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -286,6 +296,75 @@ router.post("/ssh/list-remote", async (req, res): Promise<void> => {
     });
 });
 
+function listLocalFiles(dirPath: string): { name: string; type: string; size: number; path: string }[] {
+  const fullPath = safePath(dirPath);
+  if (!fs.existsSync(fullPath)) return [];
+  const entries = fs.readdirSync(fullPath, { withFileTypes: true });
+  return entries
+    .filter(e => !e.name.startsWith("."))
+    .sort((a, b) => {
+      if (a.isDirectory() && !b.isDirectory()) return -1;
+      if (!a.isDirectory() && b.isDirectory()) return 1;
+      return a.name.localeCompare(b.name);
+    })
+    .map(e => {
+      const itemPath = path.join(dirPath, e.name);
+      const stats = fs.statSync(path.join(fullPath, e.name));
+      return { name: e.name, type: e.isDirectory() ? "directory" : "file", size: stats.size, path: itemPath };
+    });
+}
+
+function readLocalFile(filePath: string): string {
+  const fullPath = safePath(filePath);
+  if (!fs.existsSync(fullPath)) throw new Error(`File not found: ${filePath}`);
+  const stats = fs.statSync(fullPath);
+  if (stats.isDirectory()) throw new Error(`${filePath} is a directory, not a file`);
+  if (stats.size > 500000) throw new Error(`File too large (${stats.size} bytes). Max 500KB.`);
+  return fs.readFileSync(fullPath, "utf-8");
+}
+
+function sftpUpload(config: SSHConfig, localFilePath: string, remoteFilePath: string): Promise<{ success: boolean; size: number }> {
+  const fullLocal = safePath(localFilePath);
+  if (!fs.existsSync(fullLocal)) throw new Error(`Local file not found: ${localFilePath}`);
+  return new Promise((resolve, reject) => {
+    const conn = new Client();
+    const timeout = setTimeout(() => { conn.end(); reject(new Error("Upload timed out after 60s")); }, 60000);
+    conn
+      .on("ready", () => {
+        conn.sftp((err, sftp) => {
+          if (err) { clearTimeout(timeout); conn.end(); reject(err); return; }
+          sftp.fastPut(fullLocal, remoteFilePath, (putErr: Error | undefined) => {
+            clearTimeout(timeout);
+            conn.end();
+            if (putErr) reject(putErr);
+            else {
+              const stats = fs.statSync(fullLocal);
+              resolve({ success: true, size: stats.size });
+            }
+          });
+        });
+      })
+      .on("error", (err) => { clearTimeout(timeout); reject(err); })
+      .connect({ host: config.host, port: config.port, username: config.username, password: config.password, privateKey: config.privateKey, readyTimeout: 10000 });
+  });
+}
+
+function walkDir(dirPath: string, base: string = ""): string[] {
+  const fullPath = safePath(dirPath);
+  const results: string[] = [];
+  if (!fs.existsSync(fullPath)) return results;
+  for (const entry of fs.readdirSync(fullPath, { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) continue;
+    const rel = base ? `${base}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      results.push(...walkDir(path.join(dirPath, entry.name), rel));
+    } else {
+      results.push(rel);
+    }
+  }
+  return results;
+}
+
 function execSSH(config: SSHConfig, command: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     const conn = new Client();
@@ -333,11 +412,56 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
       description: "Execute multiple commands sequentially on the remote server. Use for multi-step operations.",
       input_schema: { type: "object" as const, properties: { commands: { type: "array" as const, items: { type: "string" as const }, description: "Array of shell commands to execute in order" } }, required: ["commands"] },
     },
+    {
+      name: "list_local_files",
+      description: "List files and directories in a local project directory. Use to discover uploaded project files. Start with 'projects' to see all uploaded projects.",
+      input_schema: { type: "object" as const, properties: { path: { type: "string" as const, description: "Directory path to list, e.g. 'projects' or 'projects/my-app/src'" } }, required: ["path"] },
+    },
+    {
+      name: "read_local_file",
+      description: "Read the contents of a local project file. Use to review code, check for errors, or understand project structure. Max 500KB per file.",
+      input_schema: { type: "object" as const, properties: { path: { type: "string" as const, description: "File path to read, e.g. 'projects/my-app/index.js'" } }, required: ["path"] },
+    },
+    {
+      name: "transfer_file_to_remote",
+      description: "Transfer a local project file to the remote server via SFTP. Use to deploy code files to the VPS.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          local_path: { type: "string" as const, description: "Local file path, e.g. 'projects/my-app/index.js'" },
+          remote_path: { type: "string" as const, description: "Remote destination path on the server, e.g. '/root/my-app/index.js'" },
+        },
+        required: ["local_path", "remote_path"],
+      },
+    },
+    {
+      name: "transfer_directory_to_remote",
+      description: "Transfer all files in a local directory to a remote directory on the server via SFTP. Recursively uploads all files preserving directory structure. Use for deploying entire projects.",
+      input_schema: {
+        type: "object" as const,
+        properties: {
+          local_dir: { type: "string" as const, description: "Local directory path, e.g. 'projects/my-app'" },
+          remote_dir: { type: "string" as const, description: "Remote destination directory, e.g. '/root/my-app'" },
+        },
+        required: ["local_dir", "remote_dir"],
+      },
+    },
   ];
 
-  const systemPrompt = `You are an expert Linux server administrator with SSH access to ${config.username}@${config.host}:${config.port}. You can execute commands on this server using the run_ssh_command and run_ssh_commands tools. When the user asks you to do something on the server, use these tools to actually execute the commands. Always show the user what you're running and the results. Be proactive — run commands first, then explain the results.
+  const systemPrompt = `You are an expert Linux server administrator and developer with SSH access to ${config.username}@${config.host}:${config.port}. You have powerful capabilities:
 
-IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing command output, include all relevant details. When explaining system configurations, cover all important aspects. If your response is long, that is expected and preferred.`;
+1. **SSH Commands**: Execute commands on the remote server using run_ssh_command and run_ssh_commands tools.
+2. **Local File Access**: Browse and read uploaded project files using list_local_files and read_local_file tools. Files are uploaded by the user and stored in the 'projects/' directory.
+3. **File Transfer**: Deploy files to the VPS using transfer_file_to_remote (single file) or transfer_directory_to_remote (entire directory) tools.
+
+When the user asks you to review, fix, or deploy code:
+- First use list_local_files to see what's in 'projects/'
+- Use read_local_file to review the code and check for errors
+- Fix any issues by reading and understanding the code
+- Use transfer_file_to_remote or transfer_directory_to_remote to deploy files to the server
+- Run SSH commands to set up the environment, install dependencies, and start services
+
+IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing command output, include all relevant details. Be proactive — take action first, then explain the results. When deploying, make sure to create remote directories first using mkdir -p.`;
 
   const conversationMessages = (history || []).map((m: any) => ({ role: m.role, content: m.content }));
   conversationMessages.push({ role: "user", content: prompt });
@@ -409,6 +533,57 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
               results.push({ command: cmd, ...cmdResult });
             }
             toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: JSON.stringify(results) });
+          } else if (tool.name === "list_local_files") {
+            const dirPath = tool.input.path;
+            res.write(`data: ${JSON.stringify({ type: "command", command: `[local] ls ${dirPath}` })}\n\n`);
+            const files = listLocalFiles(dirPath);
+            const summary = files.map(f => `${f.type === "directory" ? "📁" : "📄"} ${f.name}${f.type === "file" ? ` (${f.size} bytes)` : ""}`).join("\n");
+            res.write(`data: ${JSON.stringify({ type: "command_result", command: `[local] ls ${dirPath}`, stdout: summary || "(empty directory)", stderr: "", exitCode: 0 })}\n\n`);
+            toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: JSON.stringify(files) });
+          } else if (tool.name === "read_local_file") {
+            const filePath = tool.input.path;
+            res.write(`data: ${JSON.stringify({ type: "command", command: `[local] cat ${filePath}` })}\n\n`);
+            const content = readLocalFile(filePath);
+            const preview = content.length > 2000 ? content.slice(0, 2000) + `\n... (${content.length} chars total)` : content;
+            res.write(`data: ${JSON.stringify({ type: "command_result", command: `[local] cat ${filePath}`, stdout: preview, stderr: "", exitCode: 0 })}\n\n`);
+            toolResults.push({ type: "tool_result", tool_use_id: tool.id, content });
+          } else if (tool.name === "transfer_file_to_remote") {
+            const { local_path, remote_path } = tool.input;
+            res.write(`data: ${JSON.stringify({ type: "command", command: `[sftp] ${local_path} → ${remote_path}` })}\n\n`);
+            const result = await sftpUpload(config, local_path, remote_path);
+            res.write(`data: ${JSON.stringify({ type: "command_result", command: `[sftp] ${local_path} → ${remote_path}`, stdout: `Transferred ${result.size} bytes`, stderr: "", exitCode: 0 })}\n\n`);
+            toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: JSON.stringify(result) });
+          } else if (tool.name === "transfer_directory_to_remote") {
+            const { local_dir, remote_dir } = tool.input;
+            res.write(`data: ${JSON.stringify({ type: "command", command: `[sftp] ${local_dir}/ → ${remote_dir}/` })}\n\n`);
+            const files = walkDir(local_dir);
+            const results: any[] = [];
+            let successCount = 0;
+            let failCount = 0;
+            await execSSH(config, `mkdir -p ${remote_dir}`);
+            const dirs = new Set<string>();
+            for (const f of files) {
+              const dir = path.dirname(f);
+              if (dir !== "." && !dirs.has(dir)) {
+                dirs.add(dir);
+                await execSSH(config, `mkdir -p ${remote_dir}/${dir}`);
+              }
+            }
+            for (const f of files) {
+              const localFilePath = `${local_dir}/${f}`;
+              const remoteFilePath = `${remote_dir}/${f}`;
+              try {
+                const r = await sftpUpload(config, localFilePath, remoteFilePath);
+                results.push({ file: f, success: true, size: r.size });
+                successCount++;
+              } catch (err: any) {
+                results.push({ file: f, success: false, error: err.message });
+                failCount++;
+              }
+            }
+            const summary = `Transferred ${successCount}/${files.length} files${failCount > 0 ? ` (${failCount} failed)` : ""}`;
+            res.write(`data: ${JSON.stringify({ type: "command_result", command: `[sftp] ${local_dir}/ → ${remote_dir}/`, stdout: summary, stderr: "", exitCode: failCount > 0 ? 1 : 0 })}\n\n`);
+            toolResults.push({ type: "tool_result", tool_use_id: tool.id, content: JSON.stringify({ summary, files: results }) });
           }
         } catch (err: any) {
           const errMsg = `Error: ${err.message}`;
