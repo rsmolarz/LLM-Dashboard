@@ -931,6 +931,9 @@ function SSHPanel() {
   const [aiAbort, setAiAbort] = useState<AbortController | null>(null);
   const [aiModel, setAiModel] = usePersistedState<string>("wb-ssh-ai-model", "auto");
   const [aiAvailableModels, setAiAvailableModels] = useState<{ id: string; label: string; provider: string }[]>([]);
+  const [aiDragOver, setAiDragOver] = useState(false);
+  const [aiUploading, setAiUploading] = useState(false);
+  const [aiAttachedFiles, setAiAttachedFiles] = useState<{ name: string; remotePath: string; size: number }[]>([]);
   const [remotePath, setRemotePath] = usePersistedState("wb-ssh-remote-path", "/");
   const [remoteFiles, setRemoteFiles] = useState<{ name: string; type: string; size: number; modified: number }[]>([]);
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -1136,9 +1139,45 @@ function SSHPanel() {
     }
   }, [mode, connected]);
 
+  const handleAIDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setAiDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+    setAiUploading(true);
+    const uploaded: { name: string; remotePath: string; size: number }[] = [];
+    for (const file of files) {
+      try {
+        const content = await file.text();
+        const rp = `/tmp/uploads/${file.name}`;
+        const res = await fetch(`${API_BASE}/api/workbench/ssh/upload-file`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ ...sshBodyBase(), remotePath: rp, content }),
+        });
+        if (res.ok) {
+          uploaded.push({ name: file.name, remotePath: rp, size: file.size });
+        }
+      } catch {}
+    }
+    if (uploaded.length > 0) {
+      setAiAttachedFiles(prev => [...prev, ...uploaded]);
+      const fileList = uploaded.map(f => `${f.name} (${formatBytes(f.size)})`).join(", ");
+      setAiMessages(prev => [...prev, { role: "user", content: `📎 Uploaded ${uploaded.length} file${uploaded.length > 1 ? "s" : ""} to VPS: ${fileList}\nPaths: ${uploaded.map(f => f.remotePath).join(", ")}` }]);
+    }
+    setAiUploading(false);
+  }, [sshBodyBase]);
+
   const handleAISubmit = useCallback(async () => {
     if (!aiInput.trim() || aiStreaming) return;
-    const prompt = aiInput.trim();
+    let prompt = aiInput.trim();
+    if (aiAttachedFiles.length > 0) {
+      const fileContext = aiAttachedFiles.map(f => `${f.name} at ${f.remotePath}`).join(", ");
+      prompt += `\n\n[Attached files on VPS: ${fileContext}]`;
+      setAiAttachedFiles([]);
+    }
     setAiInput("");
 
     const userMsg: SSHAIMessage = { role: "user", content: prompt };
@@ -1417,7 +1456,23 @@ function SSHPanel() {
 
       {mode === "ai" && (
         <>
-          <div className="flex-1 overflow-y-auto p-3 space-y-3" ref={aiScrollRef}>
+          <div
+            className={cn("flex-1 overflow-y-auto p-3 space-y-3 relative transition-colors", aiDragOver && "bg-[#cba6f7]/10 ring-2 ring-[#cba6f7]/40 ring-inset rounded")}
+            ref={aiScrollRef}
+            onDragOver={e => { e.preventDefault(); e.stopPropagation(); setAiDragOver(true); }}
+            onDragEnter={e => { e.preventDefault(); e.stopPropagation(); setAiDragOver(true); }}
+            onDragLeave={e => { e.preventDefault(); e.stopPropagation(); if (!e.currentTarget.contains(e.relatedTarget as Node)) setAiDragOver(false); }}
+            onDrop={connected ? handleAIDrop : e => { e.preventDefault(); setAiDragOver(false); }}
+          >
+            {aiDragOver && (
+              <div className="absolute inset-0 flex items-center justify-center bg-[#1e1e2e]/80 z-10 rounded pointer-events-none">
+                <div className="text-center">
+                  <Upload className="h-8 w-8 mx-auto mb-2 text-[#cba6f7]" />
+                  <div className="text-xs text-[#cba6f7] font-medium">Drop files to upload to VPS</div>
+                  <div className="text-[10px] text-[#6c7086]">Files will be uploaded to /tmp/uploads/</div>
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center gap-2 mb-2">
               <select
@@ -1491,6 +1546,25 @@ function SSHPanel() {
           </div>
           {connected && (
             <div className="border-t border-[#313244] bg-[#181825] p-2">
+              {aiUploading && (
+                <div className="flex items-center gap-1.5 text-[#89b4fa] text-[10px] mb-1.5 px-1">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <span>Uploading files to VPS...</span>
+                </div>
+              )}
+              {aiAttachedFiles.length > 0 && (
+                <div className="flex flex-wrap gap-1 mb-1.5 px-1">
+                  {aiAttachedFiles.map((f, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 text-[10px] bg-[#313244] text-[#cba6f7] px-1.5 py-0.5 rounded">
+                      <File className="h-2.5 w-2.5" />
+                      {f.name}
+                      <button onClick={() => setAiAttachedFiles(prev => prev.filter((_, j) => j !== i))} className="hover:text-[#f38ba8]">
+                        <XCircle className="h-2.5 w-2.5" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <div className="flex items-end gap-1.5">
                 <textarea
                   ref={aiInputRef}
@@ -1498,7 +1572,7 @@ function SSHPanel() {
                   onChange={e => setAiInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleAISubmit(); } }}
                   className="flex-1 bg-[#1e1e2e] text-[#cdd6f4] text-xs rounded border border-[#313244] px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#cba6f7] placeholder:text-[#585b70] resize-none min-h-[28px] max-h-[80px]"
-                  placeholder="Ask AI to run commands on your server..."
+                  placeholder={aiAttachedFiles.length > 0 ? "Ask about the uploaded files..." : "Ask AI to run commands, or drag & drop files here..."}
                   rows={1}
                   disabled={aiStreaming}
                 />

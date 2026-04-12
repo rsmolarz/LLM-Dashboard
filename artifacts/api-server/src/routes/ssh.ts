@@ -188,18 +188,21 @@ router.post("/ssh/upload-file", async (req, res): Promise<void> => {
         }
 
         if (content !== undefined) {
-          const writeStream = sftp.createWriteStream(remotePath);
-          writeStream.on("close", () => {
-            clearTimeout(timeout);
-            conn.end();
-            res.json({ success: true, remotePath, size: Buffer.byteLength(content) });
+          const parentDir = path.posix.dirname(remotePath);
+          sftp.mkdir(parentDir, (mkdirErr) => {
+            const writeStream = sftp.createWriteStream(remotePath);
+            writeStream.on("close", () => {
+              clearTimeout(timeout);
+              conn.end();
+              res.json({ success: true, remotePath, size: Buffer.byteLength(content) });
+            });
+            writeStream.on("error", (e: Error) => {
+              clearTimeout(timeout);
+              conn.end();
+              res.status(500).json({ error: `Write failed: ${e.message}` });
+            });
+            writeStream.end(content);
           });
-          writeStream.on("error", (e: Error) => {
-            clearTimeout(timeout);
-            conn.end();
-            res.status(500).json({ error: `Write failed: ${e.message}` });
-          });
-          writeStream.end(content);
         } else if (localPath) {
           const fullLocal = path.resolve(PROJECT_ROOT, localPath);
           const relative = path.relative(PROJECT_ROOT, fullLocal);
