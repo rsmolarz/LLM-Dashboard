@@ -469,16 +469,16 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
       type: "function",
       function: {
         name: "list_local_files",
-        description: "List files and directories in a local project directory. Use to discover uploaded project files. Start with 'projects' to see all uploaded projects.",
-        parameters: { type: "object", properties: { path: { type: "string", description: "Directory path to list, e.g. 'projects' or 'projects/my-app/src'" } }, required: ["path"] },
+        description: "List files and directories in the local workspace. Use to discover project files. Start with '.' to see all top-level directories and files.",
+        parameters: { type: "object", properties: { path: { type: "string", description: "Directory path to list, e.g. '.' or 'claw-code-agent/src' or 'projects/my-app'" } }, required: ["path"] },
       },
     },
     {
       type: "function",
       function: {
         name: "read_local_file",
-        description: "Read the contents of a local project file. Use to review code, check for errors, or understand project structure. Max 500KB per file.",
-        parameters: { type: "object", properties: { path: { type: "string", description: "File path to read, e.g. 'projects/my-app/index.js'" } }, required: ["path"] },
+        description: "Read the contents of a local file. Use to review code, check for errors, or understand project structure. Max 500KB per file.",
+        parameters: { type: "object", properties: { path: { type: "string", description: "File path to read, e.g. 'claw-code-agent/src/main.py' or 'projects/my-app/index.js'" } }, required: ["path"] },
       },
     },
     {
@@ -516,11 +516,12 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
   const systemPrompt = `You are an expert Linux server administrator and developer with SSH access to ${config.username}@${config.host}:${config.port}. You have powerful capabilities:
 
 1. **SSH Commands**: Execute commands on the remote server using run_ssh_command and run_ssh_commands tools.
-2. **Local File Access**: Browse and read uploaded project files using list_local_files and read_local_file tools. Files are uploaded by the user and stored in the 'projects/' directory.
+2. **Local File Access**: Browse and read local project files using list_local_files and read_local_file tools. Projects may be at the workspace root (e.g. 'claw-code-agent/') or in a 'projects/' subdirectory if uploaded via ZIP.
 3. **File Transfer**: Deploy files to the VPS using transfer_file_to_remote (single file) or transfer_directory_to_remote (entire directory) tools.
 
 When the user asks you to review, fix, or deploy code:
-- First use list_local_files to see what's in 'projects/'
+- First use list_local_files with path '.' to see all available directories and files at the workspace root
+- Look for project directories (like 'claw-code-agent', 'projects', etc.)
 - Use read_local_file to review the code and check for errors
 - Fix any issues by reading and understanding the code
 - Use transfer_file_to_remote or transfer_directory_to_remote to deploy files to the server
