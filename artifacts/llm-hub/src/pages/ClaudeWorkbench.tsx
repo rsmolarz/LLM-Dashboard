@@ -1154,25 +1154,49 @@ function CWSSHPanel() {
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
     setAiUploading(true);
-    const uploaded: { name: string; remotePath: string; size: number }[] = [];
+    const uploaded: { name: string; remotePath: string; size: number; isZip: boolean }[] = [];
     for (const file of files) {
       try {
-        const content = await file.text();
+        const isZip = file.name.endsWith(".zip") || file.name.endsWith(".tar.gz") || file.name.endsWith(".tgz");
         const rp = `/tmp/uploads/${file.name}`;
+        let body: any;
+        if (isZip || file.type.startsWith("application/") || file.type === "") {
+          const arrayBuf = await file.arrayBuffer();
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuf)));
+          body = { ...sshBodyBase(), remotePath: rp, contentBase64: base64 };
+        } else {
+          const content = await file.text();
+          body = { ...sshBodyBase(), remotePath: rp, content };
+        }
         const res = await fetch(`/api/workbench/ssh/upload-file`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
-          body: JSON.stringify({ ...sshBodyBase(), remotePath: rp, content }),
+          body: JSON.stringify(body),
         });
         if (res.ok) {
-          uploaded.push({ name: file.name, remotePath: rp, size: file.size });
+          uploaded.push({ name: file.name, remotePath: rp, size: file.size, isZip });
+          if (isZip) {
+            const extractDir = `/tmp/uploads/${file.name.replace(/\.(zip|tar\.gz|tgz)$/, "")}`;
+            const unzipCmd = file.name.endsWith(".zip")
+              ? `mkdir -p ${extractDir} && cd ${extractDir} && unzip -o ${rp}`
+              : `mkdir -p ${extractDir} && tar -xzf ${rp} -C ${extractDir}`;
+            await fetch(`/api/workbench/ssh/exec`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({ ...sshBodyBase(), command: unzipCmd }),
+            });
+          }
         }
       } catch {}
     }
     if (uploaded.length > 0) {
       setAiAttachedFiles(prev => [...prev, ...uploaded]);
-      const fileList = uploaded.map(f => `${f.name} (${formatBytes(f.size)})`).join(", ");
+      const fileList = uploaded.map(f => {
+        const extractDir = f.name.replace(/\.(zip|tar\.gz|tgz)$/, "");
+        return f.isZip ? `${f.name} (${formatBytes(f.size)}) → extracted to /tmp/uploads/${extractDir}/` : `${f.name} (${formatBytes(f.size)})`;
+      }).join(", ");
       setAiMessages(prev => [...prev, { role: "user", content: `📎 Uploaded ${uploaded.length} file${uploaded.length > 1 ? "s" : ""} to VPS: ${fileList}\nPaths: ${uploaded.map(f => f.remotePath).join(", ")}` }]);
     }
     setAiUploading(false);

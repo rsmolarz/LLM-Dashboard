@@ -154,7 +154,7 @@ router.post("/ssh/exec", async (req, res): Promise<void> => {
 
 router.post("/ssh/upload-file", async (req, res): Promise<void> => {
   const config = getSSHConfig(req.body);
-  const { localPath, remotePath, content } = req.body;
+  const { localPath, remotePath, content, contentBase64 } = req.body;
 
   if (!remotePath) {
     res.status(400).json({ error: "remotePath is required" });
@@ -187,21 +187,22 @@ router.post("/ssh/upload-file", async (req, res): Promise<void> => {
           return;
         }
 
-        if (content !== undefined) {
+        if (content !== undefined || contentBase64 !== undefined) {
+          const buf = contentBase64 ? Buffer.from(contentBase64, "base64") : Buffer.from(content, "utf-8");
           const parentDir = path.posix.dirname(remotePath);
           sftp.mkdir(parentDir, (mkdirErr) => {
             const writeStream = sftp.createWriteStream(remotePath);
             writeStream.on("close", () => {
               clearTimeout(timeout);
               conn.end();
-              res.json({ success: true, remotePath, size: Buffer.byteLength(content) });
+              res.json({ success: true, remotePath, size: buf.length });
             });
             writeStream.on("error", (e: Error) => {
               clearTimeout(timeout);
               conn.end();
               res.status(500).json({ error: `Write failed: ${e.message}` });
             });
-            writeStream.end(content);
+            writeStream.end(buf);
           });
         } else if (localPath) {
           const fullLocal = path.resolve(PROJECT_ROOT, localPath);
@@ -505,6 +506,22 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
     {
       type: "function",
       function: {
+        name: "read_remote_file",
+        description: "Read the contents of a file on the remote VPS server via SSH. Use to review code that was uploaded to the server, check config files, or inspect deployed files. Max 500KB.",
+        parameters: { type: "object", properties: { path: { type: "string", description: "Absolute path on the remote server, e.g. '/tmp/uploads/main.py' or '/root/my-app/index.js'" } }, required: ["path"] },
+      },
+    },
+    {
+      type: "function",
+      function: {
+        name: "list_remote_files",
+        description: "List files and directories on the remote VPS server. Use to explore uploaded files or deployed projects on the server.",
+        parameters: { type: "object", properties: { path: { type: "string", description: "Absolute directory path on the remote server, e.g. '/tmp/uploads' or '/root/my-app'" } }, required: ["path"] },
+      },
+    },
+    {
+      type: "function",
+      function: {
         name: "transfer_file_to_remote",
         description: "Transfer a local project file to the remote server via SFTP. Use to deploy code files to the VPS.",
         parameters: {
@@ -537,18 +554,33 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
   const systemPrompt = `You are an expert Linux server administrator and developer with SSH access to ${config.username}@${config.host}:${config.port}. You have powerful capabilities:
 
 1. **SSH Commands**: Execute commands on the remote server using run_ssh_command and run_ssh_commands tools.
-2. **Local File Access**: Browse and read local project files using list_local_files and read_local_file tools. Projects may be at the workspace root (e.g. 'claw-code-agent/') or in a 'projects/' subdirectory if uploaded via ZIP.
-3. **File Transfer**: Deploy files to the VPS using transfer_file_to_remote (single file) or transfer_directory_to_remote (entire directory) tools.
+2. **Local File Access**: Browse and read local workspace files using list_local_files and read_local_file tools.
+3. **Remote File Access**: Browse and read files on the VPS using list_remote_files and read_remote_file tools. Uploaded files (drag-and-drop) go to /tmp/uploads/ on the VPS.
+4. **File Transfer**: Deploy files from local workspace to VPS using transfer_file_to_remote (single file) or transfer_directory_to_remote (entire directory).
 
-When the user asks you to review, fix, or deploy code:
-- First use list_local_files with path '.' to see all available directories and files at the workspace root
-- Look for project directories (like 'claw-code-agent', 'projects', etc.)
-- Use read_local_file to review the code and check for errors
-- Fix any issues by reading and understanding the code
-- Use transfer_file_to_remote or transfer_directory_to_remote to deploy files to the server
-- Run SSH commands to set up the environment, install dependencies, and start services
+## File Upload Workflow
+Users can drag and drop files (including .zip files) into this chat. When they do:
+- Files are uploaded directly to /tmp/uploads/ on the VPS
+- ZIP files are automatically extracted to /tmp/uploads/<zipname>/ on the VPS
+- You will see a message like "📎 Uploaded file.zip to VPS" in the conversation
+- Use list_remote_files with path '/tmp/uploads' to see uploaded files
+- Use read_remote_file to review the code
 
-IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing command output, include all relevant details. Be proactive — take action first, then explain the results. When deploying, make sure to create remote directories first using mkdir -p. Always use tools when asked to do something — do not just describe what to do.`;
+## When asked to "review code" or "review my code":
+1. Use list_remote_files on /tmp/uploads/ to see what was uploaded
+2. Use read_remote_file to read and review each relevant source file
+3. Provide code review feedback: bugs, improvements, security issues, best practices
+
+## When asked to "deploy" or "deploy the code":
+1. Find the project files (in /tmp/uploads/ or local workspace)
+2. Review the code structure and understand what it needs
+3. Create the deployment directory on VPS: run_ssh_command("mkdir -p /root/<project-name>")
+4. If files are already on VPS in /tmp/uploads/, use run_ssh_command("cp -r /tmp/uploads/<project>/* /root/<project>/") to move them
+5. If files are in local workspace, use transfer_directory_to_remote to upload them
+6. Install dependencies (pip install, npm install, etc.)
+7. Set up and start the service (systemd, pm2, screen, etc.)
+
+IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — take action first, then explain results. When deploying, create remote directories with mkdir -p first. Always use tools — do not just describe what to do. When the user says "review your code" or "review the code", they mean the project code, NOT your own AI architecture.`;
 
   let availableDirs = "";
   try {
@@ -742,6 +774,24 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
             const preview = content.length > 2000 ? content.slice(0, 2000) + `\n... (${content.length} chars total)` : content;
             res.write(`data: ${JSON.stringify({ type: "command_result", command: `[local] cat ${filePath}`, stdout: preview, stderr: "", exitCode: 0 })}\n\n`);
             toolResult = content;
+          } else if (toolName === "read_remote_file") {
+            const remotePath = toolArgs.path;
+            res.write(`data: ${JSON.stringify({ type: "command", command: `[vps] cat ${remotePath}` })}\n\n`);
+            const result = await execSSH(config, `head -c 512000 ${JSON.stringify(remotePath)}`);
+            if (result.exitCode !== 0) {
+              res.write(`data: ${JSON.stringify({ type: "command_result", command: `[vps] cat ${remotePath}`, stdout: "", stderr: result.stderr || "File not found", exitCode: result.exitCode })}\n\n`);
+              toolResult = `Error reading file: ${result.stderr}`;
+            } else {
+              const preview = result.stdout.length > 2000 ? result.stdout.slice(0, 2000) + `\n... (${result.stdout.length} chars total)` : result.stdout;
+              res.write(`data: ${JSON.stringify({ type: "command_result", command: `[vps] cat ${remotePath}`, stdout: preview, stderr: "", exitCode: 0 })}\n\n`);
+              toolResult = result.stdout;
+            }
+          } else if (toolName === "list_remote_files") {
+            const remotePath = toolArgs.path;
+            res.write(`data: ${JSON.stringify({ type: "command", command: `[vps] ls -la ${remotePath}` })}\n\n`);
+            const result = await execSSH(config, `ls -la ${JSON.stringify(remotePath)} 2>&1`);
+            res.write(`data: ${JSON.stringify({ type: "command_result", command: `[vps] ls -la ${remotePath}`, stdout: result.stdout || "(empty)", stderr: result.stderr, exitCode: result.exitCode })}\n\n`);
+            toolResult = result.stdout || result.stderr;
           } else if (toolName === "transfer_file_to_remote") {
             const { local_path, remote_path } = toolArgs;
             res.write(`data: ${JSON.stringify({ type: "command", command: `[sftp] ${local_path} -> ${remote_path}` })}\n\n`);
