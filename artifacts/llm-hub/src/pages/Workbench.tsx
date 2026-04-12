@@ -1387,6 +1387,16 @@ function SSHPanel() {
                 <br /><span className="text-[10px]">Ask me to check services, debug issues, deploy code, manage files — I'll run the commands for you.</span>
               </div>
             )}
+            {aiMessages.length > 0 && (
+              <div className="flex justify-center">
+                <button
+                  className="text-[10px] px-3 py-1 rounded-full bg-[#313244] text-[#cba6f7] hover:bg-[#45475a] transition-colors"
+                  onClick={() => { setAiMessages([]); }}
+                >
+                  ✕ Clear &amp; start new chat
+                </button>
+              </div>
+            )}
             {aiMessages.map((msg, i) => (
               <div key={i} className={cn("text-xs", msg.role === "user" ? "flex justify-end" : "")}>
                 {msg.role === "user" ? (

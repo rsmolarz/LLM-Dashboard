@@ -529,7 +529,16 @@ When the user asks you to review, fix, or deploy code:
 
 IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing command output, include all relevant details. Be proactive — take action first, then explain the results. When deploying, make sure to create remote directories first using mkdir -p. Always use tools when asked to do something — do not just describe what to do.`;
 
-  const conversationMessages: any[] = [{ role: "system", content: systemPrompt }];
+  let availableDirs = "";
+  try {
+    const entries = fs.readdirSync(PROJECT_ROOT, { withFileTypes: true });
+    const dirs = entries
+      .filter(e => e.isDirectory() && !e.name.startsWith(".") && !["node_modules", "dist"].includes(e.name))
+      .map(e => e.name);
+    availableDirs = `\n\nAVAILABLE LOCAL DIRECTORIES (use these paths with list_local_files and read_local_file):\n${dirs.map(d => `- ${d}/`).join("\n")}`;
+  } catch {}
+
+  const conversationMessages: any[] = [{ role: "system", content: systemPrompt + availableDirs }];
   if (history && Array.isArray(history)) {
     for (const m of history) {
       conversationMessages.push({ role: m.role, content: m.content });
