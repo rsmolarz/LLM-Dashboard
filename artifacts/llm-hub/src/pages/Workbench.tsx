@@ -929,6 +929,8 @@ function SSHPanel() {
   const [aiInput, setAiInput] = useState("");
   const [aiStreaming, setAiStreaming] = useState(false);
   const [aiAbort, setAiAbort] = useState<AbortController | null>(null);
+  const [aiModel, setAiModel] = usePersistedState<string>("wb-ssh-ai-model", "auto");
+  const [aiAvailableModels, setAiAvailableModels] = useState<{ id: string; label: string; provider: string }[]>([]);
   const [remotePath, setRemotePath] = usePersistedState("wb-ssh-remote-path", "/");
   const [remoteFiles, setRemoteFiles] = useState<{ name: string; type: string; size: number; modified: number }[]>([]);
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -950,6 +952,42 @@ function SSHPanel() {
     localStorage.setItem("ssh-auth-type", authType);
     if (privateKey) localStorage.setItem("ssh-private-key", privateKey);
   }, [host, port, username, authType, privateKey]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [statusRes, configRes] = await Promise.all([
+          fetch("/api/llm/status", { credentials: "include" }),
+          fetch("/api/llm/config", { credentials: "include" }),
+        ]);
+        const status = await statusRes.json();
+        const config = await configRes.json();
+        const models: { id: string; label: string; provider: string }[] = [
+          { id: "auto", label: "Auto (best available)", provider: "auto" },
+        ];
+        if (status.openrouterAvailable) {
+          models.push({ id: "openrouter/google/gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: "cloud" });
+          models.push({ id: "openrouter/deepseek/deepseek-chat-v3-0324", label: "DeepSeek V3", provider: "cloud" });
+          models.push({ id: "openrouter/meta-llama/llama-4-maverick", label: "Llama 4 Maverick", provider: "cloud" });
+        }
+        if (status.anthropicAvailable) {
+          models.push({ id: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5", provider: "cloud" });
+        }
+        if (status.online && config.serverUrl) {
+          try {
+            const tagsRes = await fetch("/api/llm/models", { credentials: "include" });
+            const tagsData = await tagsRes.json();
+            const ollamaModels = tagsData.models || tagsData || [];
+            for (const m of ollamaModels) {
+              const name = m.name || m.model;
+              if (name) models.push({ id: `ollama/${name}`, label: `${name} (local)`, provider: "ollama" });
+            }
+          } catch {}
+        }
+        setAiAvailableModels(models);
+      } catch {}
+    })();
+  }, []);
 
   const sshCredentials = () => ({
     host, port: parseInt(port), username,
@@ -1116,7 +1154,7 @@ function SSHPanel() {
       const res = await fetch(`/api/workbench/ssh/ai-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...sshBodyBase(), prompt, messages: convHistory }),
+        body: JSON.stringify({ ...sshBodyBase(), prompt, messages: convHistory, modelOverride: aiModel !== "auto" ? aiModel : undefined }),
         signal: controller.signal,
         credentials: "include",
       });
@@ -1380,21 +1418,35 @@ function SSHPanel() {
       {mode === "ai" && (
         <>
           <div className="flex-1 overflow-y-auto p-3 space-y-3" ref={aiScrollRef}>
+
+            <div className="flex items-center gap-2 mb-2">
+              <select
+                value={aiModel}
+                onChange={e => setAiModel(e.target.value)}
+                className="flex-1 bg-[#181825] text-[#cdd6f4] text-[10px] rounded border border-[#313244] px-2 py-1 outline-none focus:ring-1 focus:ring-[#cba6f7]"
+                disabled={aiStreaming}
+              >
+                {aiAvailableModels.length === 0 && <option value="auto">Loading models...</option>}
+                {aiAvailableModels.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.provider === "cloud" ? "☁️ " : m.provider === "ollama" ? "🖥️ " : "⚡ "}{m.label}
+                  </option>
+                ))}
+              </select>
+              {aiMessages.length > 0 && (
+                <button
+                  className="text-[10px] px-2 py-1 rounded bg-[#313244] text-[#f38ba8] hover:bg-[#45475a] transition-colors whitespace-nowrap"
+                  onClick={() => { setAiMessages([]); }}
+                >
+                  Clear
+                </button>
+              )}
+            </div>
             {aiMessages.length === 0 && (
               <div className="text-[#585b70] py-4 text-center">
                 <Sparkles className="h-6 w-6 mx-auto mb-2 opacity-40" />
                 <span className="text-xs">AI Server Assistant</span>
                 <br /><span className="text-[10px]">Ask me to check services, debug issues, deploy code, manage files — I'll run the commands for you.</span>
-              </div>
-            )}
-            {aiMessages.length > 0 && (
-              <div className="flex justify-center">
-                <button
-                  className="text-[10px] px-3 py-1 rounded-full bg-[#313244] text-[#cba6f7] hover:bg-[#45475a] transition-colors"
-                  onClick={() => { setAiMessages([]); }}
-                >
-                  ✕ Clear &amp; start new chat
-                </button>
               </div>
             )}
             {aiMessages.map((msg, i) => (

@@ -399,49 +399,68 @@ function execSSH(config: SSHConfig, command: string): Promise<{ stdout: string; 
 
 router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
   const config = getSSHConfig(req.body);
-  const { prompt, messages: history } = req.body;
+  const { prompt, messages: history, modelOverride } = req.body;
 
   if (!prompt) { res.status(400).json({ error: "prompt is required" }); return; }
   if (!config.host || !config.username) { res.status(400).json({ error: "SSH not configured" }); return; }
 
   const [llmConfig] = await db.select().from(llmConfigTable).limit(1);
   const serverUrl = llmConfig?.serverUrl;
-  const configModel = (llmConfig as any)?.defaultModel || "llama3.2:latest";
+
+  const openrouterKey = process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY;
+  const openrouterBaseUrl = process.env.AI_INTEGRATIONS_OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+  const anthropicKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const anthropicBaseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || "https://api.anthropic.com";
 
   let ollamaOnline = false;
-  let toolCapableModel = configModel;
-  const toolCapableModels = ["llama3.2", "llama3.1", "qwen2.5", "mistral"];
   if (serverUrl) {
     try {
       const check = await fetch(`${serverUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
       ollamaOnline = check.ok;
-      if (ollamaOnline) {
-        const isToolCapable = toolCapableModels.some(m => configModel.startsWith(m));
-        if (!isToolCapable) {
-          const tagsData = await check.json() as any;
-          const available = (tagsData.models || []).map((m: any) => m.name);
-          const fallback = available.find((n: string) => toolCapableModels.some(m => n.startsWith(m)));
-          if (fallback) {
-            toolCapableModel = fallback;
-          }
-        }
-      }
     } catch {}
   }
-  const defaultModel = toolCapableModel;
 
-  const openrouterKey = process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY;
-  const openrouterBaseUrl = process.env.AI_INTEGRATIONS_OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
-  const canFallbackToCloud = !!openrouterKey;
+  let useOllama = false;
+  let useAnthropic = false;
+  let activeModel = "google/gemini-2.5-flash";
+  let provider = "openrouter";
 
-  if (!ollamaOnline && !canFallbackToCloud) {
-    res.status(503).json({ error: `Ollama server${serverUrl ? ` at ${serverUrl}` : ""} is offline and no cloud fallback is configured. Start Ollama on your VPS or configure the OpenRouter integration.` });
-    return;
+  if (modelOverride) {
+    if (modelOverride.startsWith("ollama/")) {
+      useOllama = true;
+      activeModel = modelOverride.replace("ollama/", "");
+      provider = "ollama";
+    } else if (modelOverride.startsWith("anthropic/")) {
+      useAnthropic = true;
+      activeModel = modelOverride.replace("anthropic/", "");
+      provider = "anthropic";
+    } else if (modelOverride.startsWith("openrouter/")) {
+      activeModel = modelOverride.replace("openrouter/", "");
+      provider = "openrouter";
+    }
+  } else {
+    if (openrouterKey) {
+      provider = "openrouter";
+      activeModel = "google/gemini-2.5-flash";
+    } else if (ollamaOnline) {
+      useOllama = true;
+      provider = "ollama";
+      activeModel = (llmConfig as any)?.defaultModel || "llama3.2:latest";
+    }
   }
 
-  const useOllama = false;
-  const provider = useOllama ? "ollama" : "openrouter";
-  const activeModel = useOllama ? defaultModel : "google/gemini-2.5-flash";
+  if (!useOllama && !useAnthropic && !openrouterKey) {
+    res.status(503).json({ error: "No AI provider available. Configure OpenRouter integration or connect Ollama." });
+    return;
+  }
+  if (useOllama && !ollamaOnline) {
+    res.status(503).json({ error: `Ollama at ${serverUrl} is offline. Choose a cloud model or start Ollama on your VPS.` });
+    return;
+  }
+  if (useAnthropic && !anthropicKey) {
+    res.status(503).json({ error: "Anthropic integration not configured." });
+    return;
+  }
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -553,10 +572,8 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
   }
   conversationMessages.push({ role: "user", content: prompt });
 
-  if (!useOllama && !ollamaOnline) {
+  if (!modelOverride && !useOllama && !ollamaOnline) {
     res.write(`data: ${JSON.stringify({ type: "text", content: "⚠️ Ollama is offline — using cloud model.\n\n" })}\n\n`);
-  } else if (useOllama && activeModel !== configModel) {
-    res.write(`data: ${JSON.stringify({ type: "text", content: `ℹ️ ${configModel} doesn't support tool calling — using ${activeModel} instead.\n\n` })}\n\n`);
   }
   res.write(`data: ${JSON.stringify({ type: "routing", provider, model: activeModel })}\n\n`);
 
@@ -586,6 +603,31 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
             options: { temperature: 0.3, num_predict: 4096 },
           }),
           signal: AbortSignal.timeout(600000),
+        });
+      } else if (useAnthropic) {
+        const anthropicMessages = messages.filter((m: any) => m.role !== "system");
+        const systemContent = messages.find((m: any) => m.role === "system")?.content || "";
+        const anthropicTools = ollamaTools.map((t: any) => ({
+          name: t.function.name,
+          description: t.function.description,
+          input_schema: t.function.parameters,
+        }));
+        llmResponse = await fetch(`${anthropicBaseUrl}/v1/messages`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": anthropicKey!,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: activeModel,
+            system: systemContent,
+            messages: anthropicMessages,
+            tools: anthropicTools,
+            max_tokens: 8192,
+            temperature: 0.3,
+          }),
+          signal: AbortSignal.timeout(120000),
         });
       } else {
         let retries = 0;
@@ -630,13 +672,29 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       }
 
       const result = await llmResponse.json() as any;
-      const assistantMsg = useOllama ? result.message : result.choices?.[0]?.message;
 
-      if (assistantMsg?.content) {
-        res.write(`data: ${JSON.stringify({ type: "text", content: assistantMsg.content })}\n\n`);
+      let assistantMsg: any;
+      let toolCalls: any[] | undefined;
+
+      if (useAnthropic) {
+        const textParts = (result.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
+        const toolParts = (result.content || []).filter((c: any) => c.type === "tool_use");
+        if (textParts) {
+          res.write(`data: ${JSON.stringify({ type: "text", content: textParts })}\n\n`);
+        }
+        toolCalls = toolParts.length > 0 ? toolParts.map((t: any) => ({
+          id: t.id,
+          function: { name: t.name, arguments: t.input },
+        })) : undefined;
+        assistantMsg = { role: "assistant", content: result.content };
+      } else {
+        assistantMsg = useOllama ? result.message : result.choices?.[0]?.message;
+        if (assistantMsg?.content) {
+          res.write(`data: ${JSON.stringify({ type: "text", content: assistantMsg.content })}\n\n`);
+        }
+        toolCalls = assistantMsg?.tool_calls;
       }
 
-      const toolCalls = assistantMsg?.tool_calls;
       if (!toolCalls || toolCalls.length === 0) {
         res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
         res.end();
@@ -730,6 +788,8 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
 
         if (useOllama) {
           messages.push({ role: "tool", content: toolResult });
+        } else if (useAnthropic) {
+          messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: tc.id, content: toolResult }] });
         } else {
           messages.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
         }
