@@ -540,7 +540,15 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
 
   const conversationMessages: any[] = [{ role: "system", content: systemPrompt + availableDirs }];
   if (history && Array.isArray(history)) {
-    for (const m of history) {
+    const filtered = history.filter((m: any) => {
+      if (m.role === "assistant" && typeof m.content === "string") {
+        const lower = m.content.toLowerCase();
+        if (lower.includes("unable to access") || lower.includes("appears empty") || lower.includes("could you please confirm") || lower.includes("exact local path") || lower.includes("exact path")) return false;
+      }
+      return true;
+    });
+    const recent = filtered.slice(-10);
+    for (const m of recent) {
       conversationMessages.push({ role: m.role, content: m.content });
     }
   }
