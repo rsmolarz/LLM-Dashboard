@@ -1262,8 +1262,8 @@ function SSHPanel() {
               <XCircle className="h-3 w-3" />
             </button>
           )}
-          <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => { setHistory([]); setAiMessages([]); }}>
-            <Trash2 className="h-3 w-3" />
+          <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#f38ba8]" onClick={() => { setHistory([]); setAiMessages([]); }} title="Clear chat history">
+            <Trash2 className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>
