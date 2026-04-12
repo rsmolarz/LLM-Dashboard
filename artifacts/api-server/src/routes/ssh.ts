@@ -396,16 +396,27 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
 
   const [llmConfig] = await db.select().from(llmConfigTable).limit(1);
   const serverUrl = llmConfig?.serverUrl;
-  if (!serverUrl) { res.status(503).json({ error: "Local LLM not configured. Go to Local LLM page to set up your Ollama server." }); return; }
+  const defaultModel = (llmConfig as any)?.defaultModel || "llama3";
 
   let ollamaOnline = false;
-  try {
-    const check = await fetch(`${serverUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
-    ollamaOnline = check.ok;
-  } catch {}
-  if (!ollamaOnline) { res.status(503).json({ error: `Ollama server at ${serverUrl} is offline. Make sure it's running on your VPS.` }); return; }
+  if (serverUrl) {
+    try {
+      const check = await fetch(`${serverUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
+      ollamaOnline = check.ok;
+    } catch {}
+  }
 
-  const defaultModel = (llmConfig as any)?.defaultModel || "llama3";
+  const openrouterKey = process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY;
+  const canFallbackToCloud = !!openrouterKey;
+
+  if (!ollamaOnline && !canFallbackToCloud) {
+    res.status(503).json({ error: `Ollama server${serverUrl ? ` at ${serverUrl}` : ""} is offline and no cloud fallback is configured. Start Ollama on your VPS or configure the OpenRouter integration.` });
+    return;
+  }
+
+  const useOllama = ollamaOnline;
+  const provider = useOllama ? "ollama" : "openrouter";
+  const activeModel = useOllama ? defaultModel : "google/gemini-2.5-flash";
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -499,7 +510,10 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
   }
   conversationMessages.push({ role: "user", content: prompt });
 
-  res.write(`data: ${JSON.stringify({ type: "routing", provider: "ollama", model: defaultModel })}\n\n`);
+  if (!useOllama) {
+    res.write(`data: ${JSON.stringify({ type: "text", content: "⚠️ Ollama is offline — using cloud model as fallback.\n\n" })}\n\n`);
+  }
+  res.write(`data: ${JSON.stringify({ type: "routing", provider, model: activeModel })}\n\n`);
 
   try {
     let messages = conversationMessages.slice(-30);
@@ -509,28 +523,48 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
     while (iterationCount < maxIterations) {
       iterationCount++;
 
-      const ollamaRes = await fetch(`${serverUrl}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: defaultModel,
-          messages,
-          tools: ollamaTools,
-          stream: false,
-          options: { temperature: 0.3, num_predict: 8192 },
-        }),
-        signal: AbortSignal.timeout(300000),
-      });
+      let llmResponse: Response;
+      if (useOllama) {
+        llmResponse = await fetch(`${serverUrl}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: activeModel,
+            messages,
+            tools: ollamaTools,
+            stream: false,
+            options: { temperature: 0.3, num_predict: 8192 },
+          }),
+          signal: AbortSignal.timeout(300000),
+        });
+      } else {
+        llmResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${openrouterKey}`,
+            "HTTP-Referer": "https://llm-hub.replit.app",
+          },
+          body: JSON.stringify({
+            model: activeModel,
+            messages,
+            tools: ollamaTools,
+            temperature: 0.3,
+            max_tokens: 8192,
+          }),
+          signal: AbortSignal.timeout(120000),
+        });
+      }
 
-      if (!ollamaRes.ok) {
-        const errText = await ollamaRes.text();
-        res.write(`data: ${JSON.stringify({ type: "error", content: `Ollama error ${ollamaRes.status}: ${errText}` })}\n\n`);
+      if (!llmResponse.ok) {
+        const errText = await llmResponse.text();
+        res.write(`data: ${JSON.stringify({ type: "error", content: `${provider} error ${llmResponse.status}: ${errText}` })}\n\n`);
         res.end();
         return;
       }
 
-      const result = await ollamaRes.json() as any;
-      const assistantMsg = result.message;
+      const result = await llmResponse.json() as any;
+      const assistantMsg = useOllama ? result.message : result.choices?.[0]?.message;
 
       if (assistantMsg?.content) {
         res.write(`data: ${JSON.stringify({ type: "text", content: assistantMsg.content })}\n\n`);
@@ -547,7 +581,8 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
 
       for (const tc of toolCalls) {
         const toolName = tc.function?.name;
-        const toolArgs = tc.function?.arguments || {};
+        const rawArgs = tc.function?.arguments;
+        const toolArgs = typeof rawArgs === "string" ? JSON.parse(rawArgs) : (rawArgs || {});
         let toolResult = "";
 
         try {
@@ -626,7 +661,11 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
           toolResult = errMsg;
         }
 
-        messages.push({ role: "tool", content: toolResult });
+        if (useOllama) {
+          messages.push({ role: "tool", content: toolResult });
+        } else {
+          messages.push({ role: "tool", tool_call_id: tc.id, content: toolResult });
+        }
       }
     }
 
