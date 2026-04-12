@@ -439,8 +439,7 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
     return;
   }
 
-  const preferCloud = canFallbackToCloud;
-  const useOllama = !preferCloud && ollamaOnline;
+  const useOllama = false;
   const provider = useOllama ? "ollama" : "openrouter";
   const activeModel = useOllama ? defaultModel : "google/gemini-2.5-flash";
 
@@ -589,22 +588,35 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
           signal: AbortSignal.timeout(600000),
         });
       } else {
-        llmResponse = await fetch(`${openrouterBaseUrl}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${openrouterKey}`,
-            "HTTP-Referer": "https://llm-hub.replit.app",
-          },
-          body: JSON.stringify({
-            model: activeModel,
-            messages,
-            tools: ollamaTools,
-            temperature: 0.3,
-            max_tokens: 8192,
-          }),
-          signal: AbortSignal.timeout(120000),
-        });
+        let retries = 0;
+        const maxRetries = 3;
+        while (true) {
+          llmResponse = await fetch(`${openrouterBaseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${openrouterKey}`,
+              "HTTP-Referer": "https://llm-hub.replit.app",
+            },
+            body: JSON.stringify({
+              model: activeModel,
+              messages,
+              tools: ollamaTools,
+              temperature: 0.3,
+              max_tokens: 8192,
+            }),
+            signal: AbortSignal.timeout(120000),
+          });
+          if (llmResponse.status === 429 && retries < maxRetries) {
+            retries++;
+            const retryAfter = parseInt(llmResponse.headers.get("retry-after") || "10", 10);
+            const waitTime = Math.min(retryAfter, 30) * 1000;
+            res.write(`data: ${JSON.stringify({ type: "text", content: `⏳ Rate limited, retrying in ${Math.ceil(waitTime / 1000)}s...\n` })}\n\n`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            continue;
+          }
+          break;
+        }
       }
       } finally {
         clearInterval(heartbeat);
