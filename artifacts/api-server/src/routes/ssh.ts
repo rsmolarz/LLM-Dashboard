@@ -96,9 +96,13 @@ router.post("/ssh/exec", async (req, res): Promise<void> => {
   }
 
   const conn = new Client();
+  let responded = false;
   const timeout = setTimeout(() => {
     conn.end();
-    res.status(504).json({ error: "Command timed out after 30s" });
+    if (!responded) {
+      responded = true;
+      res.status(504).json({ error: "Command timed out after 30s" });
+    }
   }, 30000);
 
   conn
@@ -107,7 +111,10 @@ router.post("/ssh/exec", async (req, res): Promise<void> => {
         if (err) {
           clearTimeout(timeout);
           conn.end();
-          res.status(500).json({ error: err.message });
+          if (!responded) {
+            responded = true;
+            res.status(500).json({ error: err.message });
+          }
           return;
         }
 
@@ -118,7 +125,10 @@ router.post("/ssh/exec", async (req, res): Promise<void> => {
           .on("close", (code: number) => {
             clearTimeout(timeout);
             conn.end();
-            res.json({ stdout, stderr, exitCode: code });
+            if (!responded) {
+              responded = true;
+              res.json({ stdout, stderr, exitCode: code });
+            }
           })
           .on("data", (data: Buffer) => {
             stdout += data.toString();
@@ -396,17 +406,32 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
 
   const [llmConfig] = await db.select().from(llmConfigTable).limit(1);
   const serverUrl = llmConfig?.serverUrl;
-  const defaultModel = (llmConfig as any)?.defaultModel || "llama3";
+  const configModel = (llmConfig as any)?.defaultModel || "llama3.2:latest";
 
   let ollamaOnline = false;
+  let toolCapableModel = configModel;
+  const toolCapableModels = ["llama3.2", "llama3.1", "qwen2.5", "mistral"];
   if (serverUrl) {
     try {
       const check = await fetch(`${serverUrl}/api/tags`, { signal: AbortSignal.timeout(5000) });
       ollamaOnline = check.ok;
+      if (ollamaOnline) {
+        const isToolCapable = toolCapableModels.some(m => configModel.startsWith(m));
+        if (!isToolCapable) {
+          const tagsData = await check.json() as any;
+          const available = (tagsData.models || []).map((m: any) => m.name);
+          const fallback = available.find((n: string) => toolCapableModels.some(m => n.startsWith(m)));
+          if (fallback) {
+            toolCapableModel = fallback;
+          }
+        }
+      }
     } catch {}
   }
+  const defaultModel = toolCapableModel;
 
   const openrouterKey = process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY;
+  const openrouterBaseUrl = process.env.AI_INTEGRATIONS_OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
   const canFallbackToCloud = !!openrouterKey;
 
   if (!ollamaOnline && !canFallbackToCloud) {
@@ -414,7 +439,8 @@ router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
     return;
   }
 
-  const useOllama = ollamaOnline;
+  const preferCloud = canFallbackToCloud;
+  const useOllama = !preferCloud && ollamaOnline;
   const provider = useOllama ? "ollama" : "openrouter";
   const activeModel = useOllama ? defaultModel : "google/gemini-2.5-flash";
 
@@ -510,8 +536,10 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
   }
   conversationMessages.push({ role: "user", content: prompt });
 
-  if (!useOllama) {
-    res.write(`data: ${JSON.stringify({ type: "text", content: "⚠️ Ollama is offline — using cloud model as fallback.\n\n" })}\n\n`);
+  if (!useOllama && !ollamaOnline) {
+    res.write(`data: ${JSON.stringify({ type: "text", content: "⚠️ Ollama is offline — using cloud model.\n\n" })}\n\n`);
+  } else if (useOllama && activeModel !== configModel) {
+    res.write(`data: ${JSON.stringify({ type: "text", content: `ℹ️ ${configModel} doesn't support tool calling — using ${activeModel} instead.\n\n` })}\n\n`);
   }
   res.write(`data: ${JSON.stringify({ type: "routing", provider, model: activeModel })}\n\n`);
 
@@ -523,7 +551,12 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
     while (iterationCount < maxIterations) {
       iterationCount++;
 
+      const heartbeat = setInterval(() => {
+        try { res.write(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`); } catch {}
+      }, 10000);
+
       let llmResponse: Response;
+      try {
       if (useOllama) {
         llmResponse = await fetch(`${serverUrl}/api/chat`, {
           method: "POST",
@@ -533,12 +566,12 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
             messages,
             tools: ollamaTools,
             stream: false,
-            options: { temperature: 0.3, num_predict: 8192 },
+            options: { temperature: 0.3, num_predict: 4096 },
           }),
-          signal: AbortSignal.timeout(300000),
+          signal: AbortSignal.timeout(600000),
         });
       } else {
-        llmResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        llmResponse = await fetch(`${openrouterBaseUrl}/chat/completions`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -554,6 +587,9 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
           }),
           signal: AbortSignal.timeout(120000),
         });
+      }
+      } finally {
+        clearInterval(heartbeat);
       }
 
       if (!llmResponse.ok) {
