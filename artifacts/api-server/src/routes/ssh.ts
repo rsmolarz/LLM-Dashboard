@@ -698,6 +698,7 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
                 const r = await sftpUpload(config, localFilePath, remoteFilePath);
                 uploadResults.push({ file: f, success: true, size: r.size });
                 successCount++;
+                res.write(`data: ${JSON.stringify({ type: "text", content: "" })}\n\n`);
               } catch (err: any) {
                 uploadResults.push({ file: f, success: false, error: err.message });
                 failCount++;

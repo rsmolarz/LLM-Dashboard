@@ -1429,7 +1429,7 @@ function SSHPanel() {
                     {msg.streaming && (
                       <div className="flex items-center gap-1.5 text-[#89b4fa]">
                         <Loader2 className="h-3 w-3 animate-spin" />
-                        <span className="text-[10px]">Thinking...</span>
+                        <span className="text-[10px]">{msg.commands && msg.commands.length > 0 ? "Working..." : "Thinking..."}</span>
                       </div>
                     )}
                   </div>
