@@ -118,7 +118,7 @@ router.use(memoryRouter);
 router.use(costsRouter);
 router.use(teamRouter);
 router.use(complianceRouter);
-router.use("/code-terminal", requireAuth, codeTerminalRouter);
+router.use("/code-terminal", codeTerminalRouter);
 router.use(chatImportRouter);
 router.use(clawAgentRouter);
 router.use("/workbench", workbenchRouter);
