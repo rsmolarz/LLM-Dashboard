@@ -857,13 +857,13 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
 });
 
 router.get("/vps-projects", async (req, res): Promise<void> => {
-  const config = getSSHConfig(req.body);
-  if (!config.host || !config.username) {
-    config.host = process.env.SSH_HOST || "";
-    config.username = process.env.SSH_USERNAME || "";
-    config.password = process.env.SSH_PASSWORD || undefined;
-    config.privateKey = process.env.SSH_PRIVATE_KEY || undefined;
-  }
+  const config: SSHConfig = {
+    host: process.env.SSH_HOST || "",
+    port: parseInt(process.env.SSH_PORT || "22", 10),
+    username: process.env.SSH_USERNAME || "",
+    password: process.env.SSH_PASSWORD || undefined,
+    privateKey: process.env.SSH_PRIVATE_KEY || undefined,
+  };
 
   if (!config.host || !config.username) {
     res.json({ projects: [] });
