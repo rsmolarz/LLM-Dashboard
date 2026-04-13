@@ -18,9 +18,9 @@ import {
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 
 const MEDINVEST_BASE = process.env.MEDINVEST_BASE_URL || "https://did-login.replit.app";
-const MEDINVEST_AUTHORIZE_URL = `${MEDINVEST_BASE}/api/oauth/authorize`;
-const MEDINVEST_TOKEN_URL = `${MEDINVEST_BASE}/api/oauth/token`;
-const MEDINVEST_USERINFO_URL = `${MEDINVEST_BASE}/api/oauth/userinfo`;
+const MEDINVEST_AUTHORIZE_URL = `${MEDINVEST_BASE}/oauth/authorize`;
+const MEDINVEST_TOKEN_URL = `${MEDINVEST_BASE}/oauth/token`;
+const MEDINVEST_USERINFO_URL = `${MEDINVEST_BASE}/oauth/userinfo`;
 const MEDINVEST_CLIENT_ID = process.env.MEDINVEST_CLIENT_ID || "";
 const MEDINVEST_CLIENT_SECRET = process.env.MEDINVEST_CLIENT_SECRET || "";
 const MEDINVEST_REDIRECT_URI = process.env.MEDINVEST_REDIRECT_URI || "";
@@ -117,35 +117,34 @@ router.get("/auth/user", async (req: Request, res: Response) => {
   res.json({ user: req.user });
 });
 
-router.get("/login", async (req: Request, res: Response) => {
+router.get("/login", (req: Request, res: Response) => {
+  res.redirect("/api/auth/medinvest/login" + (req.query.returnTo ? `?returnTo=${encodeURIComponent(req.query.returnTo as string)}` : ""));
+});
+
+router.get("/auth/medinvest/login", async (req: Request, res: Response) => {
   const origin = getOrigin(req);
-  const callbackUrl = MEDINVEST_REDIRECT_URI || `${origin}/api/callback`;
+  const callbackUrl = MEDINVEST_REDIRECT_URI || `${origin}/api/auth/medinvest/callback`;
   const returnTo = getSafeReturnTo(req.query.returnTo);
 
   const state = crypto.randomBytes(20).toString("hex");
-  const codeVerifier = crypto.randomBytes(32).toString("base64url");
-  const codeChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
 
-  setOidcCookie(res, "mi_code_verifier", codeVerifier);
   setOidcCookie(res, "mi_state", state);
   setOidcCookie(res, "mi_return_to", returnTo);
 
   const params = new URLSearchParams({
     client_id: MEDINVEST_CLIENT_ID,
-    response_type: "code",
     redirect_uri: callbackUrl,
-    scope: "openid profile email",
+    response_type: "code",
+    scope: "did:read profile:read",
     state,
-    code_challenge: codeChallenge,
-    code_challenge_method: "S256",
   });
 
   res.redirect(`${MEDINVEST_AUTHORIZE_URL}?${params.toString()}`);
 });
 
-router.get("/callback", async (req: Request, res: Response) => {
+router.get("/auth/medinvest/callback", async (req: Request, res: Response) => {
   const origin = getOrigin(req);
-  const callbackUrl = MEDINVEST_REDIRECT_URI || `${origin}/api/callback`;
+  const callbackUrl = MEDINVEST_REDIRECT_URI || `${origin}/api/auth/medinvest/callback`;
 
   const code = req.query.code as string;
   const state = req.query.state as string;
