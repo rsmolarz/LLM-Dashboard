@@ -17,12 +17,13 @@ import {
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 
-const MEDINVEST_BASE = "https://did-login.replit.app";
+const MEDINVEST_BASE = process.env.MEDINVEST_BASE_URL || "https://did-login.replit.app";
 const MEDINVEST_AUTHORIZE_URL = `${MEDINVEST_BASE}/api/oauth/authorize`;
 const MEDINVEST_TOKEN_URL = `${MEDINVEST_BASE}/api/oauth/token`;
 const MEDINVEST_USERINFO_URL = `${MEDINVEST_BASE}/api/oauth/userinfo`;
 const MEDINVEST_CLIENT_ID = process.env.MEDINVEST_CLIENT_ID || "";
 const MEDINVEST_CLIENT_SECRET = process.env.MEDINVEST_CLIENT_SECRET || "";
+const MEDINVEST_REDIRECT_URI = process.env.MEDINVEST_REDIRECT_URI || "";
 
 const router: IRouter = Router();
 
@@ -118,7 +119,7 @@ router.get("/auth/user", async (req: Request, res: Response) => {
 
 router.get("/login", async (req: Request, res: Response) => {
   const origin = getOrigin(req);
-  const callbackUrl = `${origin}/api/callback`;
+  const callbackUrl = MEDINVEST_REDIRECT_URI || `${origin}/api/callback`;
   const returnTo = getSafeReturnTo(req.query.returnTo);
 
   const state = crypto.randomBytes(20).toString("hex");
@@ -144,7 +145,7 @@ router.get("/login", async (req: Request, res: Response) => {
 
 router.get("/callback", async (req: Request, res: Response) => {
   const origin = getOrigin(req);
-  const callbackUrl = `${origin}/api/callback`;
+  const callbackUrl = MEDINVEST_REDIRECT_URI || `${origin}/api/callback`;
 
   const code = req.query.code as string;
   const state = req.query.state as string;
