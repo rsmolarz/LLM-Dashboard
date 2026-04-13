@@ -2,7 +2,8 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Search, Code2, Folder, ChevronLeft, ChevronRight,
-  Circle, Server, Package, Loader2, Plus,
+  Circle, Server, Package, Loader2, Globe, Lock,
+  ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -17,7 +18,10 @@ interface Project {
   description: string;
   language?: string;
   status?: "live" | "paused" | "completed";
-  origin?: "replit" | "vps";
+  origin?: "replit" | "vps" | "local";
+  visibility?: "public" | "private";
+  owner?: string;
+  url?: string;
 }
 
 function detectLanguage(project: Project): string {
@@ -38,6 +42,7 @@ function getInitialColor(name: string): string {
 }
 
 type Filter = "all" | "active" | "paused" | "completed";
+type SourceFilter = "all" | "replit" | "vps" | "local";
 
 interface ProjectSidebarProps {
   onSelectProject?: (project: Project) => void;
@@ -54,6 +59,7 @@ export default function ProjectSidebar({
 }: ProjectSidebarProps) {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
 
   const { data: localProjects, isLoading: loadingLocal } = useQuery<Project[]>({
     queryKey: ["sidebar-projects-local"],
@@ -65,7 +71,7 @@ export default function ProjectSidebar({
         ...p,
         language: detectLanguage(p),
         status: "live" as const,
-        origin: "replit" as const,
+        origin: "local" as const,
       }));
     },
     refetchInterval: 30000,
@@ -90,14 +96,43 @@ export default function ProjectSidebar({
     refetchInterval: 60000,
   });
 
+  const { data: replitProjects, isLoading: loadingReplit } = useQuery<Project[]>({
+    queryKey: ["sidebar-projects-replit"],
+    queryFn: async () => {
+      try {
+        const res = await fetch(`/api/workbench/replit-projects`, { credentials: "include" });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return (data.projects || []).map((p: any) => ({
+          ...p,
+          origin: "replit" as const,
+        }));
+      } catch {
+        return [];
+      }
+    },
+    refetchInterval: 120000,
+  });
+
   const allProjects = useMemo(() => {
     const local = localProjects || [];
     const vps = vpsProjects || [];
-    return [...local, ...vps];
-  }, [localProjects, vpsProjects]);
+    const replit = replitProjects || [];
+    return [...local, ...vps, ...replit];
+  }, [localProjects, vpsProjects, replitProjects]);
+
+  const counts = useMemo(() => ({
+    all: allProjects.length,
+    replit: (replitProjects || []).length,
+    vps: (vpsProjects || []).length,
+    local: (localProjects || []).length,
+  }), [allProjects, replitProjects, vpsProjects, localProjects]);
 
   const filtered = useMemo(() => {
     let list = allProjects;
+    if (sourceFilter !== "all") {
+      list = list.filter(p => p.origin === sourceFilter);
+    }
     if (filter !== "all") {
       list = list.filter(p => p.status === filter);
     }
@@ -106,9 +141,9 @@ export default function ProjectSidebar({
       list = list.filter(p => p.name.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q));
     }
     return list;
-  }, [allProjects, filter, search]);
+  }, [allProjects, sourceFilter, filter, search]);
 
-  const isLoading = loadingLocal || loadingVps;
+  const isLoading = loadingLocal || loadingVps || loadingReplit;
 
   if (collapsed) {
     return (
@@ -164,24 +199,29 @@ export default function ProjectSidebar({
       </div>
 
       <div className="flex items-center gap-1 px-3 py-1.5 border-b border-[#313244]">
-        {(["all", "active", "paused", "completed"] as Filter[]).map(f => (
+        {([
+          { key: "all" as SourceFilter, label: "All", count: counts.all },
+          { key: "replit" as SourceFilter, label: "Replit", count: counts.replit },
+          { key: "vps" as SourceFilter, label: "VPS", count: counts.vps },
+          { key: "local" as SourceFilter, label: "Local", count: counts.local },
+        ]).map(s => (
           <button
-            key={f}
-            onClick={() => setFilter(f)}
+            key={s.key}
+            onClick={() => setSourceFilter(s.key)}
             className={cn(
-              "px-2 py-0.5 rounded text-[10px] font-medium capitalize transition-colors",
-              filter === f
+              "px-2 py-0.5 rounded text-[10px] font-medium transition-colors",
+              sourceFilter === s.key
                 ? "bg-[#89b4fa] text-[#1e1e2e]"
                 : "text-[#6c7086] hover:text-[#a6adc8] hover:bg-[#313244]"
             )}
           >
-            {f}
+            {s.label} {s.count > 0 && <span className="opacity-70">{s.count}</span>}
           </button>
         ))}
       </div>
 
       <div className="flex-1 overflow-y-auto min-h-0">
-        {isLoading ? (
+        {isLoading && allProjects.length === 0 ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-[#6c7086]" />
           </div>
@@ -195,9 +235,15 @@ export default function ProjectSidebar({
             {filtered.map(project => (
               <button
                 key={`${project.origin}-${project.path}`}
-                onClick={() => onSelectProject?.(project)}
+                onClick={() => {
+                  if (project.origin === "replit" && project.url) {
+                    window.open(project.url, "_blank");
+                  } else {
+                    onSelectProject?.(project);
+                  }
+                }}
                 className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[#313244]/60",
+                  "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[#313244]/60 group",
                   selectedProjectPath === project.path && "bg-[#313244]/80"
                 )}
               >
@@ -210,7 +256,13 @@ export default function ProjectSidebar({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="text-sm text-[#cdd6f4] font-medium truncate">{project.name}</span>
+                    {project.origin === "replit" && (
+                      <ExternalLink className="h-3 w-3 text-[#6c7086] opacity-0 group-hover:opacity-100 shrink-0 transition-opacity" />
+                    )}
                   </div>
+                  {project.description && (
+                    <p className="text-[10px] text-[#6c7086] truncate mt-0.5">{project.description}</p>
+                  )}
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-[10px] text-[#a6adc8]">{project.language || "Project"}</span>
                     {project.origin === "vps" && (
@@ -218,20 +270,23 @@ export default function ProjectSidebar({
                         <Server className="h-2.5 w-2.5" /> VPS
                       </span>
                     )}
-                    {project.status === "live" && (
+                    {project.origin === "local" && (
+                      <span className="flex items-center gap-0.5 text-[10px] text-[#89b4fa]">
+                        <Package className="h-2.5 w-2.5" /> Local
+                      </span>
+                    )}
+                    {project.origin === "replit" && project.visibility === "public" && (
                       <span className="flex items-center gap-0.5 text-[10px] text-[#a6e3a1]">
-                        <Circle className="h-2 w-2 fill-current" /> live
+                        <Globe className="h-2.5 w-2.5" /> Public
                       </span>
                     )}
-                    {project.status === "paused" && (
-                      <span className="flex items-center gap-0.5 text-[10px] text-[#fab387]">
-                        <Circle className="h-2 w-2 fill-current" /> paused
-                      </span>
-                    )}
-                    {project.status === "completed" && (
+                    {project.origin === "replit" && project.visibility === "private" && (
                       <span className="flex items-center gap-0.5 text-[10px] text-[#6c7086]">
-                        <Circle className="h-2 w-2 fill-current" /> done
+                        <Lock className="h-2.5 w-2.5" /> Private
                       </span>
+                    )}
+                    {project.owner && project.owner !== "rsmolarz" && (
+                      <span className="text-[10px] text-[#6c7086]">{project.owner}</span>
                     )}
                   </div>
                 </div>

@@ -856,6 +856,35 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
   }
 });
 
+router.get("/replit-projects", async (_req, res): Promise<void> => {
+  try {
+    const registryPath = path.resolve(PROJECT_ROOT, "data/replit-projects.json");
+    if (!fs.existsSync(registryPath)) {
+      res.json({ projects: [] });
+      return;
+    }
+    const raw = fs.readFileSync(registryPath, "utf-8");
+    const registry = JSON.parse(raw);
+    const projects = (registry.projects || []).map((p: any) => ({
+      name: p.name,
+      path: p.repo,
+      source: "replit-registry",
+      hasPackageJson: true,
+      isGit: true,
+      description: p.description || "",
+      language: "Replit App",
+      origin: "replit" as const,
+      status: "live" as const,
+      visibility: p.visibility || "private",
+      owner: p.owner || "rsmolarz",
+      url: `https://replit.com/@${p.repo}`,
+    }));
+    res.json({ projects, total: registry.totalApps || projects.length });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message, projects: [] });
+  }
+});
+
 router.get("/vps-projects", async (req, res): Promise<void> => {
   const config: SSHConfig = {
     host: process.env.SSH_HOST || "",

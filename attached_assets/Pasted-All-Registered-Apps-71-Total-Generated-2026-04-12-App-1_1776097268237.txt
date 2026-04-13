@@ -1,0 +1,88 @@
+All Registered Apps (71 Total)
+Generated: 2026-04-12
+=====================================
+
+#  | App Name                       | Repo                                      | Visibility | Description
+---|--------------------------------|-------------------------------------------|------------|-------------------------------------------
+1  | vient-healthcare               | fistasolutions/vient-healthcare            | Private    |
+2  | vient-healthcare-backend       | fistasolutions/vient-healthcare-backend     | Private    |
+3  | vientaiagents-backend          | fistasolutions/vientaiagents-backend        | Private    |
+4  | vientaiagents-frontend         | fistasolutions/vientaiagents-frontend       | Private    |
+5  | AgentFlow                      | rsmolarz/AgentFlow                         | Public     |
+6  | AlpahaFactory                  | rsmolarz/AlpahaFactory                     | Private    | KPIs and analytics platform (AI driven)
+7  | AlphaFactory                   | rsmolarz/AlphaFactory                      | Private    |
+8  | AutoFind                       | rsmolarz/AutoFind                          | Private    |
+9  | Automated-Business-Bottleneck  | rsmolarz/Automated-Business-Bottleneck     | Private    |
+10 | Claw-Companion-Watch           | rsmolarz/Claw-Companion-Watch              | Private    |
+11 | Course-Creator-AI              | rsmolarz/Course-Creator-AI                 | Private    |
+12 | Deal-Stack                     | rsmolarz/Deal-Stack                        | Private    |
+13 | Deathbook-Notes                | rsmolarz/Deathbook-Notes                   | Private    |
+14 | DrRyans                        | rsmolarz/DrRyans                           | Private    |
+15 | ENT-Workflow-AI2               | rsmolarz/ENT-Workflow-AI2                  | Private    |
+16 | Elite-CRM                      | rsmolarz/Elite-CRM                         | Public     |
+17 | Family-Hub                     | rsmolarz/Family-Hub                        | Private    |
+18 | Family-Vault-Enterprise        | rsmolarz/Family-Vault-Enterprise           | Private    |
+19 | FinCommand                     | rsmolarz/FinCommand                        | Private    |
+20 | Guardian-Layer                 | rsmolarz/Guardian-Layer                    | Public     |
+21 | Home-Harmony                   | rsmolarz/Home-Harmony                      | Private    |
+22 | Hornets-Nest                   | rsmolarz/Hornets-Nest                      | Private    | BH owners assembly and discussion platform
+23 | Insight-Hub                    | rsmolarz/Insight-Hub                       | Private    |
+24 | InvestIQ-Predictor             | rsmolarz/InvestIQ-Predictor                | Private    |
+25 | LLM-Dashboard                  | rsmolarz/LLM-Dashboard                     | Public     |
+26 | Lead-Getter-Suite              | rsmolarz/Lead-Getter-Suite                 | Private    |
+27 | LifeOS                         | rsmolarz/LifeOS                            | Private    |
+28 | LifeOS-Automator               | rsmolarz/LifeOS-Automator                  | Private    |
+29 | Link-Forge                     | rsmolarz/Link-Forge                        | Private    |
+30 | MarketAgent                    | rsmolarz/MarketAgent                       | Private    |
+31 | Med-Com-Secure                 | rsmolarz/Med-Com-Secure                    | Public     |
+32 | MedInvest                      | rsmolarz/MedInvest                         | Public     |
+33 | MedInvestWatch                 | rsmolarz/MedInvestWatch                    | Private    |
+34 | MedMoneyVault                  | rsmolarz/MedMoneyVault                     | Private    |
+35 | Medmoneyshow.com               | rsmolarz/Medmoneyshow.com                  | Private    | medmoneyshow.com backup
+36 | Ocean-Bundle-AI                | rsmolarz/Ocean-Bundle-AI                   | Private    |
+37 | People-Finder                  | rsmolarz/People-Finder                     | Private    |
+38 | PersonalHealth                 | rsmolarz/PersonalHealth                    | Public     | Personal health application
+39 | Project-Mastermind             | rsmolarz/Project-Mastermind                | Public     |
+40 | Protest-Project                | rsmolarz/Protest-Project                   | Private    | Certificate of notorial protest platform
+41 | Quicken-Platform               | rsmolarz/Quicken-Platform                  | Private    |
+42 | SiteForge-AI                   | rsmolarz/SiteForge-AI                      | Private    |
+43 | Slide-Mastermind               | rsmolarz/Slide-Mastermind                  | Private    |
+44 | Speaker-Finder-Pro             | rsmolarz/Speaker-Finder-Pro                | Private    |
+45 | Travel-Planner-AI              | rsmolarz/Travel-Planner-AI                 | Private    |
+46 | VIENT                          | rsmolarz/VIENT                             | Public     | AI agent platform for VIENT efficiency
+47 | VIENT-backend                  | rsmolarz/VIENT-backend                     | Public     | Gmail efficiency
+48 | VIENTEMAILreplit               | rsmolarz/VIENTEMAILreplit                  | Public     |
+49 | Video-Transcriber              | rsmolarz/Video-Transcriber                 | Private    |
+50 | Viral                          | rsmolarz/Viral                             | Private    |
+51 | VoiceControlLocal              | rsmolarz/VoiceControlLocal                 | Private    | .exe for local computer control
+52 | daily_briefing                 | rsmolarz/daily_briefing                    | Public     |
+53 | didlogin                       | rsmolarz/didlogin                          | Private    | Login security platform
+54 | forgeflow                      | rsmolarz/forgeflow                         | Private    | Sourcing furniture
+55 | hybrid-ai-failover             | rsmolarz/hybrid-ai-failover                | Private    | Hybrid AI client with API failover
+56 | joseph-ryan-smolarz            | rsmolarz/joseph-ryan-smolarz               | Private    |
+57 | medinvest_mobile               | rsmolarz/medinvest_mobile                  | Private    |
+58 | medmoneyprerak                 | rsmolarz/medmoneyprerak                    | Private    |
+59 | notionish                      | rsmolarz/notionish                         | Public     |
+60 | openclawui                     | rsmolarz/openclawui                        | Private    |
+61 | socialmediatools               | rsmolarz/socialmediatools                  | Private    |
+62 | stor-partners                  | rsmolarz/stor-partners                     | Private    |
+63 | transcripts                    | rsmolarz/transcripts                       | Private    | Automatic interview transcripts
+64 | vient-healthcare               | rsmolarz/vient-healthcare                  | Private    |
+65 | vientaiagents-backend-main     | rsmolarz/vientaiagents-backend-main        | Public     |
+66 | vientaiagents-frontend         | rsmolarz/vientaiagents-frontend            | Public     |
+67 | vientaiagents-frontend-main    | rsmolarz/vientaiagents-frontend-main       | Private    |
+68 | vientaimammoth                 | rsmolarz/vientaimammoth                    | Public     | AI-backed Otolaryngology EMR
+69 | vientaimammoth-docker          | rsmolarz/vientaimammoth-docker             | Private    | VIENT EMR Docker/AWS deployment
+70 | vientaimammoth-replit          | rsmolarz/vientaimammoth-replit             | Private    | VIENT EMR Replit deployment
+71 | vite-react                     | rsmolarz/vite-react                        | Private    |
+
+
+OAuth Registration Defaults
+=====================================
+Suggested callback URL pattern: https://{app-name}.replit.app/api/auth/callback
+Suggested website URL pattern:  https://{app-name}.replit.app
+
+Summary:
+- Public repos:  16
+- Private repos: 55
+- Total:         71
