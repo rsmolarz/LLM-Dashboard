@@ -6,6 +6,7 @@ import {
   MessageSquare, PanelLeftClose, PanelLeft, Sparkles, Globe, Server,
   FileText, Cpu, DollarSign, GitBranch, Package, ExternalLink,
 } from "lucide-react";
+import ProjectSidebar from "@/components/workbench/ProjectSidebar";
 
 const API = import.meta.env.BASE_URL ? import.meta.env.BASE_URL.replace(/\/$/, "") : "";
 
@@ -118,6 +119,8 @@ export default function CodeTerminal() {
   const [cloneResult, setCloneResult] = useState<{ success: boolean; message: string } | null>(null);
   const [projects, setProjects] = useState<ProjectEntry[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<string | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
@@ -438,8 +441,22 @@ export default function CodeTerminal() {
 
   const activeTabData = openTabs.find(t => t.path === activeTab);
 
+  const handleSelectProject = (project: any) => {
+    setSelectedProject(project.path);
+    setCurrentPath(project.path);
+    setShowFileExplorer(true);
+    loadFiles(project.path);
+  };
+
   return (
-    <div className="h-full flex flex-col overflow-hidden bg-[#0a0a0f]">
+    <div className="h-full flex overflow-hidden bg-[#0a0a0f]">
+      <ProjectSidebar
+        onSelectProject={handleSelectProject}
+        selectedProjectPath={selectedProject}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+      />
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
       <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.06] bg-[#0d0d14] flex-shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-violet-500/20">
@@ -941,6 +958,7 @@ export default function CodeTerminal() {
             </div>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

@@ -856,4 +856,75 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
   }
 });
 
+router.get("/vps-projects", async (req, res): Promise<void> => {
+  const config = getSSHConfig(req.body);
+  if (!config.host || !config.username) {
+    config.host = process.env.SSH_HOST || "";
+    config.username = process.env.SSH_USERNAME || "";
+    config.password = process.env.SSH_PASSWORD || undefined;
+    config.privateKey = process.env.SSH_PRIVATE_KEY || undefined;
+  }
+
+  if (!config.host || !config.username) {
+    res.json({ projects: [] });
+    return;
+  }
+
+  const conn = new Client();
+  const timeout = setTimeout(() => { conn.end(); res.json({ projects: [] }); }, 10000);
+
+  conn.on("ready", () => {
+    const cmd = `find /root -maxdepth 2 -name "package.json" -o -name ".git" 2>/dev/null | head -60`;
+    conn.exec(cmd, (err, stream) => {
+      if (err) { clearTimeout(timeout); conn.end(); res.json({ projects: [] }); return; }
+      let output = "";
+      stream.on("data", (d: Buffer) => { output += d.toString(); });
+      stream.on("close", () => {
+        clearTimeout(timeout);
+        conn.end();
+        const dirs = new Map<string, { hasPackageJson: boolean; isGit: boolean }>();
+        for (const line of output.split("\n").filter(Boolean)) {
+          const dir = line.replace(/\/(package\.json|\.git)$/, "");
+          if (dir === "/root") continue;
+          const existing = dirs.get(dir) || { hasPackageJson: false, isGit: false };
+          if (line.endsWith("package.json")) existing.hasPackageJson = true;
+          if (line.endsWith(".git")) existing.isGit = true;
+          dirs.set(dir, existing);
+        }
+        const projects = Array.from(dirs.entries()).map(([dirPath, info]) => ({
+          name: dirPath.split("/").pop() || dirPath,
+          path: dirPath,
+          source: "vps",
+          hasPackageJson: info.hasPackageJson,
+          isGit: info.isGit,
+          description: "",
+          language: info.hasPackageJson ? "TypeScript" : "Project",
+          origin: "vps",
+          status: "live",
+        }));
+        res.json({ projects });
+      });
+    });
+  });
+
+  conn.on("error", () => {
+    clearTimeout(timeout);
+    res.json({ projects: [] });
+  });
+
+  try {
+    conn.connect({
+      host: config.host,
+      port: config.port,
+      username: config.username,
+      password: config.password,
+      privateKey: config.privateKey,
+      readyTimeout: 8000,
+    });
+  } catch {
+    clearTimeout(timeout);
+    res.json({ projects: [] });
+  }
+});
+
 export default router;

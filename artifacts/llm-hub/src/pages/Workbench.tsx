@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
+import ProjectSidebar from "@/components/workbench/ProjectSidebar";
 import { FolderPlus, Upload, Paperclip } from "lucide-react";
 import { usePersistedState } from "@/hooks/usePersistedState";
 
@@ -1873,6 +1874,12 @@ export default function Workbench() {
   const [bottomPanel, setBottomPanel] = usePersistedState<PanelId>("wb-bottom-panel", "shell");
   const [bottomRightPanel, setBottomRightPanel] = usePersistedState<PanelId>("wb-bottom-right-panel", "git");
   const [showBottom, setShowBottom] = usePersistedState("wb-show-bottom", false);
+  const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("wb-sidebar-collapsed", false);
+  const [selectedProject, setSelectedProject] = usePersistedState<string | null>("wb-selected-project", null);
+
+  const handleSelectProject = (project: any) => {
+    setSelectedProject(project.path);
+  };
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] bg-[#1e1e2e]">
@@ -1898,6 +1905,12 @@ export default function Workbench() {
       </div>
 
       <div className="flex-1 flex min-h-0">
+        <ProjectSidebar
+          onSelectProject={handleSelectProject}
+          selectedProjectPath={selectedProject}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        />
         <div className="flex-1 flex flex-col min-h-0 min-w-0">
           <div className={cn("flex min-h-0", showBottom ? "h-[55%]" : "flex-1")}>
             <div className="flex-1 flex flex-col border-r border-[#313244] min-w-0">
