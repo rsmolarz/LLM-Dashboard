@@ -43,7 +43,7 @@ The project is a pnpm monorepo with separate artifacts for the frontend, backend
     -   **Claude Workbench**: Advanced IDE-like workbench (`/claude-workbench`) with 13 configurable panels in Catppuccin Mocha dark theme: Claude Code chat (Sonnet), AI Router (auto/manual model selection across Sonnet/Opus/Haiku), Shell, File Explorer, Preview (iframe), Git, Agent Activity, Database, Security Scanner, Skills Browser, Code Review (AI-powered with grades), Env Vars, and Process Info. SSH AI chat includes model selector dropdown matching Coding Workbench. All panel state persisted to localStorage.
     -   **Specialized AI Domains**: Dedicated modules for Clinical ENT AI, Social Media AI, Hedge Fund AI, and Database Training Agent.
     -   **LLM Training Pipeline**: Includes fine-tuning, RLHF, knowledge distillation, and evaluation features.
--   **Authentication & Authorization**: Replit Auth (OIDC PKCE) with role-based access control.
+-   **Authentication & Authorization**: MedInvest OAuth 2.0 (external provider at https://did-login.replit.app) with PKCE, role-based access control. First user auto-assigned admin role.
 -   **Rate Limiting**: Per-user sliding window rate limiting.
 -   **Export System**: Conversation and research session export.
 -   **SSL/TLS**: Full SSL configuration for VPS PostgreSQL.

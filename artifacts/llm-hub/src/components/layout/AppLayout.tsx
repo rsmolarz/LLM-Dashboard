@@ -496,10 +496,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
                 ) : (
                   <button
                     onClick={login}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary/20 border border-primary/30 text-primary text-xs font-medium hover:bg-primary/30 transition-colors"
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 text-xs font-medium hover:bg-emerald-600/30 transition-colors"
                   >
-                    <LogIn className="w-3.5 h-3.5" />
-                    Sign In
+                    <Shield className="w-3.5 h-3.5" />
+                    Sign in with MedInvest
                   </button>
                 ))}
             </div>
