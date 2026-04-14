@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Search, Code2, Folder, ChevronLeft, ChevronRight,
@@ -66,6 +66,144 @@ interface ProjectSidebarProps {
   selectedProjectPath?: string | null;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+}
+
+interface ProjectRowProps {
+  project: Project;
+  projectKey: string;
+  isFirst: boolean;
+  isLast: boolean;
+  isSearching: boolean;
+  isDragging: boolean;
+  isDragOver: boolean;
+  selectedProjectPath?: string | null;
+  onSelect: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  onDragStart: () => void;
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: () => void;
+  onDragEnd: () => void;
+}
+
+function ProjectRow({
+  project,
+  isFirst,
+  isLast,
+  isSearching,
+  isDragging,
+  isDragOver,
+  selectedProjectPath,
+  onSelect,
+  onMoveUp,
+  onMoveDown,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+}: ProjectRowProps) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <div
+      draggable={!isSearching}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      className={cn(
+        "flex items-center transition-all",
+        isDragOver && !isDragging && "border-t-2 border-[#89b4fa]",
+        isDragging && "opacity-40",
+      )}
+    >
+      <div
+        className="flex flex-col items-center justify-center shrink-0 py-1 transition-all duration-150"
+        style={{
+          width: hovered && !isSearching ? 24 : 0,
+          opacity: hovered && !isSearching ? 1 : 0,
+          overflow: "hidden",
+        }}
+      >
+        <button
+          onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
+          disabled={isFirst}
+          className={cn(
+            "p-0.5 rounded transition-colors",
+            isFirst ? "text-[#313244] cursor-default" : "text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]"
+          )}
+          title="Move up"
+        >
+          <ChevronUp className="h-3 w-3" />
+        </button>
+        <GripVertical className="h-3 w-3 text-[#6c7086] cursor-grab active:cursor-grabbing" />
+        <button
+          onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
+          disabled={isLast}
+          className={cn(
+            "p-0.5 rounded transition-colors",
+            isLast ? "text-[#313244] cursor-default" : "text-[#6c7086] hover:text-[#cdd6f4] hover:bg-[#313244]"
+          )}
+          title="Move down"
+        >
+          <ChevronDown className="h-3 w-3" />
+        </button>
+      </div>
+      <button
+        onClick={onSelect}
+        className={cn(
+          "flex-1 flex items-center gap-3 px-2 py-2.5 text-left transition-colors hover:bg-[#313244]/60",
+          selectedProjectPath === project.path && "bg-[#313244]/80"
+        )}
+      >
+        <div className={cn(
+          "h-8 w-8 rounded-lg flex items-center justify-center text-white text-sm font-bold shrink-0",
+          getInitialColor(project.name)
+        )}>
+          {project.name.charAt(0).toUpperCase()}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm text-[#cdd6f4] font-medium truncate">{project.name}</span>
+            {project.origin === "replit" && hovered && (
+              <ExternalLink className="h-3 w-3 text-[#6c7086] shrink-0" />
+            )}
+          </div>
+          {project.description && (
+            <p className="text-[10px] text-[#6c7086] truncate mt-0.5">{project.description}</p>
+          )}
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-[10px] text-[#a6adc8]">{project.language || "Project"}</span>
+            {project.origin === "vps" && (
+              <span className="flex items-center gap-0.5 text-[10px] text-[#fab387]">
+                <Server className="h-2.5 w-2.5" /> VPS
+              </span>
+            )}
+            {project.origin === "local" && (
+              <span className="flex items-center gap-0.5 text-[10px] text-[#89b4fa]">
+                <Package className="h-2.5 w-2.5" /> Local
+              </span>
+            )}
+            {project.origin === "replit" && project.visibility === "public" && (
+              <span className="flex items-center gap-0.5 text-[10px] text-[#a6e3a1]">
+                <Globe className="h-2.5 w-2.5" /> Public
+              </span>
+            )}
+            {project.origin === "replit" && project.visibility === "private" && (
+              <span className="flex items-center gap-0.5 text-[10px] text-[#6c7086]">
+                <Lock className="h-2.5 w-2.5" /> Private
+              </span>
+            )}
+            {project.owner && project.owner !== "rsmolarz" && (
+              <span className="text-[10px] text-[#6c7086]">{project.owner}</span>
+            )}
+          </div>
+        </div>
+      </button>
+    </div>
+  );
 }
 
 export default function ProjectSidebar({
@@ -245,7 +383,7 @@ export default function ProjectSidebar({
         </button>
         <div className="mt-3 flex flex-col items-center gap-2">
           <Code2 className="h-4 w-4 text-[#6c7086]" />
-          <span className="text-[9px] text-[#6c7086] writing-mode-vertical" style={{ writingMode: "vertical-rl" }}>
+          <span className="text-[9px] text-[#6c7086]" style={{ writingMode: "vertical-rl" }}>
             Projects
           </span>
         </div>
@@ -331,108 +469,31 @@ export default function ProjectSidebar({
           <div className="py-1">
             {filtered.map((project, idx) => {
               const key = projectKey(project);
-              const isFirst = idx === 0;
-              const isLast = idx === filtered.length - 1;
               return (
-                <div
+                <ProjectRow
                   key={key}
-                  draggable={!isSearching}
+                  project={project}
+                  projectKey={key}
+                  isFirst={idx === 0}
+                  isLast={idx === filtered.length - 1}
+                  isSearching={isSearching}
+                  isDragging={draggedKey === key}
+                  isDragOver={dragOverKey === key && draggedKey !== key}
+                  selectedProjectPath={selectedProjectPath}
+                  onSelect={() => {
+                    if (project.origin === "replit" && project.url) {
+                      window.open(project.url, "_blank");
+                    } else {
+                      onSelectProject?.(project);
+                    }
+                  }}
+                  onMoveUp={() => moveProject(key, "up")}
+                  onMoveDown={() => moveProject(key, "down")}
                   onDragStart={() => handleDragStart(key)}
                   onDragOver={(e) => handleDragOver(e, key)}
                   onDrop={() => handleDrop(key)}
                   onDragEnd={handleDragEnd}
-                  className={cn(
-                    "flex items-center transition-all group/row",
-                    dragOverKey === key && draggedKey !== key && "border-t-2 border-[#89b4fa]",
-                    draggedKey === key && "opacity-40",
-                  )}
-                >
-                  <div className={cn(
-                    "flex flex-col items-center justify-center w-6 shrink-0 py-1",
-                    isSearching ? "invisible" : "opacity-0 group-hover/row:opacity-100 transition-opacity"
-                  )}>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); moveProject(key, "up"); }}
-                      disabled={isFirst}
-                      className={cn(
-                        "p-0.5 rounded hover:bg-[#313244] transition-colors",
-                        isFirst ? "text-[#313244] cursor-default" : "text-[#6c7086] hover:text-[#cdd6f4]"
-                      )}
-                      title="Move up"
-                    >
-                      <ChevronUp className="h-3 w-3" />
-                    </button>
-                    <GripVertical className="h-3 w-3 text-[#6c7086] cursor-grab active:cursor-grabbing" />
-                    <button
-                      onClick={(e) => { e.stopPropagation(); moveProject(key, "down"); }}
-                      disabled={isLast}
-                      className={cn(
-                        "p-0.5 rounded hover:bg-[#313244] transition-colors",
-                        isLast ? "text-[#313244] cursor-default" : "text-[#6c7086] hover:text-[#cdd6f4]"
-                      )}
-                      title="Move down"
-                    >
-                      <ChevronDown className="h-3 w-3" />
-                    </button>
-                  </div>
-                  <button
-                    onClick={() => {
-                      if (project.origin === "replit" && project.url) {
-                        window.open(project.url, "_blank");
-                      } else {
-                        onSelectProject?.(project);
-                      }
-                    }}
-                    className={cn(
-                      "flex-1 flex items-center gap-3 px-2 py-2.5 text-left transition-colors hover:bg-[#313244]/60 group",
-                      selectedProjectPath === project.path && "bg-[#313244]/80"
-                    )}
-                  >
-                    <div className={cn(
-                      "h-8 w-8 rounded-lg flex items-center justify-center text-white text-sm font-bold shrink-0",
-                      getInitialColor(project.name)
-                    )}>
-                      {project.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-sm text-[#cdd6f4] font-medium truncate">{project.name}</span>
-                        {project.origin === "replit" && (
-                          <ExternalLink className="h-3 w-3 text-[#6c7086] opacity-0 group-hover:opacity-100 shrink-0 transition-opacity" />
-                        )}
-                      </div>
-                      {project.description && (
-                        <p className="text-[10px] text-[#6c7086] truncate mt-0.5">{project.description}</p>
-                      )}
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] text-[#a6adc8]">{project.language || "Project"}</span>
-                        {project.origin === "vps" && (
-                          <span className="flex items-center gap-0.5 text-[10px] text-[#fab387]">
-                            <Server className="h-2.5 w-2.5" /> VPS
-                          </span>
-                        )}
-                        {project.origin === "local" && (
-                          <span className="flex items-center gap-0.5 text-[10px] text-[#89b4fa]">
-                            <Package className="h-2.5 w-2.5" /> Local
-                          </span>
-                        )}
-                        {project.origin === "replit" && project.visibility === "public" && (
-                          <span className="flex items-center gap-0.5 text-[10px] text-[#a6e3a1]">
-                            <Globe className="h-2.5 w-2.5" /> Public
-                          </span>
-                        )}
-                        {project.origin === "replit" && project.visibility === "private" && (
-                          <span className="flex items-center gap-0.5 text-[10px] text-[#6c7086]">
-                            <Lock className="h-2.5 w-2.5" /> Private
-                          </span>
-                        )}
-                        {project.owner && project.owner !== "rsmolarz" && (
-                          <span className="text-[10px] text-[#6c7086]">{project.owner}</span>
-                        )}
-                      </div>
-                    </div>
-                  </button>
-                </div>
+                />
               );
             })}
           </div>
