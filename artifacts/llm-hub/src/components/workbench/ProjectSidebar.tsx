@@ -1,13 +1,13 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Search, Code2, Folder, ChevronLeft, ChevronRight,
-  Circle, Server, Package, Loader2, Globe, Lock,
-  ExternalLink,
+  Server, Package, Loader2, Globe, Lock,
+  ExternalLink, GripVertical, ChevronUp, ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const API = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
+const STORAGE_KEY = "project-sidebar-order";
 
 interface Project {
   name: string;
@@ -22,6 +22,10 @@ interface Project {
   visibility?: "public" | "private";
   owner?: string;
   url?: string;
+}
+
+function projectKey(p: Project): string {
+  return `${p.origin || "unknown"}::${p.path}`;
 }
 
 function detectLanguage(project: Project): string {
@@ -41,7 +45,20 @@ function getInitialColor(name: string): string {
   return colors[Math.abs(hash) % colors.length];
 }
 
-type Filter = "all" | "active" | "paused" | "completed";
+function loadSavedOrder(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [];
+}
+
+function saveOrder(order: string[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(order));
+  } catch {}
+}
+
 type SourceFilter = "all" | "replit" | "vps" | "local";
 
 interface ProjectSidebarProps {
@@ -58,8 +75,11 @@ export default function ProjectSidebar({
   onToggleCollapse,
 }: ProjectSidebarProps) {
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
+  const [customOrder, setCustomOrder] = useState<string[]>(loadSavedOrder);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const [draggedKey, setDraggedKey] = useState<string | null>(null);
+  const draggedRef = useRef<string | null>(null);
 
   const { data: localProjects, isLoading: loadingLocal } = useQuery<Project[]>({
     queryKey: ["sidebar-projects-local"],
@@ -128,22 +148,90 @@ export default function ProjectSidebar({
     local: (localProjects || []).length,
   }), [allProjects, replitProjects, vpsProjects, localProjects]);
 
+  const sortedProjects = useMemo(() => {
+    if (customOrder.length === 0) return allProjects;
+    const orderMap = new Map<string, number>();
+    customOrder.forEach((key, idx) => orderMap.set(key, idx));
+    return [...allProjects].sort((a, b) => {
+      const aIdx = orderMap.get(projectKey(a));
+      const bIdx = orderMap.get(projectKey(b));
+      if (aIdx !== undefined && bIdx !== undefined) return aIdx - bIdx;
+      if (aIdx !== undefined) return -1;
+      if (bIdx !== undefined) return 1;
+      return 0;
+    });
+  }, [allProjects, customOrder]);
+
   const filtered = useMemo(() => {
-    let list = allProjects;
+    let list = sortedProjects;
     if (sourceFilter !== "all") {
       list = list.filter(p => p.origin === sourceFilter);
-    }
-    if (filter !== "all") {
-      list = list.filter(p => p.status === filter);
     }
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter(p => p.name.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q));
     }
     return list;
-  }, [allProjects, sourceFilter, filter, search]);
+  }, [sortedProjects, sourceFilter, search]);
+
+  const updateOrder = useCallback((newOrder: string[]) => {
+    setCustomOrder(newOrder);
+    saveOrder(newOrder);
+  }, []);
+
+  const moveProject = useCallback((key: string, direction: "up" | "down") => {
+    const keys = sortedProjects.map(projectKey);
+    const idx = keys.indexOf(key);
+    if (idx < 0) return;
+    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= keys.length) return;
+    const newKeys = [...keys];
+    [newKeys[idx], newKeys[targetIdx]] = [newKeys[targetIdx], newKeys[idx]];
+    updateOrder(newKeys);
+  }, [sortedProjects, updateOrder]);
+
+  const handleDragStart = useCallback((key: string) => {
+    draggedRef.current = key;
+    setDraggedKey(key);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent, key: string) => {
+    e.preventDefault();
+    setDragOverKey(key);
+  }, []);
+
+  const handleDrop = useCallback((targetKey: string) => {
+    const srcKey = draggedRef.current;
+    if (!srcKey || srcKey === targetKey) {
+      setDragOverKey(null);
+      setDraggedKey(null);
+      return;
+    }
+    const keys = sortedProjects.map(projectKey);
+    const srcIdx = keys.indexOf(srcKey);
+    const targetIdx = keys.indexOf(targetKey);
+    if (srcIdx < 0 || targetIdx < 0) {
+      setDragOverKey(null);
+      setDraggedKey(null);
+      return;
+    }
+    const newKeys = [...keys];
+    newKeys.splice(srcIdx, 1);
+    newKeys.splice(targetIdx, 0, srcKey);
+    updateOrder(newKeys);
+    setDragOverKey(null);
+    setDraggedKey(null);
+    draggedRef.current = null;
+  }, [sortedProjects, updateOrder]);
+
+  const handleDragEnd = useCallback(() => {
+    setDragOverKey(null);
+    setDraggedKey(null);
+    draggedRef.current = null;
+  }, []);
 
   const isLoading = loadingLocal || loadingVps || loadingReplit;
+  const isSearching = search.trim().length > 0;
 
   if (collapsed) {
     return (
@@ -176,6 +264,15 @@ export default function ProjectSidebar({
           </span>
         </div>
         <div className="flex items-center gap-1">
+          {customOrder.length > 0 && (
+            <button
+              onClick={() => updateOrder([])}
+              className="px-1.5 py-0.5 rounded text-[9px] text-[#f38ba8] hover:bg-[#313244] transition-colors"
+              title="Reset custom order"
+            >
+              Reset
+            </button>
+          )}
           <button
             onClick={onToggleCollapse}
             className="p-1 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#cdd6f4] transition-colors"
@@ -232,66 +329,112 @@ export default function ProjectSidebar({
           </div>
         ) : (
           <div className="py-1">
-            {filtered.map(project => (
-              <button
-                key={`${project.origin}-${project.path}`}
-                onClick={() => {
-                  if (project.origin === "replit" && project.url) {
-                    window.open(project.url, "_blank");
-                  } else {
-                    onSelectProject?.(project);
-                  }
-                }}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-[#313244]/60 group",
-                  selectedProjectPath === project.path && "bg-[#313244]/80"
-                )}
-              >
-                <div className={cn(
-                  "h-8 w-8 rounded-lg flex items-center justify-center text-white text-sm font-bold shrink-0",
-                  getInitialColor(project.name)
-                )}>
-                  {project.name.charAt(0).toUpperCase()}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-sm text-[#cdd6f4] font-medium truncate">{project.name}</span>
-                    {project.origin === "replit" && (
-                      <ExternalLink className="h-3 w-3 text-[#6c7086] opacity-0 group-hover:opacity-100 shrink-0 transition-opacity" />
-                    )}
-                  </div>
-                  {project.description && (
-                    <p className="text-[10px] text-[#6c7086] truncate mt-0.5">{project.description}</p>
+            {filtered.map((project, idx) => {
+              const key = projectKey(project);
+              const isFirst = idx === 0;
+              const isLast = idx === filtered.length - 1;
+              return (
+                <div
+                  key={key}
+                  draggable={!isSearching}
+                  onDragStart={() => handleDragStart(key)}
+                  onDragOver={(e) => handleDragOver(e, key)}
+                  onDrop={() => handleDrop(key)}
+                  onDragEnd={handleDragEnd}
+                  className={cn(
+                    "flex items-center transition-all group/row",
+                    dragOverKey === key && draggedKey !== key && "border-t-2 border-[#89b4fa]",
+                    draggedKey === key && "opacity-40",
                   )}
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-[10px] text-[#a6adc8]">{project.language || "Project"}</span>
-                    {project.origin === "vps" && (
-                      <span className="flex items-center gap-0.5 text-[10px] text-[#fab387]">
-                        <Server className="h-2.5 w-2.5" /> VPS
-                      </span>
-                    )}
-                    {project.origin === "local" && (
-                      <span className="flex items-center gap-0.5 text-[10px] text-[#89b4fa]">
-                        <Package className="h-2.5 w-2.5" /> Local
-                      </span>
-                    )}
-                    {project.origin === "replit" && project.visibility === "public" && (
-                      <span className="flex items-center gap-0.5 text-[10px] text-[#a6e3a1]">
-                        <Globe className="h-2.5 w-2.5" /> Public
-                      </span>
-                    )}
-                    {project.origin === "replit" && project.visibility === "private" && (
-                      <span className="flex items-center gap-0.5 text-[10px] text-[#6c7086]">
-                        <Lock className="h-2.5 w-2.5" /> Private
-                      </span>
-                    )}
-                    {project.owner && project.owner !== "rsmolarz" && (
-                      <span className="text-[10px] text-[#6c7086]">{project.owner}</span>
-                    )}
+                >
+                  <div className={cn(
+                    "flex flex-col items-center justify-center w-6 shrink-0 py-1",
+                    isSearching ? "invisible" : "opacity-0 group-hover/row:opacity-100 transition-opacity"
+                  )}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); moveProject(key, "up"); }}
+                      disabled={isFirst}
+                      className={cn(
+                        "p-0.5 rounded hover:bg-[#313244] transition-colors",
+                        isFirst ? "text-[#313244] cursor-default" : "text-[#6c7086] hover:text-[#cdd6f4]"
+                      )}
+                      title="Move up"
+                    >
+                      <ChevronUp className="h-3 w-3" />
+                    </button>
+                    <GripVertical className="h-3 w-3 text-[#6c7086] cursor-grab active:cursor-grabbing" />
+                    <button
+                      onClick={(e) => { e.stopPropagation(); moveProject(key, "down"); }}
+                      disabled={isLast}
+                      className={cn(
+                        "p-0.5 rounded hover:bg-[#313244] transition-colors",
+                        isLast ? "text-[#313244] cursor-default" : "text-[#6c7086] hover:text-[#cdd6f4]"
+                      )}
+                      title="Move down"
+                    >
+                      <ChevronDown className="h-3 w-3" />
+                    </button>
                   </div>
+                  <button
+                    onClick={() => {
+                      if (project.origin === "replit" && project.url) {
+                        window.open(project.url, "_blank");
+                      } else {
+                        onSelectProject?.(project);
+                      }
+                    }}
+                    className={cn(
+                      "flex-1 flex items-center gap-3 px-2 py-2.5 text-left transition-colors hover:bg-[#313244]/60 group",
+                      selectedProjectPath === project.path && "bg-[#313244]/80"
+                    )}
+                  >
+                    <div className={cn(
+                      "h-8 w-8 rounded-lg flex items-center justify-center text-white text-sm font-bold shrink-0",
+                      getInitialColor(project.name)
+                    )}>
+                      {project.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm text-[#cdd6f4] font-medium truncate">{project.name}</span>
+                        {project.origin === "replit" && (
+                          <ExternalLink className="h-3 w-3 text-[#6c7086] opacity-0 group-hover:opacity-100 shrink-0 transition-opacity" />
+                        )}
+                      </div>
+                      {project.description && (
+                        <p className="text-[10px] text-[#6c7086] truncate mt-0.5">{project.description}</p>
+                      )}
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-[10px] text-[#a6adc8]">{project.language || "Project"}</span>
+                        {project.origin === "vps" && (
+                          <span className="flex items-center gap-0.5 text-[10px] text-[#fab387]">
+                            <Server className="h-2.5 w-2.5" /> VPS
+                          </span>
+                        )}
+                        {project.origin === "local" && (
+                          <span className="flex items-center gap-0.5 text-[10px] text-[#89b4fa]">
+                            <Package className="h-2.5 w-2.5" /> Local
+                          </span>
+                        )}
+                        {project.origin === "replit" && project.visibility === "public" && (
+                          <span className="flex items-center gap-0.5 text-[10px] text-[#a6e3a1]">
+                            <Globe className="h-2.5 w-2.5" /> Public
+                          </span>
+                        )}
+                        {project.origin === "replit" && project.visibility === "private" && (
+                          <span className="flex items-center gap-0.5 text-[10px] text-[#6c7086]">
+                            <Lock className="h-2.5 w-2.5" /> Private
+                          </span>
+                        )}
+                        {project.owner && project.owner !== "rsmolarz" && (
+                          <span className="text-[10px] text-[#6c7086]">{project.owner}</span>
+                        )}
+                      </div>
+                    </div>
+                  </button>
                 </div>
-              </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
