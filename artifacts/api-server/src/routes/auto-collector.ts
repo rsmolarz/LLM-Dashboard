@@ -190,6 +190,36 @@ function getNextSubtopic(domain: string): string {
 let domainRotationCounter = 0;
 let trainingSchedulerInterval: ReturnType<typeof setInterval> | null = null;
 let isTrainingRunning = false;
+let consecutiveOllamaFailures = 0;
+const MAX_OLLAMA_BACKOFF_MINUTES = 120;
+
+async function checkOllamaHealth(serverUrl: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${serverUrl}/api/tags`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return false;
+    const data = await resp.json() as any;
+    if (!data.models || data.models.length === 0) return false;
+
+    const testResp = await fetch(`${serverUrl}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: data.models[0].name,
+        prompt: "test",
+        stream: false,
+        options: { num_predict: 1 },
+      }),
+      signal: AbortSignal.timeout(300000),
+    });
+    if (!testResp.ok) return false;
+    const testData = await testResp.json() as any;
+    return typeof testData.response === "string";
+  } catch {
+    return false;
+  }
+}
 let trainingRunHistory: Array<{
   id: string;
   startedAt: string;
@@ -1152,11 +1182,30 @@ async function runTrainingGeneration() {
   trainingRunHistory.unshift(record);
   if (trainingRunHistory.length > 50) trainingRunHistory = trainingRunHistory.slice(0, 50);
 
+  const vpsIp = process.env.VPS_IP || "72.60.167.64";
+  const serverUrl = process.env.OLLAMA_BASE_URL || process.env.VPS_OLLAMA_URL || `http://${vpsIp}:11434`;
+
+  if (consecutiveOllamaFailures > 0) {
+    const backoffMinutes = Math.min(
+      trainingSchedulerConfig.intervalMinutes * Math.pow(2, consecutiveOllamaFailures - 1),
+      MAX_OLLAMA_BACKOFF_MINUTES
+    );
+    console.log(`[training-scheduler] Ollama has failed ${consecutiveOllamaFailures} consecutive times. Backing off ${backoffMinutes} min. Running health check...`);
+    const healthy = await checkOllamaHealth(serverUrl);
+    if (!healthy) {
+      console.log(`[training-scheduler] Ollama still unhealthy, skipping this cycle. Next check in ${backoffMinutes} min.`);
+      record.status = "skipped";
+      record.completedAt = new Date().toISOString();
+      isTrainingRunning = false;
+      return;
+    }
+    console.log(`[training-scheduler] Ollama is healthy again! Resetting backoff.`);
+    consecutiveOllamaFailures = 0;
+  }
+
   console.log(`[training-scheduler] Starting training data generation for domains: ${trainingSchedulerConfig.domains.join(", ")}`);
 
   try {
-    const vpsIp = process.env.VPS_IP || "72.60.167.64";
-    const serverUrl = process.env.OLLAMA_BASE_URL || process.env.VPS_OLLAMA_URL || `http://${vpsIp}:11434`;
     const cycleModel = getNextModel();
 
     try {
@@ -1164,7 +1213,7 @@ async function runTrainingGeneration() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: cycleModel, prompt: "Ready", stream: true }),
-        signal: AbortSignal.timeout(180000),
+        signal: AbortSignal.timeout(300000),
         // @ts-ignore
         dispatcher: ollamaAgent,
       });
@@ -1173,6 +1222,12 @@ async function runTrainingGeneration() {
       console.log(`[training-scheduler] Model ${cycleModel} warmed up`);
     } catch (e: any) {
       console.log(`[training-scheduler] Warmup ${cycleModel}: ${e.message}`);
+      consecutiveOllamaFailures++;
+      console.log(`[training-scheduler] Warmup failed, incrementing failure count to ${consecutiveOllamaFailures}. Skipping this cycle.`);
+      record.status = "warmup_failed";
+      record.completedAt = new Date().toISOString();
+      isTrainingRunning = false;
+      return;
     }
     console.log(`[training-scheduler] Cycle model: ${cycleModel}`);
 
@@ -1201,10 +1256,22 @@ async function runTrainingGeneration() {
         await new Promise(r => setTimeout(r, 5000));
       }
     }
-    record.status = "completed";
+    const anySuccess = Object.values(record.results).some(r => r.samples > 0);
+    const allFailed = Object.values(record.results).every(r => r.error);
+    if (anySuccess) {
+      consecutiveOllamaFailures = 0;
+      record.status = "completed";
+    } else if (allFailed) {
+      consecutiveOllamaFailures++;
+      record.status = "all_domains_failed";
+      console.log(`[training-scheduler] All domains failed. Consecutive failures: ${consecutiveOllamaFailures}`);
+    } else {
+      record.status = "completed";
+    }
   } catch (e: any) {
+    consecutiveOllamaFailures++;
     record.status = "failed";
-    console.error(`[training-scheduler] Run failed:`, e.message);
+    console.error(`[training-scheduler] Run failed:`, e.message, `Consecutive failures: ${consecutiveOllamaFailures}`);
   } finally {
     isTrainingRunning = false;
     record.completedAt = new Date().toISOString();
