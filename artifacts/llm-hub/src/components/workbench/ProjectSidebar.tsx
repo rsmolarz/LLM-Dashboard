@@ -4,6 +4,7 @@ import {
   Search, Code2, Folder, ChevronLeft, ChevronRight,
   Server, Package, Loader2, Globe, Lock,
   ExternalLink, GripVertical, ChevronUp, ChevronDown,
+  ArrowUpToLine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -80,6 +81,7 @@ interface ProjectRowProps {
   onSelect: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onMoveToTop: () => void;
   onDragStart: () => void;
   onDragOver: (e: React.DragEvent) => void;
   onDrop: () => void;
@@ -97,6 +99,7 @@ function ProjectRow({
   onSelect,
   onMoveUp,
   onMoveDown,
+  onMoveToTop,
   onDragStart,
   onDragOver,
   onDrop,
@@ -128,6 +131,17 @@ function ProjectRow({
         }}
       >
         <button
+          onClick={(e) => { e.stopPropagation(); onMoveToTop(); }}
+          disabled={isFirst}
+          className={cn(
+            "p-0.5 rounded transition-colors",
+            isFirst ? "text-[#313244] cursor-default" : "text-[#a6e3a1] hover:text-[#cdd6f4] hover:bg-[#313244]"
+          )}
+          title="Move to top"
+        >
+          <ArrowUpToLine className="h-3 w-3" />
+        </button>
+        <button
           onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
           disabled={isFirst}
           className={cn(
@@ -138,7 +152,6 @@ function ProjectRow({
         >
           <ChevronUp className="h-3 w-3" />
         </button>
-        <GripVertical className="h-3 w-3 text-[#6c7086] cursor-grab active:cursor-grabbing" />
         <button
           onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
           disabled={isLast}
@@ -328,6 +341,16 @@ export default function ProjectSidebar({
     updateOrder(newKeys);
   }, [sortedProjects, updateOrder]);
 
+  const moveToTop = useCallback((key: string) => {
+    const keys = sortedProjects.map(projectKey);
+    const idx = keys.indexOf(key);
+    if (idx <= 0) return;
+    const newKeys = [...keys];
+    newKeys.splice(idx, 1);
+    newKeys.unshift(key);
+    updateOrder(newKeys);
+  }, [sortedProjects, updateOrder]);
+
   const handleDragStart = useCallback((key: string) => {
     draggedRef.current = key;
     setDraggedKey(key);
@@ -489,6 +512,7 @@ export default function ProjectSidebar({
                   }}
                   onMoveUp={() => moveProject(key, "up")}
                   onMoveDown={() => moveProject(key, "down")}
+                  onMoveToTop={() => moveToTop(key)}
                   onDragStart={() => handleDragStart(key)}
                   onDragOver={(e) => handleDragOver(e, key)}
                   onDrop={() => handleDrop(key)}
