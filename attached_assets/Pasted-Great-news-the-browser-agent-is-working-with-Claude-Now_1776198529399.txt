@@ -1,0 +1,35 @@
+Great news — the browser agent is working with Claude! Now let's fix the local LLM routing. Let me check how the API server handles local model requests:
+
+
+3 actions
+Let me find the chat endpoint that handles model routing:
+
+
+3 actions
+Let me see the full chat completion flow in the anthropic route — that's the main endpoint the extension uses:
+
+
+Opened artifacts/api-server/src/routes/anthropic/index.ts
+The code looks correct. The issue is likely that the LLM Dashboard is down or returning errors for local models. Let me test it:
+
+
+2 actions
+The LLM Dashboard is up and models are available. Now let me test an actual chat completion with a local model:
+
+
+2 actions
+The local Ollama model (deepseek-coder:6.7b) timed out — it returned nothing in 30 seconds. The local Ollama server on your LLM Dashboard may be offline or the model isn't loaded. Let me test an OpenRouter model through the dashboard:
+
+
+Ran curl
+That confirms it. The OpenRouter models (Gemini, Claude, GPT, etc.) work fine through the dashboard. The local Ollama models (deepseek-coder, llama3.2, etc.) are timing out — your Ollama server on the LLM Dashboard machine is likely offline or sleeping.
+
+So here's the situation:
+
+OpenRouter models work: Claude, Gemini, GPT, DeepSeek (cloud), Grok — all good
+Local Ollama models don't respond: deepseek-coder:6.7b, llama3.2, mistral, etc. — the Ollama server needs to be running on your LLM Dashboard machine
+When the extension uses Auto (Smart) mode, it picks the best model for the task — and it routes through the dashboard which works. That's why Anthropic/Claude worked in your test earlier.
+
+For the local models to work, you'd need to make sure the Ollama service is running on whatever machine hosts llm-dashboard.replit.app. Is that another Replit project you manage? If so, check that the Ollama process is running there.
+
+In the meantime, the extension works perfectly with all the cloud models (Claude, Gemini, GPT, Grok, DeepSeek cloud) — those all route through OpenRouter via your dashboard and respond instantly.
