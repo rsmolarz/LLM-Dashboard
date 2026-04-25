@@ -815,6 +815,183 @@ export function cleanupAbandonedScratchDirs(now: number = Date.now()): {
   return { removed, evicted, kept, errors };
 }
 
+/**
+ * Materialise a host workspace file into the user's scratch dir at
+ * the same relative path, replacing any top-level shared symlink
+ * along the way with a real directory whose remaining children stay
+ * symlinked to their host counterparts. After this returns the file
+ * is "private" — the user can edit it through the workbench shell
+ * and the scratch view will surface it with the `private` badge.
+ *
+ * Walks each ancestor of `relPath`. Whenever an ancestor is one of
+ * the top-level shared symlinks (e.g. `<scratch>/src` → `<host>/src`)
+ * the symlink is unlinked, replaced with a real directory of the
+ * same name, and every host child of the original target is
+ * re-mirrored as its own symlink so the user keeps read access to
+ * sibling files via the same path. Already-real ancestors are left
+ * alone.
+ *
+ * Refuses to overwrite an existing real (non-symlink) entry at the
+ * destination — that would clobber user state. The caller is expected
+ * to have run `safeBasedPath` on `relPath` to guarantee it stays
+ * inside both PROJECT_ROOT and the scratch dir.
+ *
+ * Errors thrown carry an `errno`-style `code` property so the route
+ * handler can map them to deterministic HTTP statuses:
+ *   - `MISSING_PATH`     — empty / root path
+ *   - `PATH_TRAVERSAL`   — relPath escapes either base
+ *   - `SKIPPED_TOP_LEVEL`— relPath touches a SKIP_SYMLINK_TOP_LEVEL
+ *                         entry (.git, .local, .cache); those are
+ *                         deliberately not part of the scratch view
+ *                         and must not be copyable through this API
+ *   - `NOT_FOUND`        — source missing on host
+ *   - `INVALID_INPUT`    — source is not a regular file, or an
+ *                         ancestor is not a directory
+ *   - `ALREADY_PRIVATE`  — destination already exists as a real file
+ *                         in the user's scratch dir
+ */
+export function materializeScratchFile(
+  userId: string,
+  relPath: string,
+): { absPath: string; bytesWritten: number } {
+  if (typeof relPath !== "string" || relPath.length === 0 || relPath === "." || relPath === "/") {
+    const err: any = new Error("path is required");
+    err.code = "MISSING_PATH";
+    throw err;
+  }
+  const scratchDir = ensureUserScratchDir(userId);
+  const hostSrc = path.resolve(PROJECT_ROOT, relPath);
+  const scratchDest = path.resolve(scratchDir, relPath);
+  const relCheckHost = path.relative(PROJECT_ROOT, hostSrc);
+  const relCheckScratch = path.relative(scratchDir, scratchDest);
+  if (relCheckHost.startsWith("..") || path.isAbsolute(relCheckHost) ||
+      relCheckScratch.startsWith("..") || path.isAbsolute(relCheckScratch)) {
+    const err: any = new Error("Path traversal not allowed");
+    err.code = "PATH_TRAVERSAL";
+    throw err;
+  }
+
+  // Normalise into segments so we can walk top-down; reject the
+  // skip-list ancestors that the scratch view deliberately hides.
+  const parts = relCheckHost.split(path.sep).filter((p) => p.length > 0);
+  if (parts.length === 0) {
+    const err: any = new Error("path is required");
+    err.code = "MISSING_PATH";
+    throw err;
+  }
+  if (SKIP_SYMLINK_TOP_LEVEL.has(parts[0])) {
+    const err: any = new Error(
+      `Files under '${parts[0]}/' are not part of the shared workbench view and cannot be copied to scratch.`,
+    );
+    err.code = "SKIPPED_TOP_LEVEL";
+    throw err;
+  }
+
+  let hostLst: fs.Stats;
+  try {
+    hostLst = fs.statSync(hostSrc);
+  } catch {
+    const err: any = new Error("Source file not found in shared workspace.");
+    err.code = "NOT_FOUND";
+    throw err;
+  }
+  if (!hostLst.isFile()) {
+    const err: any = new Error("Only regular files can be copied to scratch.");
+    err.code = "INVALID_INPUT";
+    throw err;
+  }
+
+  // Pre-flight: refuse if the destination is ALREADY a real, non-
+  // symlink file in the user's scratch (would clobber their state).
+  // We can't just `lstat(scratchDest)` because Node's lstat follows
+  // intermediate symlinks: for `artifacts/api-server/package.json`
+  // it would chase the top-level `<scratch>/artifacts` symlink into
+  // the host workspace and report the host file as a "real file",
+  // false-positively flagging every nested-shared file as private.
+  // Instead we walk segment by segment with lstat: as soon as we
+  // encounter a symlink ancestor, we know everything past that point
+  // is shared host state (and therefore safe to materialise). Only
+  // when EVERY ancestor is a real directory do we look at the leaf.
+  const fileName = parts[parts.length - 1];
+  const dirParts = parts.slice(0, -1);
+  {
+    let walk = scratchDir;
+    let allRealAncestors = true;
+    for (const seg of dirParts) {
+      const next = path.join(walk, seg);
+      let lst: fs.Stats | null = null;
+      try { lst = fs.lstatSync(next); } catch { /* ENOENT */ }
+      if (!lst) { allRealAncestors = false; break; }
+      if (lst.isSymbolicLink() || !lst.isDirectory()) { allRealAncestors = false; break; }
+      walk = next;
+    }
+    if (allRealAncestors) {
+      let leafLst: fs.Stats | null = null;
+      try { leafLst = fs.lstatSync(path.join(walk, fileName)); } catch {}
+      if (leafLst && !leafLst.isSymbolicLink() && !leafLst.isDirectory()) {
+        const err: any = new Error(
+          "A private copy already exists at this path. Delete it first if you want to refresh from the shared file.",
+        );
+        err.code = "ALREADY_PRIVATE";
+        throw err;
+      }
+    }
+  }
+  let curScratch = scratchDir;
+  let curHost = PROJECT_ROOT;
+  for (const seg of dirParts) {
+    const nextScratch = path.join(curScratch, seg);
+    const nextHost = path.join(curHost, seg);
+    let lst: fs.Stats | null = null;
+    try { lst = fs.lstatSync(nextScratch); } catch {}
+    if (!lst) {
+      // Ancestor doesn't exist in the scratch view at all (e.g. the
+      // host has it but the user nuked the symlink). Just create the
+      // real dir; no siblings to mirror.
+      fs.mkdirSync(nextScratch);
+    } else if (lst.isSymbolicLink()) {
+      // Snapshot host children, replace the symlink with a real dir,
+      // then re-mirror every child as its own symlink so the user
+      // keeps read access to siblings through the same path.
+      let hostEntries: fs.Dirent[] = [];
+      try { hostEntries = fs.readdirSync(nextHost, { withFileTypes: true }); } catch {}
+      try { fs.unlinkSync(nextScratch); } catch {}
+      fs.mkdirSync(nextScratch);
+      for (const e of hostEntries) {
+        try {
+          fs.symlinkSync(path.join(nextHost, e.name), path.join(nextScratch, e.name));
+        } catch { /* best-effort; EEXIST is harmless */ }
+      }
+    } else if (!lst.isDirectory()) {
+      const err: any = new Error(`Path conflict: '${seg}' exists in scratch but is not a directory.`);
+      err.code = "INVALID_INPUT";
+      throw err;
+    }
+    curScratch = nextScratch;
+    curHost = nextHost;
+  }
+
+  // After parent materialisation the destination is either absent
+  // (we just created the parent) or a per-entry symlink we put in
+  // place; either way we can clear it and write the real file.
+  const destAbs = path.join(curScratch, fileName);
+  let finalLst: fs.Stats | null = null;
+  try { finalLst = fs.lstatSync(destAbs); } catch {}
+  if (finalLst && !finalLst.isSymbolicLink()) {
+    const err: any = new Error(
+      "A private copy already exists at this path. Delete it first if you want to refresh from the shared file.",
+    );
+    err.code = "ALREADY_PRIVATE";
+    throw err;
+  }
+  if (finalLst) {
+    try { fs.unlinkSync(destAbs); } catch {}
+  }
+  fs.copyFileSync(hostSrc, destAbs);
+  const stat = fs.statSync(destAbs);
+  return { absPath: destAbs, bytesWritten: stat.size };
+}
+
 let cleanupTimer: NodeJS.Timeout | null = null;
 
 /**

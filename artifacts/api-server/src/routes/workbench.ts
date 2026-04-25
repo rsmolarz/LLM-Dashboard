@@ -11,7 +11,7 @@ import * as projectCtx from "../lib/project-context";
 import { unifiedDiff } from "../lib/file-diff";
 import { checkShellSafety, checkGitSafety, isGitCommand } from "../lib/command-safety";
 import { runSandboxed } from "../lib/command-sandbox";
-import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo, getUserScratchDir } from "../lib/user-workspace";
+import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo, getUserScratchDir, materializeScratchFile } from "../lib/user-workspace";
 import { requireAuth } from "../middlewares/rateLimiter";
 import { randomBytes } from "crypto";
 
@@ -305,6 +305,9 @@ type WorkbenchErrorCode =
   | "PROJECT_UNRESOLVED"
   | "PROJECT_NOT_PULLED"
   | "AUTH_REQUIRED"
+  | "ALREADY_PRIVATE"
+  | "SKIPPED_TOP_LEVEL"
+  | "QUOTA_EXCEEDED"
   | "GIT_ERROR"
   | "DB_QUERY_FAILED"
   | "AI_REQUEST_FAILED"
@@ -735,6 +738,99 @@ router.get("/file-download", async (req, res): Promise<void> => {
     const fullPath = safeBasedPath(base, filePath);
     sendStream(fullPath, baseName);
   } catch (err: any) {
+    const c = classifyWorkbenchError(err);
+    res.status(c.status).json({ error: c.message, code: c.code });
+  }
+});
+
+/**
+ * Materialise a shared host file into the caller's per-user scratch
+ * dir at the same relative path so they can edit it in the workbench
+ * shell without typing the equivalent `cp` / `cat >` incantation
+ * themselves. The browser-facing "Make a private copy" button calls
+ * this endpoint and then refetches the file listing — the same row
+ * flips from the Shared badge to the Private badge in place.
+ *
+ * Auth-required (anonymous users have no scratch dir to copy into).
+ * Refuses to overwrite an existing real file in scratch (so a user
+ * can never accidentally clobber their own private edits by clicking
+ * the button twice). Refuses entries inside the scratch view's skip-
+ * list (`.git`, `.local`, `.cache`) — those aren't shared with the
+ * user in the first place. Per-user disk quota is enforced before we
+ * touch the filesystem so a user already over the cap can't grow it
+ * further via this path.
+ */
+router.post("/copy-to-scratch", requireAuth, async (req, res): Promise<void> => {
+  const filePath = (req.body as Record<string, unknown> | undefined)?.path;
+  if (typeof filePath !== "string" || filePath.length === 0) {
+    res.status(400).json({ error: "path is required", code: "MISSING_PATH" satisfies WorkbenchErrorCode });
+    return;
+  }
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required", code: "AUTH_REQUIRED" satisfies WorkbenchErrorCode });
+    return;
+  }
+  // Path traversal pre-flight: refuse before we touch the FS so the
+  // error response is deterministic. `safeBasedPath` throws on any
+  // `..` escape; we re-validate against both bases inside the helper
+  // too, but the early check keeps the error code stable here.
+  try {
+    safeBasedPath(PROJECT_ROOT, filePath);
+  } catch (err: any) {
+    res.status(400).json({
+      error: err?.message || "Path traversal not allowed",
+      code: "PATH_TRAVERSAL" satisfies WorkbenchErrorCode,
+    });
+    return;
+  }
+  // Quota gate: same posture as POST /api/shell — refuse early when
+  // the user is already over their cap so the new write can't push
+  // them deeper into overage.
+  const quotaCheck = checkUserQuota(userId);
+  if (quotaCheck.blocked) {
+    res.status(409).json({
+      error: quotaCheck.reason || "Scratch disk quota exceeded.",
+      code: "QUOTA_EXCEEDED" satisfies WorkbenchErrorCode,
+      quota: quotaCheck.quota,
+    });
+    return;
+  }
+  try {
+    const result = materializeScratchFile(userId, filePath);
+    res.json({
+      ok: true,
+      path: filePath,
+      bytesWritten: result.bytesWritten,
+      scope: { origin: "workspace", mode: "scratch", privacy: "private" },
+      quota: getUserQuotaInfo(userId),
+    });
+  } catch (err: any) {
+    const code = err?.code as string | undefined;
+    if (code === "ALREADY_PRIVATE") {
+      res.status(409).json({ error: err.message, code: "ALREADY_PRIVATE" satisfies WorkbenchErrorCode });
+      return;
+    }
+    if (code === "NOT_FOUND") {
+      res.status(404).json({ error: err.message, code: "NOT_FOUND" satisfies WorkbenchErrorCode });
+      return;
+    }
+    if (code === "INVALID_INPUT") {
+      res.status(400).json({ error: err.message, code: "INVALID_INPUT" satisfies WorkbenchErrorCode });
+      return;
+    }
+    if (code === "MISSING_PATH") {
+      res.status(400).json({ error: err.message, code: "MISSING_PATH" satisfies WorkbenchErrorCode });
+      return;
+    }
+    if (code === "PATH_TRAVERSAL") {
+      res.status(400).json({ error: err.message, code: "PATH_TRAVERSAL" satisfies WorkbenchErrorCode });
+      return;
+    }
+    if (code === "SKIPPED_TOP_LEVEL") {
+      res.status(403).json({ error: err.message, code: "SKIPPED_TOP_LEVEL" satisfies WorkbenchErrorCode });
+      return;
+    }
     const c = classifyWorkbenchError(err);
     res.status(c.status).json({ error: c.message, code: c.code });
   }

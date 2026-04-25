@@ -911,3 +911,193 @@ test("POST /api/shell blocks writes through symlinks back to the host workspace"
     "payload must NOT have landed in the shared host workspace",
   );
 });
+
+// =============================================================================
+// POST /api/copy-to-scratch (task #69)
+// =============================================================================
+
+interface CopyResult {
+  status: number;
+  body: {
+    ok?: boolean;
+    path?: string;
+    bytesWritten?: number;
+    scope?: { origin?: string; mode?: string; privacy?: string };
+    error?: string;
+    code?: string;
+  };
+}
+
+async function copyToScratch(userId: string | null, filePath: unknown): Promise<CopyResult> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (userId) headers["x-test-user"] = userId;
+  const res = await fetch(`${serverUrl}/api/copy-to-scratch`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ path: filePath }),
+  });
+  const text = await res.text();
+  let body: any = {};
+  try { body = text ? JSON.parse(text) : {}; } catch { body = { _raw: text }; }
+  return { status: res.status, body };
+}
+
+test("POST /api/copy-to-scratch refuses anonymous callers", async () => {
+  const r = await copyToScratch(null, "package.json");
+  assert.equal(r.status, 401);
+});
+
+test("POST /api/copy-to-scratch refuses missing or empty path", async () => {
+  const userId = trackUser(`copy-missing-${randomBytes(4).toString("hex")}`);
+  const a = await copyToScratch(userId, "");
+  assert.equal(a.status, 400);
+  assert.equal(a.body.code, "MISSING_PATH");
+  const b = await copyToScratch(userId, undefined);
+  assert.equal(b.status, 400);
+  assert.equal(b.body.code, "MISSING_PATH");
+});
+
+test("POST /api/copy-to-scratch refuses path traversal", async () => {
+  const userId = trackUser(`copy-traversal-${randomBytes(4).toString("hex")}`);
+  const r = await copyToScratch(userId, "../../etc/passwd");
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "PATH_TRAVERSAL");
+});
+
+test("POST /api/copy-to-scratch refuses entries inside the scratch-view skip list", async () => {
+  const userId = trackUser(`copy-skiplist-${randomBytes(4).toString("hex")}`);
+  // .local/ holds per-user agent state and is deliberately NOT
+  // mirrored into the scratch view; it must not be reachable through
+  // the copy endpoint either.
+  const r = await copyToScratch(userId, ".local/something.txt");
+  assert.equal(r.status, 403);
+  assert.equal(r.body.code, "SKIPPED_TOP_LEVEL");
+});
+
+test("POST /api/copy-to-scratch returns NOT_FOUND when source is missing on host", async () => {
+  const userId = trackUser(`copy-missing-src-${randomBytes(4).toString("hex")}`);
+  const ghostName = `does-not-exist-${randomBytes(4).toString("hex")}.txt`;
+  const r = await copyToScratch(userId, ghostName);
+  assert.equal(r.status, 404);
+  assert.equal(r.body.code, "NOT_FOUND");
+});
+
+test("POST /api/copy-to-scratch refuses directories", async () => {
+  const userId = trackUser(`copy-dir-${randomBytes(4).toString("hex")}`);
+  // `artifacts/` is a host directory and must not be copyable as a file.
+  const r = await copyToScratch(userId, "artifacts");
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "INVALID_INPUT");
+});
+
+test("POST /api/copy-to-scratch materialises a top-level shared file as a real file", async () => {
+  const userId = trackUser(`copy-toplevel-${randomBytes(4).toString("hex")}`);
+  const scratchDir = userWs.ensureUserScratchDir(userId);
+  // Sanity: package.json starts as a symlink in the scratch view.
+  const dest = path.join(scratchDir, "package.json");
+  const before = fs.lstatSync(dest);
+  assert.ok(before.isSymbolicLink(), "precondition: package.json should start as a symlink");
+
+  const r = await copyToScratch(userId, "package.json");
+  assert.equal(r.status, 200, `expected 200, got ${r.status} ${JSON.stringify(r.body)}`);
+  assert.equal(r.body.ok, true);
+  assert.equal(r.body.scope?.privacy, "private");
+
+  // After materialisation the destination is a real file with the
+  // same bytes as the host source.
+  const after = fs.lstatSync(dest);
+  assert.ok(!after.isSymbolicLink(), "destination should no longer be a symlink");
+  assert.ok(after.isFile(), "destination should be a regular file");
+  const got = fs.readFileSync(dest, "utf-8");
+  const want = fs.readFileSync(path.join(PROJECT_ROOT, "package.json"), "utf-8");
+  assert.equal(got, want, "private copy must contain the same bytes as the shared host file");
+
+  // The file listing should now flip the privacy badge to private.
+  const listing = await listFiles(userId, ".");
+  const pkg = listing.body.items.find(i => i.name === "package.json");
+  assert.ok(pkg, "package.json should still appear in the listing");
+  assert.equal(pkg!.privacy, "private", "row should now be tagged private after copy-to-scratch");
+});
+
+test("POST /api/copy-to-scratch materialises a nested shared file and keeps siblings reachable via symlinks", async () => {
+  const userId = trackUser(`copy-nested-${randomBytes(4).toString("hex")}`);
+  // Pick a stable nested host file. package.json sits inside the
+  // api-server artifact and is guaranteed to exist.
+  const relPath = "artifacts/api-server/package.json";
+  const r = await copyToScratch(userId, relPath);
+  assert.equal(r.status, 200, `expected 200, got ${r.status} ${JSON.stringify(r.body)}`);
+  assert.equal(r.body.ok, true);
+
+  const scratchDir = userWs.ensureUserScratchDir(userId);
+  const dest = path.join(scratchDir, relPath);
+  const after = fs.lstatSync(dest);
+  assert.ok(!after.isSymbolicLink(), "destination should be a real file");
+  assert.ok(after.isFile(), "destination should be a regular file");
+
+  // Each ancestor that used to be a top-level symlink should now be a
+  // real directory (so the user can write underneath it). The leaf
+  // ancestor (`artifacts/api-server`) is now also a real directory
+  // populated with per-entry symlinks back to the host.
+  const apiServerDir = path.join(scratchDir, "artifacts", "api-server");
+  const apiLst = fs.lstatSync(apiServerDir);
+  assert.ok(apiLst.isDirectory() && !apiLst.isSymbolicLink(), "artifacts/api-server should now be a real dir in scratch");
+
+  // Sibling files of package.json (e.g. tsconfig.json) must still be
+  // reachable through the scratch view as per-entry symlinks back to
+  // their host counterparts.
+  const sibling = path.join(apiServerDir, "tsconfig.json");
+  if (fs.existsSync(path.join(PROJECT_ROOT, "artifacts/api-server/tsconfig.json"))) {
+    const sLst = fs.lstatSync(sibling);
+    assert.ok(sLst.isSymbolicLink(), "sibling tsconfig.json should remain a symlink to the host");
+    const target = fs.readlinkSync(sibling);
+    assert.equal(target, path.join(PROJECT_ROOT, "artifacts/api-server/tsconfig.json"));
+  }
+
+  // The /api/file-content endpoint should now report the row as private.
+  const res = await fetch(
+    `${serverUrl}/api/file-content?path=${encodeURIComponent(relPath)}`,
+    { headers: { "x-test-user": userId } },
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json() as { scope?: { privacy?: string }; content?: string };
+  assert.equal(body.scope?.privacy, "private", "viewer should now report private after copy-to-scratch");
+});
+
+test("POST /api/copy-to-scratch refuses to clobber an existing private file", async () => {
+  const userId = trackUser(`copy-clobber-${randomBytes(4).toString("hex")}`);
+  // First call materialises the shared file as private.
+  const first = await copyToScratch(userId, "package.json");
+  assert.equal(first.status, 200);
+  // Mutate the local copy so we can prove it survives the second call.
+  const scratchDir = userWs.ensureUserScratchDir(userId);
+  const dest = path.join(scratchDir, "package.json");
+  const sentinel = `// user-edited sentinel ${randomBytes(4).toString("hex")}\n`;
+  fs.writeFileSync(dest, sentinel);
+
+  // Second call must refuse — clobbering would silently destroy the
+  // user's edits, which is exactly the failure mode the endpoint is
+  // designed to prevent.
+  const second = await copyToScratch(userId, "package.json");
+  assert.equal(second.status, 409);
+  assert.equal(second.body.code, "ALREADY_PRIVATE");
+  // Local edits must still be present after the refused second call.
+  assert.equal(fs.readFileSync(dest, "utf-8"), sentinel);
+});
+
+test("POST /api/copy-to-scratch refuses when the user is over their disk quota", async () => {
+  const userId = trackUser(`copy-quota-${randomBytes(4).toString("hex")}`);
+  // Force a tiny per-user cap, then write directly into the scratch
+  // dir (bypassing the kernel-bounded shell `prlimit --fsize`) to
+  // push the user over. The endpoint's pre-flight quota gate should
+  // refuse without touching the filesystem further.
+  userWs.__testing__.setUserQuotaBytes(64);
+  try {
+    const dir = userWs.ensureUserScratchDir(userId);
+    fs.writeFileSync(path.join(dir, `big-${randomBytes(2).toString("hex")}.bin`), Buffer.alloc(200));
+    const r = await copyToScratch(userId, "package.json");
+    assert.equal(r.status, 409, `expected 409, got ${r.status} ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.code, "QUOTA_EXCEEDED");
+  } finally {
+    userWs.__testing__.setUserQuotaBytes(null);
+  }
+});

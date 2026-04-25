@@ -7,7 +7,7 @@ import {
   Clock, HardDrive, Cpu, AlertTriangle,
   CheckCircle2, XCircle, FileCode, GitCommit, Trash2,
   Sparkles, Send, Square, User, Bot, Code2,
-  ChevronUp, ChevronLeft,
+  ChevronUp, ChevronLeft, FilePlus2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
@@ -534,6 +534,8 @@ function FileExplorerPanel() {
   const { project } = useSelectedProject();
   const projectKey = project ? JSON.stringify(project) : "";
   const projectQuery = project ? `&project=${encodeURIComponent(JSON.stringify(project))}` : "";
+  const [copyError, setCopyError] = useState<{ path: string; message: string } | null>(null);
+  const [pendingCopyPath, setPendingCopyPath] = useState<string | null>(null);
 
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: ["workbench-files", currentPath, projectKey],
@@ -557,6 +559,63 @@ function FileExplorerPanel() {
       refetch();
     }
   }, [fileContent?.code, selectedFile, refetch]);
+
+  // "Make a private copy" — calls the workbench copy-to-scratch
+  // endpoint, which materialises the shared host file into the user's
+  // own scratch dir at the same relative path. We refetch the file
+  // listing AND the open file content (if any) so the row in the
+  // browser flips its Privacy badge from Shared → Private and the
+  // viewer header updates in place. The mutation is project-scoped
+  // out (sharedness only applies to the per-user scratch view of the
+  // host workspace; project descriptors have their own writeable
+  // working trees).
+  const copyToScratchMutation = useMutation<
+    { ok: boolean; path: string },
+    Error,
+    string
+  >({
+    mutationFn: async (filePath: string) => {
+      setPendingCopyPath(filePath);
+      let res: Response;
+      try {
+        res = await fetch(`/api/workbench/copy-to-scratch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ path: filePath }),
+        });
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : "Network error";
+        throw new Error(reason);
+      }
+      const body = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const reason = typeof (body as any)?.error === "string"
+          ? (body as any).error
+          : `Copy failed (HTTP ${res.status})`;
+        throw new Error(reason);
+      }
+      return { ok: true, path: filePath };
+    },
+    onSuccess: (_, filePath) => {
+      setCopyError(null);
+      setPendingCopyPath(null);
+      void refetch();
+      if (selectedFile === filePath) {
+        void refetchContent();
+      }
+    },
+    onError: (err, filePath) => {
+      setPendingCopyPath(null);
+      setCopyError({ path: filePath, message: err.message || "Copy failed" });
+    },
+  });
+
+  const handleCopyToScratch = (filePath: string) => {
+    if (project) return; // not applicable when a project descriptor is active
+    setCopyError(null);
+    copyToScratchMutation.mutate(filePath);
+  };
 
   const items: FileItem[] = data?.items || [];
   const fileScope: FileScope = (data?.scope && typeof data.scope === "object") ? data.scope : {};
@@ -608,6 +667,11 @@ function FileExplorerPanel() {
         <div className="w-1/3 border-r border-[#313244] overflow-y-auto">
           <div className="p-1">
             <ScratchModeBanner scope={fileScope} />
+            {copyError && copyError.path !== selectedFile && (
+              <div className="mx-1 mb-1 px-2 py-1 text-[10px] rounded border border-[#f38ba8]/40 bg-[#f38ba8]/10 text-[#f38ba8]">
+                Couldn&apos;t copy <span className="font-mono">{copyError.path}</span>: {copyError.message}
+              </div>
+            )}
             {currentPath !== "." && (
               <button
                 className="w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5"
@@ -631,21 +695,49 @@ function FileExplorerPanel() {
                 onRetry={() => refetch()}
               />
             ) : (
-              items.map(item => (
-                <button
-                  key={item.path}
-                  className={cn(
-                    "w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5",
-                    selectedFile === item.path && "bg-[#45475a]"
-                  )}
-                  onClick={() => handleClick(item)}
-                >
-                  {item.type === "directory" ? <Folder className="h-3.5 w-3.5 text-yellow-500" /> : getFileIcon(item.name)}
-                  <span className="truncate flex-1 text-[#cdd6f4]">{item.name}</span>
-                  <PrivacyBadge privacy={item.privacy} />
-                  {item.size !== undefined && <span className="text-[10px] text-[#585b70]">{formatBytes(item.size)}</span>}
-                </button>
-              ))
+              items.map(item => {
+                const canCopy =
+                  !project &&
+                  item.type === "file" &&
+                  item.privacy === "shared";
+                const isCopying = pendingCopyPath === item.path && copyToScratchMutation.isPending;
+                return (
+                  <div
+                    key={item.path}
+                    className={cn(
+                      "group flex items-center w-full",
+                      selectedFile === item.path && "bg-[#45475a]"
+                    )}
+                  >
+                    <button
+                      className="flex-1 text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5 min-w-0"
+                      onClick={() => handleClick(item)}
+                    >
+                      {item.type === "directory" ? <Folder className="h-3.5 w-3.5 text-yellow-500" /> : getFileIcon(item.name)}
+                      <span className="truncate flex-1 text-[#cdd6f4]">{item.name}</span>
+                      <PrivacyBadge privacy={item.privacy} />
+                      {item.size !== undefined && <span className="text-[10px] text-[#585b70]">{formatBytes(item.size)}</span>}
+                    </button>
+                    {canCopy && (
+                      <button
+                        type="button"
+                        title="Make a private copy in your scratch dir"
+                        aria-label={`Make a private copy of ${item.name}`}
+                        className="ml-1 mr-1 p-1 rounded text-[#89b4fa] hover:bg-[#313244] hover:text-[#a6e3a1] disabled:opacity-50 disabled:cursor-not-allowed opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        disabled={isCopying}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCopyToScratch(item.path);
+                        }}
+                      >
+                        {isCopying
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <FilePlus2 className="h-3 w-3" />}
+                      </button>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
@@ -669,6 +761,23 @@ function FileExplorerPanel() {
                     <PrivacyBadge privacy={fileContent?.scope?.privacy as EntryPrivacy | undefined} />
                   </div>
                   <div className="flex items-center gap-1.5">
+                    {!project && fileContent?.scope?.privacy === "shared" && selectedFile && (
+                      <button
+                        type="button"
+                        title="Copy this shared file into your private scratch dir so you can edit it from the workbench shell."
+                        aria-label="Make a private copy of the open file"
+                        className="text-[10px] px-1.5 py-0.5 rounded border border-[#a6e3a1]/40 text-[#a6e3a1] hover:bg-[#a6e3a1]/10 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                        disabled={
+                          copyToScratchMutation.isPending && pendingCopyPath === selectedFile
+                        }
+                        onClick={() => handleCopyToScratch(selectedFile)}
+                      >
+                        {copyToScratchMutation.isPending && pendingCopyPath === selectedFile
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <FilePlus2 className="h-3 w-3" />}
+                        Make a private copy
+                      </button>
+                    )}
                     <span className="text-[10px] text-[#585b70]">{formatBytes(fileContent?.size || 0)}</span>
                     <button className="p-0.5 rounded hover:bg-[#45475a]" onClick={() => navigator.clipboard.writeText(fileContent?.content || "")}>
                       <Copy className="h-3 w-3 text-[#6c7086]" />
@@ -677,7 +786,12 @@ function FileExplorerPanel() {
                 </div>
                 {fileContent?.scope?.privacy === "shared" && (
                   <div className="px-3 py-1 text-[10px] text-[#a6adc8] bg-[#181825] border-b border-[#313244]">
-                    Shared with the project — read-only here. To edit, pick a project and use the project-aware shell.
+                    Shared with the project — read-only here. Click <strong>Make a private copy</strong> to drop a writeable copy into your scratch, or pick a project to use the project-aware shell.
+                  </div>
+                )}
+                {copyError && copyError.path === selectedFile && (
+                  <div className="px-3 py-1 text-[10px] text-[#f38ba8] bg-[#1e1e2e] border-b border-[#313244]">
+                    Couldn&apos;t make a private copy: {copyError.message}
                   </div>
                 )}
                 <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all text-[#cdd6f4] select-text cursor-text">{fileContent?.content}</pre>
