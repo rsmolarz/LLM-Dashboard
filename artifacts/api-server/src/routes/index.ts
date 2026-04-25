@@ -59,6 +59,7 @@ import chatImportRouter from "./chat-import";
 import clawAgentRouter from "./claw-agent";
 import workbenchRouter from "./workbench";
 import adminWorkbenchRouter from "./admin-workbench";
+import adminScratchRouter from "./admin-scratch";
 import sshRouter from "./ssh";
 import projectContextRouter from "./project-context";
 
@@ -126,6 +127,7 @@ router.use(clawAgentRouter);
 router.use("/workbench", workbenchRouter);
 router.use("/workbench", sshRouter);
 router.use(adminWorkbenchRouter);
+router.use(adminScratchRouter);
 router.use("/project-context", projectContextRouter);
 
 export default router;

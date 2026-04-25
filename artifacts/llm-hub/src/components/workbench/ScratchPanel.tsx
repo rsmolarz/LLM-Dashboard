@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { HardDrive, RefreshCw, Trash2, Folder, File as FileIcon, Link as LinkIcon, ChevronLeft, AlertTriangle, Loader2 } from "lucide-react";
+import { useAuth } from "@workspace/replit-auth-web";
+import { HardDrive, RefreshCw, Trash2, Folder, File as FileIcon, Link as LinkIcon, ChevronLeft, AlertTriangle, Loader2, Users, User as UserIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PanelLoadError, PanelQueryError, asPanelQueryError } from "./PanelLoadError";
 
@@ -19,6 +20,21 @@ type ScratchListResponse = {
   quota: { usedBytes: number; capBytes: number; remainingBytes: number };
 };
 
+type AdminUsageEntry = {
+  userIdHash: string;
+  usedBytes: number;
+  mtimeMs: number;
+  overThreshold: boolean;
+};
+
+type AdminUsageResponse = {
+  totalBytes: number;
+  hostCapBytes: number;
+  userCapBytes: number;
+  overThresholdPct: number;
+  users: AdminUsageEntry[];
+};
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -29,6 +45,20 @@ function formatBytes(bytes: number): string {
     i++;
   }
   return `${n.toFixed(n >= 100 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function formatRelativeTime(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "—";
+  const diff = Date.now() - ms;
+  if (diff < 0) return "just now";
+  const secs = Math.round(diff / 1000);
+  if (secs < 60) return `${secs}s ago`;
+  const mins = Math.round(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
 }
 
 function joinPath(parent: string, name: string): string {
@@ -51,21 +81,231 @@ function parentPath(p: string): string {
  * UI-side fix for the chicken-and-egg "shell refuses to run because
  * scratch is full, but the only way to clear scratch is to run
  * shell" problem.
+ *
+ * Admins also get an "All users" toggle that swaps the panel into a
+ * cross-user mode: it lists every per-user scratch dir on the host
+ * (size + last-active), and clicking one drills into the same
+ * list/delete/clear UX as the per-user mode but pointed at that
+ * user's scratch via the `/api/admin/scratch?userIdHash=...`
+ * endpoints. Non-admins never see the toggle and the admin queries
+ * are never issued for them.
  */
 export function ScratchPanel() {
+  const queryClient = useQueryClient();
+  const { isAdmin } = useAuth();
+  // Admin "All users" toggle. Defaults off so admins still see their
+  // own scratch by default; flipping on shows the host overview and
+  // lets them drill into other users.
+  const [adminMode, setAdminMode] = useState<boolean>(false);
+  // Hash of the user the admin is currently inspecting (when in
+  // adminMode). null means "show the overview list, not a specific
+  // user's contents".
+  const [adminTargetHash, setAdminTargetHash] = useState<string | null>(null);
+
+  return (
+    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
+        <div className="flex items-center gap-2 min-w-0">
+          <HardDrive className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+          <span className="text-xs text-[#cdd6f4] font-mono">Scratch</span>
+          {adminMode && (
+            <span className="text-[10px] uppercase tracking-wide text-amber-300 font-mono px-1 rounded bg-amber-500/10 border border-amber-500/30">
+              Admin
+            </span>
+          )}
+        </div>
+        {isAdmin && (
+          <div className="flex items-center gap-1">
+            <button
+              className={cn(
+                "px-2 py-0.5 text-[10px] rounded border inline-flex items-center gap-1",
+                adminMode
+                  ? "border-amber-500/50 text-amber-300 bg-amber-500/10"
+                  : "border-[#313244] text-[#a6adc8] hover:bg-[#313244]"
+              )}
+              onClick={() => {
+                setAdminMode((v) => !v);
+                setAdminTargetHash(null);
+                queryClient.invalidateQueries({ queryKey: ["workbench-scratch"] });
+                queryClient.invalidateQueries({ queryKey: ["admin-scratch-overview"] });
+                queryClient.invalidateQueries({ queryKey: ["admin-scratch-user"] });
+              }}
+              title="Switch between your own scratch and the host-wide admin view"
+            >
+              {adminMode ? (
+                <>
+                  <UserIcon className="h-3 w-3" /> My scratch
+                </>
+              ) : (
+                <>
+                  <Users className="h-3 w-3" /> All users
+                </>
+              )}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {adminMode ? (
+        adminTargetHash ? (
+          <UserScratchView
+            mode="admin"
+            targetHash={adminTargetHash}
+            onBackToOverview={() => setAdminTargetHash(null)}
+          />
+        ) : (
+          <AdminOverview onPickUser={(hash) => setAdminTargetHash(hash)} />
+        )
+      ) : (
+        <UserScratchView mode="self" />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Admin-only overview: hits `GET /api/admin/scratch` (no params) and
+ * shows the per-user breakdown. Each row is a button that drills into
+ * that user's scratch dir.
+ */
+function AdminOverview({ onPickUser }: { onPickUser: (hash: string) => void }) {
+  const { data, isLoading, error, refetch, isFetching } = useQuery<AdminUsageResponse, PanelQueryError>({
+    queryKey: ["admin-scratch-overview"],
+    queryFn: async () => {
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/scratch`, { credentials: "include" });
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : "Network error";
+        throw new PanelQueryError(reason, "NETWORK_ERROR");
+      }
+      const body = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const reason = typeof body?.error === "string" ? body.error : `Failed to load admin scratch overview (HTTP ${res.status})`;
+        const code = typeof body?.code === "string" ? body.code : `HTTP_${res.status}`;
+        throw new PanelQueryError(reason, code);
+      }
+      return body as AdminUsageResponse;
+    },
+    retry: false,
+  });
+  const queryError = asPanelQueryError(error);
+  const users = data?.users ?? [];
+
+  return (
+    <>
+      <div className="flex items-center justify-end px-3 py-1.5 border-b border-[#313244] bg-[#181825]">
+        <button
+          className="p-1 rounded hover:bg-[#313244] text-[#6c7086]"
+          onClick={() => refetch()}
+          title="Refresh"
+          disabled={isFetching}
+        >
+          <RefreshCw className={cn("h-3 w-3", isFetching && "animate-spin")} />
+        </button>
+      </div>
+
+      {data && (
+        <div className="px-3 py-2 border-b border-[#313244] bg-[#181825] text-[11px] text-[#a6adc8]">
+          <div>
+            Host total: <span className="font-mono text-[#cdd6f4]">{formatBytes(data.totalBytes)}</span>
+            {" of "}
+            <span className="font-mono text-[#cdd6f4]">{formatBytes(data.hostCapBytes)}</span>
+            {" cap • per-user cap "}
+            <span className="font-mono text-[#cdd6f4]">{formatBytes(data.userCapBytes)}</span>
+          </div>
+          <div className="text-[10px] text-[#6c7086] mt-0.5">
+            Each row is identified by a hashed user id (the raw user id is never exposed here).
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto">
+        {isLoading ? (
+          <div className="p-3 space-y-2">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-6 w-full bg-[#313244] rounded animate-pulse" />
+            ))}
+          </div>
+        ) : queryError ? (
+          <PanelLoadError
+            what="admin scratch overview"
+            message={queryError.message}
+            code={queryError.code}
+            onRetry={() => refetch()}
+          />
+        ) : users.length === 0 ? (
+          <div className="text-center text-[#585b70] text-xs py-6">
+            No per-user scratch dirs on this host yet.
+          </div>
+        ) : (
+          <div className="p-2 space-y-0.5">
+            {users.map((u) => (
+              <button
+                key={u.userIdHash}
+                className="flex items-center gap-2 w-full px-2 py-1.5 rounded text-xs text-left hover:bg-[#313244]"
+                onClick={() => onPickUser(u.userIdHash)}
+                title={`Inspect ${u.userIdHash}`}
+              >
+                <UserIcon className="h-3 w-3 text-blue-400 shrink-0" />
+                <span className="font-mono truncate text-[#cdd6f4]">{u.userIdHash}</span>
+                <span className={cn(
+                  "ml-auto text-[10px] tabular-nums font-mono shrink-0",
+                  u.overThreshold ? "text-yellow-400" : "text-[#a6adc8]",
+                )}>
+                  {formatBytes(u.usedBytes)}
+                </span>
+                <span className="text-[10px] text-[#6c7086] tabular-nums w-16 text-right shrink-0">
+                  {formatRelativeTime(u.mtimeMs)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+/**
+ * Renders the list/delete/clear UX against either the caller's own
+ * scratch dir (`mode="self"`) or another user's scratch dir keyed by
+ * `targetHash` (`mode="admin"`). Shares one component so the two
+ * views stay visually consistent and bug fixes don't have to be
+ * applied twice.
+ */
+function UserScratchView({
+  mode,
+  targetHash,
+  onBackToOverview,
+}: {
+  mode: "self" | "admin";
+  targetHash?: string;
+  onBackToOverview?: () => void;
+}) {
   const queryClient = useQueryClient();
   const [currentPath, setCurrentPath] = useState<string>("");
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [pendingClear, setPendingClear] = useState<boolean>(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const isAdminMode = mode === "admin";
+  const adminQuery = isAdminMode && targetHash
+    ? `userIdHash=${encodeURIComponent(targetHash)}`
+    : "";
+  const listUrl = isAdminMode
+    ? `/api/admin/scratch?${adminQuery}${currentPath ? `&path=${encodeURIComponent(currentPath)}` : ""}`
+    : `/api/workbench/scratch${currentPath ? `?path=${encodeURIComponent(currentPath)}` : ""}`;
+  const queryKey = isAdminMode
+    ? (["admin-scratch-user", targetHash, currentPath] as const)
+    : (["workbench-scratch", currentPath] as const);
+
   const { data, isLoading, error, refetch, isFetching } = useQuery<ScratchListResponse, PanelQueryError>({
-    queryKey: ["workbench-scratch", currentPath],
+    queryKey,
     queryFn: async () => {
       let res: Response;
       try {
-        const qs = currentPath ? `?path=${encodeURIComponent(currentPath)}` : "";
-        res = await fetch(`/api/workbench/scratch${qs}`, { credentials: "include" });
+        res = await fetch(listUrl, { credentials: "include" });
       } catch (err: unknown) {
         const reason = err instanceof Error ? err.message : "Network error";
         throw new PanelQueryError(reason, "NETWORK_ERROR");
@@ -85,10 +325,10 @@ export function ScratchPanel() {
 
   const deleteMutation = useMutation({
     mutationFn: async (relPath: string) => {
-      const res = await fetch(`/api/workbench/scratch?path=${encodeURIComponent(relPath)}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
+      const url = isAdminMode
+        ? `/api/admin/scratch?${adminQuery}&path=${encodeURIComponent(relPath)}`
+        : `/api/workbench/scratch?path=${encodeURIComponent(relPath)}`;
+      const res = await fetch(url, { method: "DELETE", credentials: "include" });
       const body = await res.json().catch(() => ({} as Record<string, unknown>));
       if (!res.ok) {
         const reason = typeof body?.error === "string" ? body.error : `Delete failed (HTTP ${res.status})`;
@@ -99,7 +339,12 @@ export function ScratchPanel() {
     onSuccess: () => {
       setPendingDelete(null);
       setActionError(null);
+      // Invalidate both per-user and admin caches — an admin who
+      // deleted from the admin view should still see fresh data
+      // when they switch back to "My scratch", and vice versa.
       queryClient.invalidateQueries({ queryKey: ["workbench-scratch"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-scratch-user"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-scratch-overview"] });
     },
     onError: (err: Error) => {
       setActionError(err.message);
@@ -108,10 +353,10 @@ export function ScratchPanel() {
 
   const clearMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/workbench/scratch/clear`, {
-        method: "POST",
-        credentials: "include",
-      });
+      const url = isAdminMode
+        ? `/api/admin/scratch/clear?${adminQuery}`
+        : `/api/workbench/scratch/clear`;
+      const res = await fetch(url, { method: "POST", credentials: "include" });
       const body = await res.json().catch(() => ({} as Record<string, unknown>));
       if (!res.ok) {
         const reason = typeof body?.error === "string" ? body.error : `Clear failed (HTTP ${res.status})`;
@@ -126,6 +371,8 @@ export function ScratchPanel() {
       // may no longer exist if they cleared from inside a subdir.
       setCurrentPath("");
       queryClient.invalidateQueries({ queryKey: ["workbench-scratch"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-scratch-user"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-scratch-overview"] });
     },
     onError: (err: Error) => {
       setActionError(err.message);
@@ -139,8 +386,8 @@ export function ScratchPanel() {
   const overQuota = !!quota && quota.usedBytes >= quota.capBytes;
 
   const entries = data?.entries ?? [];
-  const realEntries = entries.filter(e => !e.isSymlink);
-  const symlinkEntries = entries.filter(e => e.isSymlink);
+  const realEntries = entries.filter((e) => !e.isSymlink);
+  const symlinkEntries = entries.filter((e) => e.isSymlink);
 
   const onEnter = (entry: ScratchEntry) => {
     if (entry.type !== "directory" || entry.isSymlink) return;
@@ -152,11 +399,23 @@ export function ScratchPanel() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden">
+    <>
       <div className="flex items-center justify-between px-3 py-1.5 bg-[#181825] border-b border-[#313244]">
         <div className="flex items-center gap-2 min-w-0">
-          <HardDrive className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-          <span className="text-xs text-[#cdd6f4] font-mono">Scratch</span>
+          {isAdminMode && onBackToOverview && (
+            <button
+              className="p-0.5 rounded hover:bg-[#313244] text-[#a6adc8]"
+              onClick={onBackToOverview}
+              title="Back to all users"
+            >
+              <ChevronLeft className="h-3 w-3" />
+            </button>
+          )}
+          {isAdminMode && targetHash && (
+            <span className="text-[10px] text-amber-300 font-mono truncate" title={targetHash}>
+              {targetHash}
+            </span>
+          )}
           <span className="text-[10px] text-[#6c7086] font-mono truncate">
             /{currentPath || ""}
           </span>
@@ -186,7 +445,11 @@ export function ScratchPanel() {
               }
             }}
             disabled={clearMutation.isPending}
-            title="Wipe every file you've created in scratch (workspace mirror entries are kept)"
+            title={
+              isAdminMode
+                ? "Wipe every file this user created in scratch (workspace mirror entries are kept)"
+                : "Wipe every file you've created in scratch (workspace mirror entries are kept)"
+            }
           >
             {clearMutation.isPending ? (
               <span className="inline-flex items-center gap-1"><Loader2 className="h-2.5 w-2.5 animate-spin" /> Clearing…</span>
@@ -229,7 +492,7 @@ export function ScratchPanel() {
               style={{ width: `${usedPct}%` }}
             />
           </div>
-          {overQuota && (
+          {overQuota && !isAdminMode && (
             <div className="mt-2 text-[11px] text-red-300 flex items-start gap-1.5">
               <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
               <span>
@@ -257,7 +520,7 @@ export function ScratchPanel() {
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
           <div className="p-3 space-y-2">
-            {[1, 2, 3].map(i => (
+            {[1, 2, 3].map((i) => (
               <div key={i} className="h-6 w-full bg-[#313244] rounded animate-pulse" />
             ))}
           </div>
@@ -289,10 +552,10 @@ export function ScratchPanel() {
             {realEntries.length > 0 && (
               <div>
                 <h4 className="text-[10px] uppercase tracking-wide text-[#6c7086] mb-1 px-1">
-                  Your files ({realEntries.length})
+                  {isAdminMode ? "User files" : "Your files"} ({realEntries.length})
                 </h4>
                 <div className="space-y-0.5">
-                  {realEntries.map(entry => (
+                  {realEntries.map((entry) => (
                     <ScratchRow
                       key={entry.name}
                       entry={entry}
@@ -318,10 +581,10 @@ export function ScratchPanel() {
                   Workspace mirror ({symlinkEntries.length})
                 </h4>
                 <div className="text-[10px] text-[#585b70] px-1 mb-1">
-                  These point back to the shared project files and don't count against your quota.
+                  These point back to the shared project files and don't count against the quota.
                 </div>
                 <div className="space-y-0.5">
-                  {symlinkEntries.map(entry => (
+                  {symlinkEntries.map((entry) => (
                     <div
                       key={entry.name}
                       className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-[#6c7086]"
@@ -339,7 +602,7 @@ export function ScratchPanel() {
           </div>
         )}
       </div>
-    </div>
+    </>
   );
 }
 

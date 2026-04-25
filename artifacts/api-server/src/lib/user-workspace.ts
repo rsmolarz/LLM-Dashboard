@@ -1217,19 +1217,18 @@ class ScratchPathError extends Error {
 }
 
 /**
- * List the entries of a directory inside the user's scratch root.
- * `subPath` defaults to the scratch root. Symlinks are returned
- * (with `isSymlink=true`) so the UI can show the full directory but
- * mark the system-mirror entries as not-deletable. Recursion stops
- * at symlinks: we never follow a symlink and walk into the shared
- * host workspace from this endpoint (the file-explorer endpoint is
- * the right place for that).
+ * Inner helper shared by the per-user `listUserScratchEntries` and the
+ * admin-by-hash `listScratchEntriesByHash` paths. Performs the path
+ * resolution + symlink-safety checks + dirent walk against the
+ * supplied `scratchDir` and returns `{ path, entries }`. The caller
+ * is responsible for attaching a `quota` snapshot (the per-user path
+ * uses `getUserQuotaInfo(userId)`; the admin path computes usage from
+ * the on-disk hash dir).
  */
-export function listUserScratchEntries(
-  userId: string,
-  subPath: string = "",
-): ListUserScratchResult {
-  const scratchDir = ensureUserScratchDir(userId);
+function listScratchEntriesAt(
+  scratchDir: string,
+  subPath: string,
+): { path: string; entries: ScratchEntry[] } {
   const target = resolveWithinScratch(scratchDir, subPath);
   if (!target) {
     throw new ScratchPathError(
@@ -1313,23 +1312,43 @@ export function listUserScratchEntries(
   return {
     path: path.relative(scratchDir, target),
     entries,
+  };
+}
+
+/**
+ * List the entries of a directory inside the user's scratch root.
+ * `subPath` defaults to the scratch root. Symlinks are returned
+ * (with `isSymlink=true`) so the UI can show the full directory but
+ * mark the system-mirror entries as not-deletable. Recursion stops
+ * at symlinks: we never follow a symlink and walk into the shared
+ * host workspace from this endpoint (the file-explorer endpoint is
+ * the right place for that).
+ */
+export function listUserScratchEntries(
+  userId: string,
+  subPath: string = "",
+): ListUserScratchResult {
+  const scratchDir = ensureUserScratchDir(userId);
+  const inner = listScratchEntriesAt(scratchDir, subPath);
+  return {
+    path: inner.path,
+    entries: inner.entries,
     quota: getUserQuotaInfo(userId),
   };
 }
 
 /**
- * Delete a single file or directory inside the user's scratch root.
- * Refuses paths that escape the scratch dir, traverse through a
- * symlink, address the scratch root itself, or address one of the
- * top-level mirror symlinks (those belong to the system view, not
- * the user). Returns the freshly-computed quota snapshot so the UI
- * can update its "remaining bytes" display in one round trip.
+ * Inner helper shared by the per-user `deleteUserScratchEntry` and
+ * the admin-by-hash `deleteScratchEntryByHash`. Performs the path-
+ * resolution + symlink-safety checks against the supplied
+ * `scratchDir` and removes the entry. Returns the relative path that
+ * was deleted; the caller is responsible for attaching a quota
+ * snapshot.
  */
-export function deleteUserScratchEntry(
-  userId: string,
+function deleteScratchEntryAt(
+  scratchDir: string,
   subPath: string,
-): { deletedPath: string; quota: UserQuotaInfo } {
-  const scratchDir = ensureUserScratchDir(userId);
+): { deletedPath: string } {
   if (typeof subPath !== "string" || subPath.length === 0) {
     throw new ScratchPathError("scratch path is required", "EARG");
   }
@@ -1389,28 +1408,42 @@ export function deleteUserScratchEntry(
     fs.utimesSync(scratchDir, now, now);
     fs.utimesSync(path.dirname(scratchDir), now, now);
   } catch {}
+  return { deletedPath: path.relative(scratchDir, target) };
+}
+
+/**
+ * Delete a single file or directory inside the user's scratch root.
+ * Refuses paths that escape the scratch dir, traverse through a
+ * symlink, address the scratch root itself, or address one of the
+ * top-level mirror symlinks (those belong to the system view, not
+ * the user). Returns the freshly-computed quota snapshot so the UI
+ * can update its "remaining bytes" display in one round trip.
+ */
+export function deleteUserScratchEntry(
+  userId: string,
+  subPath: string,
+): { deletedPath: string; quota: UserQuotaInfo } {
+  const scratchDir = ensureUserScratchDir(userId);
+  const inner = deleteScratchEntryAt(scratchDir, subPath);
   return {
-    deletedPath: path.relative(scratchDir, target),
+    deletedPath: inner.deletedPath,
     quota: getUserQuotaInfo(userId),
   };
 }
 
 /**
- * Wipe every real (non-symlink) entry under the user's scratch root,
- * then re-sync the symlink view so the host-mirror entries are
- * intact. This is the "clear" affordance the UI exposes when a user
- * is over the per-user quota and wants to start fresh.
+ * Inner helper shared by the per-user `clearUserScratchDir` and the
+ * admin-by-hash `clearScratchDirByHash`. Removes every real
+ * (non-symlink) top-level entry, then re-syncs the symlink view.
+ * The caller is responsible for attaching a quota snapshot.
  */
-export function clearUserScratchDir(
-  userId: string,
-): { removed: string[]; quota: UserQuotaInfo } {
-  const scratchDir = ensureUserScratchDir(userId);
+function clearScratchDirAt(scratchDir: string): { removed: string[] } {
   const removed: string[] = [];
   let entries: fs.Dirent[] = [];
   try {
     entries = fs.readdirSync(scratchDir, { withFileTypes: true });
   } catch {
-    return { removed, quota: getUserQuotaInfo(userId) };
+    return { removed };
   }
   for (const entry of entries) {
     // Symlinks belong to the system mirror of PROJECT_ROOT — leave
@@ -1441,7 +1474,125 @@ export function clearUserScratchDir(
     fs.utimesSync(scratchDir, now, now);
     fs.utimesSync(path.dirname(scratchDir), now, now);
   } catch {}
-  return { removed, quota: getUserQuotaInfo(userId) };
+  return { removed };
+}
+
+/**
+ * Wipe every real (non-symlink) entry under the user's scratch root,
+ * then re-sync the symlink view so the host-mirror entries are
+ * intact. This is the "clear" affordance the UI exposes when a user
+ * is over the per-user quota and wants to start fresh.
+ */
+export function clearUserScratchDir(
+  userId: string,
+): { removed: string[]; quota: UserQuotaInfo } {
+  const scratchDir = ensureUserScratchDir(userId);
+  const inner = clearScratchDirAt(scratchDir);
+  return { removed: inner.removed, quota: getUserQuotaInfo(userId) };
+}
+
+// =============================================================================
+// Admin-by-hash variants
+// =============================================================================
+//
+// Operators investigating disk pressure work off the `<hash>` names
+// returned by `getHostUsageInfo()` — they don't have the original
+// userId (the hash is one-way). The functions below accept a raw
+// 16-hex hash, refuse to create the dir on demand (admins act on
+// existing scratch dirs only), and otherwise reuse the same inner
+// path-resolution + dirent walk + delete loop as the per-user APIs
+// so the safety properties (no escape, no following symlinks into
+// the host workspace) are identical.
+
+const USER_ID_HASH_RE = /^[0-9a-f]{16}$/;
+
+function assertValidUserIdHash(hash: string): void {
+  if (typeof hash !== "string" || !USER_ID_HASH_RE.test(hash)) {
+    throw new ScratchPathError("invalid user id hash", "EARG");
+  }
+}
+
+/**
+ * Resolve the on-disk scratch dir for a given hash without touching
+ * the filesystem. Throws `EARG` for malformed hashes.
+ */
+export function getScratchDirByHash(hash: string): string {
+  assertValidUserIdHash(hash);
+  return path.join(SCRATCH_ROOT, hash, "host");
+}
+
+/**
+ * Compute a quota snapshot for a hash-addressed scratch dir.
+ * `usedBytes` is the on-disk usage of the hash dir; the cap is the
+ * live per-user cap so the admin UI can show the same "X of Y used"
+ * widget it shows for the calling user.
+ */
+export function getScratchUsageByHash(hash: string): UserQuotaInfo {
+  const scratchDir = getScratchDirByHash(hash);
+  const usedBytes = walkRealFileBytes(scratchDir);
+  const capBytes = SCRATCH_USER_QUOTA_BYTES;
+  return {
+    usedBytes,
+    capBytes,
+    remainingBytes: Math.max(0, capBytes - usedBytes),
+  };
+}
+
+/**
+ * Admin variant of `listUserScratchEntries` keyed by the on-disk
+ * `<hash>` name. Refuses to materialise a missing scratch dir
+ * (admins should only look at dirs that already exist; a missing
+ * dir is a 404, not "create one for me").
+ */
+export function listScratchEntriesByHash(
+  hash: string,
+  subPath: string = "",
+): ListUserScratchResult {
+  const scratchDir = getScratchDirByHash(hash);
+  if (!fs.existsSync(scratchDir)) {
+    throw new ScratchPathError(`no scratch dir for user ${hash}`, "ENOENT");
+  }
+  const inner = listScratchEntriesAt(scratchDir, subPath);
+  return {
+    path: inner.path,
+    entries: inner.entries,
+    quota: getScratchUsageByHash(hash),
+  };
+}
+
+/**
+ * Admin variant of `deleteUserScratchEntry` keyed by `<hash>`.
+ */
+export function deleteScratchEntryByHash(
+  hash: string,
+  subPath: string,
+): { deletedPath: string; quota: UserQuotaInfo } {
+  const scratchDir = getScratchDirByHash(hash);
+  if (!fs.existsSync(scratchDir)) {
+    throw new ScratchPathError(`no scratch dir for user ${hash}`, "ENOENT");
+  }
+  const inner = deleteScratchEntryAt(scratchDir, subPath);
+  return {
+    deletedPath: inner.deletedPath,
+    quota: getScratchUsageByHash(hash),
+  };
+}
+
+/**
+ * Admin variant of `clearUserScratchDir` keyed by `<hash>`. Same
+ * "remove real entries, keep + re-sync symlink mirror" semantics as
+ * the per-user clear; admins who want full removal should use the
+ * `cleanupAbandonedScratchDirs` host-eviction sweep instead.
+ */
+export function clearScratchDirByHash(
+  hash: string,
+): { removed: string[]; quota: UserQuotaInfo } {
+  const scratchDir = getScratchDirByHash(hash);
+  if (!fs.existsSync(scratchDir)) {
+    throw new ScratchPathError(`no scratch dir for user ${hash}`, "ENOENT");
+  }
+  const inner = clearScratchDirAt(scratchDir);
+  return { removed: inner.removed, quota: getScratchUsageByHash(hash) };
 }
 
 let cleanupTimer: NodeJS.Timeout | null = null;
