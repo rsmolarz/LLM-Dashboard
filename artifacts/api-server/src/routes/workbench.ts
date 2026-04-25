@@ -11,6 +11,7 @@ import * as projectCtx from "../lib/project-context";
 import { unifiedDiff } from "../lib/file-diff";
 import { checkShellSafety, checkGitSafety, isGitCommand } from "../lib/command-safety";
 import { runSandboxed } from "../lib/command-sandbox";
+import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment } from "../lib/user-workspace";
 import { requireAuth } from "../middlewares/rateLimiter";
 import { randomBytes } from "crypto";
 
@@ -278,12 +279,49 @@ router.post("/shell", requireAuth, async (req, res): Promise<void> => {
       return;
     }
 
-    const r = await runSandboxed(command, { cwd: PROJECT_ROOT, timeoutMs: 30000 });
+    // Per-user scratch dir so two authenticated users editing the
+    // workbench at the same time can never see each other's writes.
+    // The scratch dir is initialised with a symlink view of the host
+    // workspace (see `lib/user-workspace.ts`); reads pass through but
+    // writes through the symlinks are caught by the sandbox's
+    // realpath-based path-containment check.
+    const userId = String((req.user as any)?.id || "");
+    if (!userId) {
+      // Defensive: requireAuth only checks `req.user` is set; some
+      // upstream auth shims could in principle attach a user object
+      // without an `id`. Refuse deterministically rather than rely on
+      // `getUserScratchDir` throwing inside the catch below.
+      res.status(401).json({ error: "Authentication required (missing user id)" });
+      return;
+    }
+    const scratchDir = ensureUserScratchDir(userId);
+    // Pre-flight: refuse argv operands that would let this user read
+    // another user's scratch (`cat ../../<otherHash>/host/secret`),
+    // workbench-private state (`ls /workspace/.local/...`), or any
+    // other host path outside the user's own scratch + the safe
+    // system-read allowlist. The base sandbox only inspects WRITE
+    // targets; this closes the read-side leak.
+    const escape = checkScratchContainment(command, scratchDir);
+    if (escape.blocked) {
+      res.json({
+        stdout: "",
+        stderr: `Sandbox blocked: ${escape.reason}`,
+        exitCode: 1,
+        scope: { origin: "workspace", path: scratchDir },
+        sandboxBlocked: escape.reason,
+      });
+      return;
+    }
+    const r = await runSandboxed(command, {
+      cwd: scratchDir,
+      timeoutMs: 30000,
+      extraEnv: userScratchSandboxEnv(),
+    });
     res.json({
       stdout: r.stdout,
       stderr: r.stderr,
       exitCode: r.exitCode,
-      scope: { origin: "workspace", path: PROJECT_ROOT },
+      scope: { origin: "workspace", path: scratchDir },
       ...(r.sandboxBlocked ? { sandboxBlocked: r.sandboxBlocked } : {}),
     });
   } catch (err: any) {
@@ -586,7 +624,40 @@ router.post("/git", requireAuth, async (req, res): Promise<void> => {
   }
 
   try {
-    const r = await runSandboxed(command, { cwd: PROJECT_ROOT, timeoutMs: 30000 });
+    // Per-user scratch dir, same rationale as POST /api/shell. The
+    // scratch view DELIBERATELY does NOT symlink `.git` (that would
+    // let any user clobber another user's branch / index / refs in
+    // the shared host repo via internal git library writes that the
+    // sandbox can't analyze). For project-scoped git, callers should
+    // pass a project descriptor and route through the project-aware
+    // clone flow above. Host-mode git here will return git's own
+    // "not a git repository" error, which is the correct,
+    // intentional behaviour: per-user isolation by absence of state.
+    //
+    // We also set `GIT_CEILING_DIRECTORIES` so git's parent-dir walk
+    // can't escape the scratch root and find the host's `.git/`.
+    const userId = String((req.user as any)?.id || "");
+    if (!userId) {
+      res.status(401).json({ error: "Authentication required (missing user id)" });
+      return;
+    }
+    const scratchDir = ensureUserScratchDir(userId);
+    // Pre-flight read-side containment: see POST /api/shell.
+    const escape = checkScratchContainment(command, scratchDir);
+    if (escape.blocked) {
+      res.json({
+        stdout: "",
+        stderr: `Sandbox blocked: ${escape.reason}`,
+        exitCode: 1,
+        sandboxBlocked: escape.reason,
+      });
+      return;
+    }
+    const r = await runSandboxed(command, {
+      cwd: scratchDir,
+      timeoutMs: 30000,
+      extraEnv: userScratchSandboxEnv(),
+    });
     res.json({
       stdout: r.stdout,
       stderr: r.stderr,
