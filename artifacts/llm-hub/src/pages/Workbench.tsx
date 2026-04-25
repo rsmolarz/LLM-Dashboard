@@ -288,7 +288,7 @@ function ShellHistorySidebar({
   );
 }
 
-function ShellPanel() {
+export function ShellPanel() {
   const [input, setInput] = useState("");
   const [history, setHistory] = usePersistedState<ShellEntry[]>("wb-shell-history", []);
   // `cmdHistory[0]` is the *most recent* command. The localStorage copy
