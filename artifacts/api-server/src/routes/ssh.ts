@@ -39,7 +39,7 @@ function getSSHConfig(body: any): SSHConfig {
   };
 }
 
-router.post("/ssh/test", async (req, res): Promise<void> => {
+router.post("/ssh/test", requireAuth, async (req, res): Promise<void> => {
   const config = getSSHConfig(req.body);
 
   if (!config.host || !config.username) {
@@ -247,7 +247,7 @@ router.post("/ssh/upload-file", requireAuth, async (req, res): Promise<void> => 
     });
 });
 
-router.post("/ssh/list-remote", async (req, res): Promise<void> => {
+router.post("/ssh/list-remote", requireAuth, async (req, res): Promise<void> => {
   const config = getSSHConfig(req.body);
   const { path: remotePath } = req.body;
 
@@ -898,7 +898,7 @@ router.get("/replit-projects", async (_req, res): Promise<void> => {
   }
 });
 
-router.get("/vps-projects", async (req, res): Promise<void> => {
+router.get("/vps-projects", requireAuth, async (req, res): Promise<void> => {
   const config: SSHConfig = {
     host: process.env.SSH_HOST || "",
     port: parseInt(process.env.SSH_PORT || "22", 10),

@@ -232,7 +232,7 @@ router.get("/git-status", async (_req, res): Promise<void> => {
   }
 });
 
-router.post("/git", async (req, res): Promise<void> => {
+router.post("/git", requireAuth, async (req, res): Promise<void> => {
   const { command } = req.body || {};
   if (!command || typeof command !== "string" || !command.startsWith("git ")) {
     res.status(400).json({ error: "Only git commands allowed" });
@@ -1033,7 +1033,7 @@ router.get("/claude-code", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/create-project", async (req, res): Promise<void> => {
+router.post("/create-project", requireAuth, async (req, res): Promise<void> => {
   const { name, template, description } = req.body || {};
   if (!name || typeof name !== "string") {
     res.status(400).json({ error: "Project name is required" });
@@ -1159,7 +1159,7 @@ router.get("/projects", async (_req, res): Promise<void> => {
   }
 });
 
-router.delete("/projects/:slug", async (req, res): Promise<void> => {
+router.delete("/projects/:slug", requireAuth, async (req, res): Promise<void> => {
   const { slug } = req.params;
   const projectDir = path.join(PROJECT_ROOT, "projects", slug);
   try {
@@ -1179,7 +1179,7 @@ router.delete("/projects/:slug", async (req, res): Promise<void> => {
   }
 });
 
-router.post("/upload", upload.array("files", 50), async (req, res): Promise<void> => {
+router.post("/upload", requireAuth, upload.array("files", 50), async (req, res): Promise<void> => {
   const targetPath = (req.body?.path as string) || ".";
   const files = req.files as Express.Multer.File[];
 
