@@ -95,6 +95,33 @@ export interface SandboxedResult {
   exitCode: number;
   /** Set when the sandbox itself blocked the command (not the child exit). */
   sandboxBlocked?: string;
+  /**
+   * Set when the command spawned but was contained at the kernel layer
+   * by the OS-level jail (read-only bind, private tmpfs, etc.). The
+   * child process may still have exited "successfully" from its own
+   * perspective; this flag records that the OS sandbox refused at
+   * least one write that would have escaped the project root. Distinct
+   * from `sandboxBlocked`, which fires before the spawn from the
+   * static path-validation layer.
+   */
+  sandboxContained?: SandboxContainment;
+}
+
+export interface SandboxContainment {
+  /**
+   * Why the kernel refused the write:
+   *  - "readonly"   — EROFS, our read-only bind of the host root caught it.
+   *  - "permission" — EACCES against a system path that sits outside
+   *                   the project root (mount-namespace level refusal).
+   */
+  reason: "readonly" | "permission";
+  /** The offending absolute path the kernel refused to write to. */
+  path: string;
+  /**
+   * Friendly, non-technical sentence explaining the project boundary.
+   * Safe to render verbatim in the Workbench UI alongside stderr.
+   */
+  message: string;
 }
 
 export interface SandboxOptions {
@@ -1445,6 +1472,210 @@ export function checkPathContainment(input: string, sandboxRoot: string): { bloc
   return { blocked: false };
 }
 
+// ----------------------------------------------------------------------
+// OS-level containment detection from child stderr.
+//
+// When the OS sandbox is active (bwrap/firejail/nsjail) writes that
+// escape the project cwd hit either a read-only bind (EROFS) or, for
+// system paths, a permission refusal (EACCES). The inner command is
+// usually a vanilla coreutils binary that prints something like:
+//
+//   cp: cannot create regular file '/etc/x': Read-only file system
+//   bash: /usr/bin/foo: Permission denied
+//   touch: cannot touch '/sys/kernel/x': Read-only file system
+//
+// On hosts WITHOUT OS isolation these messages mean nothing of the
+// sort — the user genuinely hit a read-only mount or lacked perms —
+// so we only ever emit `sandboxContained` when (a) the message is in
+// the EROFS/EACCES family AND (b) the offending path is OUTSIDE the
+// per-project sandbox root. That keeps in-project permission errors
+// (e.g. writing to a chmod-000 file the user owns) from being
+// mislabelled as "sandbox blocked".
+// ----------------------------------------------------------------------
+
+const SYSTEM_PATH_PREFIXES: readonly string[] = [
+  "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64",
+  "/var", "/sys", "/proc", "/boot", "/root", "/run", "/srv", "/opt",
+  "/dev",
+];
+
+function isSystemPath(p: string): boolean {
+  for (const prefix of SYSTEM_PATH_PREFIXES) {
+    if (p === prefix || p.startsWith(prefix + "/")) return true;
+  }
+  return false;
+}
+
+function isOutsideSandboxRoot(p: string, sandboxRoot: string): boolean {
+  if (!path.isAbsolute(p)) return false;
+  const root = path.resolve(sandboxRoot);
+  let realRoot = root;
+  try { realRoot = fs.realpathSync(root); } catch { /* fall back to lexical */ }
+  const abs = path.resolve(p);
+  for (const r of [root, realRoot]) {
+    const rel = path.relative(r, abs);
+    if (rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Walk backwards from a marker hit to recover the path token that
+ * preceded it. Handles single-quoted, double-quoted, and bare paths
+ * the way coreutils, bash, and busybox typically format errors:
+ *
+ *   "cp: cannot create regular file '/etc/x': Read-only file system"
+ *   "touch: cannot touch \"/usr/foo\": Permission denied"
+ *   "bash: /usr/bin/foo: Permission denied"
+ *
+ * Returns null if no `/`-rooted token is found before the marker.
+ */
+function extractPathBefore(stderr: string, markerStart: number): string | null {
+  let end = markerStart;
+  // Skip the ":" and whitespace separating path from marker text.
+  while (end > 0 && (stderr[end - 1] === ":" || stderr[end - 1] === " " || stderr[end - 1] === "\t")) end--;
+  // Optional trailing quote.
+  let quote: string | null = null;
+  if (end > 0 && (stderr[end - 1] === "'" || stderr[end - 1] === '"' || stderr[end - 1] === "`")) {
+    quote = stderr[end - 1];
+    end--;
+  }
+  let start = end;
+  if (quote) {
+    // Scan back to the matching opening quote.
+    while (start > 0 && stderr[start - 1] !== quote) start--;
+  } else {
+    // Scan back to whitespace, newline, or another colon (which often
+    // precedes the path in `cmd: PATH: error` style messages).
+    while (start > 0) {
+      const c = stderr[start - 1];
+      if (c === " " || c === "\t" || c === "\n" || c === "\r" || c === ":") break;
+      start--;
+    }
+  }
+  const token = stderr.slice(start, end).trim();
+  if (!token.startsWith("/")) return null;
+  return token;
+}
+
+/**
+ * Phrases that indicate the line of stderr is talking about a WRITE
+ * operation. We use these to disambiguate `Permission denied` from
+ * benign read/exec failures (e.g. opening a config file the user
+ * happens not to have read perms on) before branding the result a
+ * sandbox containment event. EROFS doesn't need this gate — any
+ * `Read-only file system` error is by definition write-related.
+ */
+const WRITE_CONTEXT_PATTERNS: readonly RegExp[] = [
+  /cannot create/i,
+  /cannot touch/i,
+  /cannot remove/i,
+  /cannot mkdir/i,
+  /cannot make directory/i,
+  /cannot overwrite/i,
+  /cannot write/i,
+  /unable to create/i,
+  /unable to write/i,
+  /failed to (?:create|write|open .* for writing)/i,
+  /error writing/i,
+];
+
+function lineOf(stderr: string, index: number): string {
+  let lineStart = stderr.lastIndexOf("\n", index - 1) + 1;
+  let lineEnd = stderr.indexOf("\n", index);
+  if (lineEnd < 0) lineEnd = stderr.length;
+  return stderr.slice(lineStart, lineEnd);
+}
+
+function looksLikeWriteContext(line: string): boolean {
+  for (const re of WRITE_CONTEXT_PATTERNS) {
+    if (re.test(line)) return true;
+  }
+  return false;
+}
+
+/**
+ * Inspect stderr for OS-level containment signals. Returns a
+ * `SandboxContainment` describing the friendliest message we can
+ * produce for the user, or null if nothing matches. Pure helper —
+ * exported so tests can pin the mapping behaviour without spawning
+ * real sandboxed commands.
+ *
+ * Discrimination rules (designed to minimise false positives on hosts
+ * WITHOUT an OS jail, where the same kernel errors can come from
+ * legitimate causes):
+ *   - `Read-only file system` (EROFS): treated as containment whenever
+ *     the offending path resolves outside the sandbox root. Inside a
+ *     project tree EROFS effectively never happens, so this is a
+ *     strong write-attempt signal on its own.
+ *   - `Permission denied` (EACCES): only treated as containment when
+ *     the offending path is a system path AND the surrounding line
+ *     looks like a write context (`cannot create`, `cannot touch`,
+ *     `unable to write`, etc.). This rules out read/exec EACCES (e.g.
+ *     `bash: /usr/local/sbin/foo: Permission denied` for a missing
+ *     +x bit) which is NOT a sandbox event.
+ */
+export function detectOsContainment(
+  stderr: string,
+  sandboxRoot: string,
+): SandboxContainment | null {
+  if (typeof stderr !== "string" || stderr.length === 0) return null;
+  // Search marker by marker; pick the FIRST match in stderr order so
+  // the offending path matches the first thing the user's command
+  // actually tried to write to.
+  type Hit = { reason: "readonly" | "permission"; index: number; markerLen: number };
+  const hits: Hit[] = [];
+  const RO = "Read-only file system";
+  const EACCES = "Permission denied";
+  let i = stderr.indexOf(RO);
+  while (i >= 0) {
+    hits.push({ reason: "readonly", index: i, markerLen: RO.length });
+    i = stderr.indexOf(RO, i + RO.length);
+  }
+  i = stderr.indexOf(EACCES);
+  while (i >= 0) {
+    hits.push({ reason: "permission", index: i, markerLen: EACCES.length });
+    i = stderr.indexOf(EACCES, i + EACCES.length);
+  }
+  if (hits.length === 0) return null;
+  hits.sort((a, b) => a.index - b.index);
+
+  for (const hit of hits) {
+    const offending = extractPathBefore(stderr, hit.index);
+    if (!offending) continue;
+    if (!isOutsideSandboxRoot(offending, sandboxRoot)) continue;
+    if (hit.reason === "readonly") {
+      // EROFS is a strong signal: nothing inside the project bind is
+      // read-only, so EROFS against any path means the OS jail caught
+      // a host-root write.
+      return {
+        reason: "readonly",
+        path: offending,
+        message:
+          `Your command tried to write to "${offending}", which is outside the project. ` +
+          `The sandbox blocked it because the project boundary is read-only.`,
+      };
+    }
+    // EACCES: only treat it as containment when the path is plainly a
+    // system path AND the same line clearly indicates a write attempt.
+    // EACCES inside the user's own file tree is a normal permission
+    // error; EACCES on a system path during a read/exec is also NOT a
+    // sandbox event. Both must be discarded here.
+    if (!isSystemPath(offending)) continue;
+    if (!looksLikeWriteContext(lineOf(stderr, hit.index))) continue;
+    return {
+      reason: "permission",
+      path: offending,
+      message:
+        `Your command tried to write to "${offending}", which is outside the project. ` +
+        `The sandbox blocked it.`,
+    };
+  }
+  return null;
+}
+
 /**
  * Build an environment object scrubbed down to the allowlist plus
  * sandbox-local HOME/TMPDIR overrides. Creates the sandbox subdirs on
@@ -1550,15 +1781,35 @@ export async function runSandboxed(command: string, opts: SandboxOptions): Promi
       (err, stdout, stderr) => {
         const out = typeof stdout === "string" ? stdout : "";
         const errOut = typeof stderr === "string" ? stderr : "";
+        // Inspect the merged stderr for OS-isolation signals — but
+        // ONLY when the OS jail is actually active on this host.
+        // On non-isolated hosts the same EROFS / EACCES messages can
+        // come from legitimate causes (a real read-only mount, a
+        // permission slip the user can fix), so attributing them to
+        // "the sandbox blocked it" would be a lie. The post-spawn
+        // check therefore gates on `OS_SANDBOX` being non-null. The
+        // pre-spawn static check (`sandboxBlocked`) is unaffected.
+        const merged = err ? (errOut || (err as Error).message || "") : errOut;
+        const contained = OS_SANDBOX ? detectOsContainment(merged, cwd) : null;
         if (err) {
           // execFile sets `code` to the exit code if the child exited,
           // or "ETIMEDOUT"/"ENOENT"/etc. for spawn-level errors.
           const codeRaw = (err as NodeJS.ErrnoException).code;
           const exitCode = typeof codeRaw === "number" ? codeRaw : 1;
           const message = errOut || (err as Error).message || "command failed";
-          resolve({ stdout: out, stderr: message, exitCode });
+          resolve({
+            stdout: out,
+            stderr: message,
+            exitCode,
+            ...(contained ? { sandboxContained: contained } : {}),
+          });
         } else {
-          resolve({ stdout: out, stderr: errOut, exitCode: 0 });
+          resolve({
+            stdout: out,
+            stderr: errOut,
+            exitCode: 0,
+            ...(contained ? { sandboxContained: contained } : {}),
+          });
         }
       },
     );

@@ -323,6 +323,7 @@ router.post("/shell", requireAuth, async (req, res): Promise<void> => {
       exitCode: r.exitCode,
       scope: { origin: "workspace", path: scratchDir },
       ...(r.sandboxBlocked ? { sandboxBlocked: r.sandboxBlocked } : {}),
+      ...(r.sandboxContained ? { sandboxContained: r.sandboxContained } : {}),
     });
   } catch (err: any) {
     res.json({
@@ -663,6 +664,7 @@ router.post("/git", requireAuth, async (req, res): Promise<void> => {
       stderr: r.stderr,
       exitCode: r.exitCode,
       ...(r.sandboxBlocked ? { sandboxBlocked: r.sandboxBlocked } : {}),
+      ...(r.sandboxContained ? { sandboxContained: r.sandboxContained } : {}),
     });
   } catch (err: any) {
     res.json({ stdout: err.stdout || "", stderr: err.stderr || err.message, exitCode: err.status || 1 });

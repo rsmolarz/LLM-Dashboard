@@ -37,12 +37,59 @@ function formatUptime(seconds: number) {
   return `${h}h ${m}m`;
 }
 
-type ShellEntry = { command: string; stdout: string; stderr: string; exitCode: number; timestamp: number };
+type SandboxContainmentNotice = {
+  reason: "readonly" | "permission";
+  path: string;
+  message: string;
+};
+type ShellEntry = {
+  command: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  timestamp: number;
+  sandboxContained?: SandboxContainmentNotice;
+};
 type FileItem = { name: string; type: "file" | "directory"; path: string; size?: number };
 
 type ShellMutationResult =
-  | { ok: true; stdout: string; stderr: string; exitCode: number }
+  | { ok: true; stdout: string; stderr: string; exitCode: number; sandboxContained?: SandboxContainmentNotice }
   | { ok: false; error: { message: string; code: string } };
+
+function parseSandboxContainment(raw: unknown): SandboxContainmentNotice | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const reason = r.reason === "readonly" || r.reason === "permission" ? r.reason : null;
+  const path = typeof r.path === "string" ? r.path : null;
+  const message = typeof r.message === "string" ? r.message : null;
+  if (!reason || !path || !message) return undefined;
+  return { reason, path, message };
+}
+
+/**
+ * Inline notice surfaced under a shell entry whenever the API reports
+ * that the OS-level sandbox refused a write that escaped the project
+ * boundary. The raw stderr (e.g. `cp: cannot create regular file
+ * '/etc/x': Read-only file system`) is still shown above this notice
+ * for users who want the technical detail; the notice itself uses
+ * non-technical wording so the new posture is observable rather than
+ * mysterious.
+ */
+function SandboxContainedNotice({ notice }: { notice: SandboxContainmentNotice }) {
+  return (
+    <div className="ml-3 mt-1 rounded border border-[#f9e2af]/30 bg-[#f9e2af]/5 px-2 py-1.5 flex items-start gap-2">
+      <Shield className="h-3 w-3 text-[#f9e2af] mt-0.5 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] text-[#f9e2af] font-medium">
+          Sandbox kept this command inside the project
+        </div>
+        <div className="text-[11px] text-[#cdd6f4] mt-0.5 leading-relaxed break-words">
+          {notice.message}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ShellPanel() {
   const [input, setInput] = useState("");
@@ -81,6 +128,9 @@ function ShellPanel() {
         stdout: typeof body.stdout === "string" ? body.stdout : "",
         stderr: typeof body.stderr === "string" ? body.stderr : "",
         exitCode: typeof body.exitCode === "number" ? body.exitCode : 0,
+        ...(parseSandboxContainment(body.sandboxContained)
+          ? { sandboxContained: parseSandboxContainment(body.sandboxContained) }
+          : {}),
       };
     },
     onSuccess: (data, command) => {
@@ -90,7 +140,14 @@ function ShellPanel() {
         return;
       }
       setShellError(null);
-      setHistory(h => [...h, { command, stdout: data.stdout, stderr: data.stderr, exitCode: data.exitCode, timestamp: Date.now() }]);
+      setHistory(h => [...h, {
+        command,
+        stdout: data.stdout,
+        stderr: data.stderr,
+        exitCode: data.exitCode,
+        timestamp: Date.now(),
+        ...(data.sandboxContained ? { sandboxContained: data.sandboxContained } : {}),
+      }]);
       setCmdHistory(h => [command, ...h.slice(0, 49)]);
       setHistoryIndex(-1);
       setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
@@ -150,6 +207,9 @@ function ShellPanel() {
               </div>
               {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stdout}</pre>}
               {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>}
+              {entry.sandboxContained && (
+                <SandboxContainedNotice notice={entry.sandboxContained} />
+              )}
             </div>
           ))}
           {shellMutation.isPending && (

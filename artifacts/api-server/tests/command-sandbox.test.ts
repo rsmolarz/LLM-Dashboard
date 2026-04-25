@@ -13,6 +13,7 @@ const {
   buildSandboxArgv,
   buildOsIsolationArgv,
   detectOsSandbox,
+  detectOsContainment,
   sandboxHelpers,
 } = await import("../src/lib/command-sandbox");
 
@@ -1119,6 +1120,221 @@ test("runSandboxed contains writes outside cwd at the kernel layer when an OS sa
   } finally {
     try { fs.unlinkSync(escapeTmp); } catch {}
     try { fs.unlinkSync(escapeVar); } catch {}
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------
+// detectOsContainment
+//
+// When the OS-level jail is active in production a write outside the
+// project cwd surfaces as an EROFS or system-path EACCES on the
+// child's stderr. The detector maps those raw kernel errors to a
+// friendly notice the Workbench UI can render so users know the
+// sandbox — not a typo — refused the write.
+// ---------------------------------------------------------------------
+
+test("detectOsContainment maps coreutils EROFS stderr to a friendly notice", () => {
+  const root = mkSandbox();
+  try {
+    const stderr =
+      "cp: cannot create regular file '/etc/wb-escape': Read-only file system\n";
+    const got = detectOsContainment(stderr, root);
+    assert.ok(got, `expected containment notice, got null. stderr=${stderr}`);
+    assert.equal(got!.reason, "readonly");
+    assert.equal(got!.path, "/etc/wb-escape");
+    assert.match(got!.message, /outside the project/i);
+    assert.match(got!.message, /sandbox blocked it/i);
+    assert.ok(
+      got!.message.includes("/etc/wb-escape"),
+      `friendly message should mention the offending path, got: ${got!.message}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment recognises bash-style and double-quoted EROFS messages", () => {
+  const root = mkSandbox();
+  try {
+    const bashStyle = "bash: /sys/kernel/foo: Read-only file system";
+    const got1 = detectOsContainment(bashStyle, root);
+    assert.ok(got1);
+    assert.equal(got1!.reason, "readonly");
+    assert.equal(got1!.path, "/sys/kernel/foo");
+
+    const dquoted =
+      'touch: cannot touch "/usr/local/foo": Read-only file system';
+    const got2 = detectOsContainment(dquoted, root);
+    assert.ok(got2);
+    assert.equal(got2!.reason, "readonly");
+    assert.equal(got2!.path, "/usr/local/foo");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment treats write-context EACCES against system paths as containment", () => {
+  const root = mkSandbox();
+  try {
+    // Write-shaped EACCES on a system path: containment.
+    const stderr = "touch: cannot touch '/usr/local/foo': Permission denied";
+    const got = detectOsContainment(stderr, root);
+    assert.ok(got, `expected containment notice, got null`);
+    assert.equal(got!.reason, "permission");
+    assert.equal(got!.path, "/usr/local/foo");
+    assert.match(got!.message, /outside the project/i);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment ignores read/exec EACCES even on system paths", () => {
+  const root = mkSandbox();
+  try {
+    // Bash exec failure (missing +x bit on a binary) is NOT a sandbox
+    // event — there's no `cannot create` / `cannot touch` write phrase.
+    // We must not brand this "sandbox blocked".
+    const execStyle = "bash: /usr/local/sbin/foo: Permission denied";
+    assert.equal(
+      detectOsContainment(execStyle, root),
+      null,
+      `bare exec EACCES should not be flagged as containment`,
+    );
+    // cat reading a system file the user can't read: also not a sandbox event.
+    const readStyle = "cat: /etc/shadow: Permission denied";
+    assert.equal(
+      detectOsContainment(readStyle, root),
+      null,
+      `bare read EACCES should not be flagged as containment`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment does NOT flag in-project EACCES (legit perms error)", () => {
+  const root = mkSandbox();
+  try {
+    // A user-owned file inside their own project that they chmod 000'd
+    // is a regular permission problem, not a sandbox escape attempt.
+    const inside = path.join(root, "secret.txt");
+    const stderr = `cat: ${inside}: Permission denied\n`;
+    const got = detectOsContainment(stderr, root);
+    assert.equal(got, null, `in-project EACCES must not be flagged as sandbox containment. got=${JSON.stringify(got)}`);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment returns null for unrelated stderr", () => {
+  const root = mkSandbox();
+  try {
+    assert.equal(detectOsContainment("", root), null);
+    assert.equal(detectOsContainment("npm WARN deprecated foo@1.0.0", root), null);
+    // ENOENT is not a sandbox signal.
+    assert.equal(
+      detectOsContainment("cat: nope.txt: No such file or directory", root),
+      null,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment picks the FIRST offending write when multiple appear", () => {
+  const root = mkSandbox();
+  try {
+    const stderr =
+      "cp: cannot create regular file '/etc/first': Read-only file system\n" +
+      "cp: cannot create regular file '/var/second': Read-only file system\n";
+    const got = detectOsContainment(stderr, root);
+    assert.ok(got);
+    assert.equal(got!.path, "/etc/first");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// runSandboxed: when the inner command emits an EROFS-style stderr, the
+// returned result must carry `sandboxContained` so the route can
+// forward it to the frontend. We can't easily produce a real EROFS on
+// every CI host, so we drive the path by writing a script that prints
+// a fake EROFS line to stderr and exits 1. The detection layer is
+// stderr-driven, so this faithfully exercises the same code path the
+// real OS jail would trigger in production.
+test("runSandboxed surfaces sandboxContained when stderr looks like EROFS against /etc (only when OS jail is active)", async (t) => {
+  // Positive integration: when the host has a real OS jail (bwrap /
+  // firejail / nsjail), runSandboxed must surface containment from
+  // EROFS-shaped stderr. On hosts without a jail this test is skipped
+  // because we deliberately do NOT label generic kernel errors as
+  // sandbox events when there's no sandbox to do the containing.
+  if (detectOsSandbox() === null) {
+    t.skip(`no OS-level sandbox helper available on this host`);
+    return;
+  }
+  const root = mkSandbox();
+  try {
+    const scriptName = "fake-erofs.sh";
+    fs.writeFileSync(
+      path.join(root, scriptName),
+      `#!/bin/sh\n` +
+      `printf "%s\\n" "cp: cannot create regular file '/etc/wb-fake': Read-only file system" >&2\n` +
+      `exit 1\n`,
+    );
+    fs.chmodSync(path.join(root, scriptName), 0o755);
+
+    const r = await runSandboxed(`./${scriptName}`, { cwd: root, timeoutMs: 10_000 });
+    assert.ok(
+      r.sandboxContained,
+      `expected sandboxContained on result, got ${JSON.stringify(r)}`,
+    );
+    assert.equal(r.sandboxContained!.reason, "readonly");
+    assert.equal(r.sandboxContained!.path, "/etc/wb-fake");
+    assert.match(r.sandboxContained!.message, /outside the project/i);
+    // The static-checker field must NOT be set — this command WAS
+    // allowed to spawn; the OS layer is what caught it.
+    assert.equal(r.sandboxBlocked, undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runSandboxed does NOT surface sandboxContained on hosts without an active OS jail", async (t) => {
+  // Regression for the gating rule: even when stderr LOOKS like a
+  // kernel-level containment event (EROFS against /etc), we must not
+  // brand the result `sandboxContained` if there was no OS jail to
+  // actually contain it. Otherwise a real read-only mount or a true
+  // permission error on a non-isolated host would lie to the user.
+  if (detectOsSandbox() !== null) {
+    t.skip(`OS jail is active on this host; covered by the positive integration test`);
+    return;
+  }
+  const root = mkSandbox();
+  try {
+    const scriptName = "fake-erofs.sh";
+    fs.writeFileSync(
+      path.join(root, scriptName),
+      `#!/bin/sh\n` +
+      `printf "%s\\n" "cp: cannot create regular file '/etc/wb-fake': Read-only file system" >&2\n` +
+      `exit 1\n`,
+    );
+    fs.chmodSync(path.join(root, scriptName), 0o755);
+
+    const r = await runSandboxed(`./${scriptName}`, { cwd: root, timeoutMs: 10_000 });
+    assert.equal(
+      r.sandboxContained,
+      undefined,
+      `expected NO sandboxContained without an OS jail; got ${JSON.stringify(r.sandboxContained)}`,
+    );
+    // The pure mapping helper still recognises the line — the gate is
+    // intentionally at the runSandboxed layer, not in the parser.
+    const mapped = detectOsContainment(
+      "cp: cannot create regular file '/etc/wb-fake': Read-only file system",
+      root,
+    );
+    assert.ok(mapped, `parser should still map the same stderr in isolation`);
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
