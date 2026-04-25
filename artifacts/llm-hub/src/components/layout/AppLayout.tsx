@@ -104,6 +104,7 @@ const navSections: NavSection[] = [
       { href: "/code", label: "Code Agent", icon: Code2, adminOnly: false },
       { href: "/workbench", label: "Workbench", icon: Wrench, adminOnly: false },
       { href: "/claude-workbench", label: "Claude Workbench", icon: Sparkles, adminOnly: false },
+      { href: "/replit-workbench", label: "Replit Workbench", icon: Server, adminOnly: false },
       { href: "/claw-agent", label: "Claw Agent", icon: Bot, adminOnly: false },
       {
         href: "/playground",

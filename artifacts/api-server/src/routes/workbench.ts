@@ -7,6 +7,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import multer from "multer";
 import AdmZip from "adm-zip";
+import * as projectCtx from "../lib/project-context";
 
 const router: IRouter = Router();
 const PROJECT_ROOT = process.env.NODE_ENV === "production"
@@ -314,7 +315,7 @@ router.get("/agent-activity", async (_req, res): Promise<void> => {
 });
 
 router.post("/code-chat", async (req, res): Promise<void> => {
-  const { prompt, messages: history } = req.body || {};
+  const { prompt, messages: history, project: projectDescriptor } = req.body || {};
   if (!prompt) {
     res.status(400).json({ error: "prompt is required" });
     return;
@@ -327,6 +328,8 @@ router.post("/code-chat", async (req, res): Promise<void> => {
     return;
   }
 
+  const isAuthed = !!(req as any).user;
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -338,15 +341,29 @@ router.post("/code-chat", async (req, res): Promise<void> => {
 
   try {
     let projectContext = "";
-    try {
-      const pkgPath = path.join(PROJECT_ROOT, "package.json");
-      if (fs.existsSync(pkgPath)) {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-        projectContext = `Project: ${pkg.name || "unknown"}\n`;
+    let resolved: Awaited<ReturnType<typeof projectCtx.resolveDescriptor>> | null = null;
+    if (projectDescriptor && projectDescriptor.origin && projectDescriptor.path) {
+      try {
+        resolved = await projectCtx.resolveDescriptor(projectDescriptor);
+        if (resolved) {
+          const summary = await projectCtx.getSummary(resolved, { tokenBudget: 3500 });
+          projectContext = `\n\n## Selected Project Context\n${summary}\n`;
+          res.write(`data: ${JSON.stringify({ type: "project", origin: resolved.origin, localPath: resolved.localPath, remotePath: resolved.remotePath, cloned: resolved.cloned })}\n\n`);
+        }
+      } catch (err: any) {
+        res.write(`data: ${JSON.stringify({ type: "warning", content: `Project context unavailable: ${err.message}` })}\n\n`);
       }
-      const dirs = fs.readdirSync(PROJECT_ROOT).filter(d => !d.startsWith(".") && d !== "node_modules").slice(0, 20);
-      projectContext += `Top-level: ${dirs.join(", ")}\n`;
-    } catch {}
+    } else {
+      try {
+        const pkgPath = path.join(PROJECT_ROOT, "package.json");
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+          projectContext = `Project: ${pkg.name || "unknown"}\n`;
+        }
+        const dirs = fs.readdirSync(PROJECT_ROOT).filter(d => !d.startsWith(".") && d !== "node_modules").slice(0, 20);
+        projectContext += `Top-level: ${dirs.join(", ")}\n`;
+      } catch {}
+    }
 
     const conversationMessages = (history || []).map((m: any) => ({
       role: m.role,
@@ -355,14 +372,44 @@ router.post("/code-chat", async (req, res): Promise<void> => {
 
     conversationMessages.push({ role: "user", content: prompt });
 
-    const systemPrompt = `You are an expert coding assistant integrated into the LLM Hub Workbench. You help with code analysis, debugging, refactoring, and writing new code. You have access to a TypeScript/React project with Express backend.
+    const toolNote = resolved
+      ? `\n\nYou have file/shell tools scoped to the selected project at ${resolved.origin === "vps" ? resolved.remotePath : resolved.localPath}. Use list_files / read_file to explore. ${isAuthed ? "Use write_file and run_shell to make changes — they apply directly to the selected app (over SSH for VPS, in the local clone for Replit projects)." : "Sign in to enable write_file and run_shell."}`
+      : `\n\nNo project is selected. Ask the user to pick one from the sidebar to enable file operations.`;
 
-IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing code, include the FULL implementation — never truncate, abbreviate, or use "..." placeholders. When explaining concepts, cover all important aspects. If your response is long, that is expected and preferred. The user needs complete, production-ready answers.${projectContext ? "\n\n" + projectContext : ""}`;
+    const systemPrompt = `You are an expert coding assistant integrated into the LLM Hub Workbench. You help with code analysis, debugging, refactoring, and writing new code.${toolNote}
+
+IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing code, include the FULL implementation — never truncate, abbreviate, or use "..." placeholders. When explaining concepts, cover all important aspects. If your response is long, that is expected and preferred. The user needs complete, production-ready answers.${projectContext ? "\n" + projectContext : ""}`;
+
+    const tools = resolved ? [
+      {
+        name: "list_files",
+        description: "List files and directories within the selected project. Use to explore the project structure. Path is relative to the project root.",
+        input_schema: { type: "object", properties: { path: { type: "string", description: "Subdirectory inside the project, or '.' for the root" } }, required: ["path"] },
+      },
+      {
+        name: "read_file",
+        description: "Read a file from within the selected project. Returns up to 500KB of content.",
+        input_schema: { type: "object", properties: { path: { type: "string", description: "File path relative to the project root" } }, required: ["path"] },
+      },
+      {
+        name: "write_file",
+        description: "Write or overwrite a file in the selected project. Edits apply directly to the project (VPS over SSH, Replit in the local clone, Local in place). Requires signed-in user.",
+        input_schema: { type: "object", properties: { path: { type: "string", description: "File path relative to the project root" }, content: { type: "string", description: "Full file contents to write" } }, required: ["path", "content"] },
+      },
+      {
+        name: "run_shell",
+        description: "Run a shell command inside the selected project's working directory. For VPS projects this runs over SSH. Requires signed-in user. 30s timeout.",
+        input_schema: { type: "object", properties: { command: { type: "string", description: "Shell command to execute" } }, required: ["command"] },
+      },
+    ] : undefined;
+
     let msgs = conversationMessages.slice(-20);
     let continuations = 0;
     const maxContinuations = 5;
+    const maxToolIterations = 10;
+    let toolIterations = 0;
 
-    while (continuations <= maxContinuations) {
+    while (continuations <= maxContinuations && toolIterations <= maxToolIterations) {
       const response = await fetch(`${baseUrl}/v1/messages`, {
         method: "POST",
         headers: {
@@ -372,10 +419,11 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-5",
-          max_tokens: 64000,
+          max_tokens: 16000,
           stream: true,
           system: systemPrompt,
           messages: msgs,
+          ...(tools ? { tools } : {}),
         }),
         signal: AbortSignal.timeout(300000),
       });
@@ -398,6 +446,8 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       let buffer = "";
       let accumulatedText = "";
       let stopReason = "end_turn";
+      const contentBlocks: any[] = [];
+      const toolInputBuffers: Record<number, string> = {};
 
       while (true) {
         const { done, value } = await reader.read();
@@ -408,23 +458,95 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
         buffer = lines.pop() || "";
 
         for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data = line.slice(6).trim();
-            if (data === "[DONE]") continue;
-            try {
-              const parsed = JSON.parse(data);
-              if (parsed.type === "content_block_delta" && parsed.delta?.text) {
-                accumulatedText += parsed.delta.text;
-                res.write(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text })}\n\n`);
-              } else if (parsed.type === "message_delta" && parsed.delta?.stop_reason) {
-                stopReason = parsed.delta.stop_reason;
+          if (!line.startsWith("data: ")) continue;
+          const data = line.slice(6).trim();
+          if (data === "[DONE]") continue;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.type === "content_block_start") {
+              const block = parsed.content_block;
+              contentBlocks[parsed.index] = block;
+              if (block.type === "tool_use") {
+                toolInputBuffers[parsed.index] = "";
+                res.write(`data: ${JSON.stringify({ type: "tool_start", name: block.name, id: block.id })}\n\n`);
               }
-            } catch {}
-          }
+            } else if (parsed.type === "content_block_delta") {
+              if (parsed.delta?.text) {
+                accumulatedText += parsed.delta.text;
+                contentBlocks[parsed.index] = contentBlocks[parsed.index] || { type: "text", text: "" };
+                contentBlocks[parsed.index].text += parsed.delta.text;
+                res.write(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text })}\n\n`);
+              } else if (parsed.delta?.partial_json !== undefined) {
+                toolInputBuffers[parsed.index] = (toolInputBuffers[parsed.index] || "") + parsed.delta.partial_json;
+              }
+            } else if (parsed.type === "content_block_stop") {
+              const block = contentBlocks[parsed.index];
+              if (block?.type === "tool_use") {
+                try {
+                  block.input = JSON.parse(toolInputBuffers[parsed.index] || "{}");
+                } catch {
+                  block.input = {};
+                }
+              }
+            } else if (parsed.type === "message_delta" && parsed.delta?.stop_reason) {
+              stopReason = parsed.delta.stop_reason;
+            }
+          } catch {}
         }
       }
 
-      console.log(`[code-chat] stop_reason=${stopReason}, textLen=${accumulatedText.length}, continuation=${continuations}`);
+      console.log(`[code-chat] stop_reason=${stopReason}, textLen=${accumulatedText.length}, continuation=${continuations}, toolIter=${toolIterations}`);
+
+      const toolUses = contentBlocks.filter(b => b?.type === "tool_use");
+
+      if (stopReason === "tool_use" && toolUses.length > 0 && resolved) {
+        const assistantContent: any[] = [];
+        for (const b of contentBlocks) {
+          if (!b) continue;
+          if (b.type === "text" && b.text) assistantContent.push({ type: "text", text: b.text });
+          if (b.type === "tool_use") assistantContent.push(b);
+        }
+        msgs.push({ role: "assistant", content: assistantContent });
+
+        const toolResults: any[] = [];
+        for (const tu of toolUses) {
+          let resultText = "";
+          let isError = false;
+          try {
+            const writeOrExec = tu.name === "write_file" || tu.name === "run_shell";
+            if (writeOrExec && !isAuthed) {
+              throw new Error("Authentication required for write_file/run_shell. Please sign in.");
+            }
+            if (tu.name === "list_files") {
+              const entries = await projectCtx.listFiles(resolved, tu.input.path || ".");
+              resultText = JSON.stringify({ entries: entries.slice(0, 200) });
+              res.write(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `${entries.length} entries in ${tu.input.path || "."}` })}\n\n`);
+            } else if (tu.name === "read_file") {
+              const r = await projectCtx.readFile(resolved, tu.input.path);
+              resultText = JSON.stringify({ content: r.content, size: r.size, truncated: r.truncated });
+              res.write(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `read ${tu.input.path} (${r.size}B${r.truncated ? ", truncated" : ""})` })}\n\n`);
+            } else if (tu.name === "write_file") {
+              const r = await projectCtx.writeFile(resolved, tu.input.path, tu.input.content || "");
+              resultText = JSON.stringify({ ok: true, bytes: r.bytes, path: tu.input.path });
+              res.write(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `wrote ${tu.input.path} (${r.bytes}B)` })}\n\n`);
+            } else if (tu.name === "run_shell") {
+              const r = await projectCtx.execCommand(resolved, tu.input.command);
+              resultText = JSON.stringify({ stdout: (r.stdout || "").slice(0, 8000), stderr: (r.stderr || "").slice(0, 4000), exitCode: r.exitCode });
+              res.write(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `$ ${tu.input.command} → exit ${r.exitCode}` })}\n\n`);
+            } else {
+              throw new Error(`Unknown tool ${tu.name}`);
+            }
+          } catch (err: any) {
+            isError = true;
+            resultText = JSON.stringify({ error: err.message });
+            res.write(`data: ${JSON.stringify({ type: "tool_error", name: tu.name, error: err.message })}\n\n`);
+          }
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: resultText, ...(isError ? { is_error: true } : {}) });
+        }
+        msgs.push({ role: "user", content: toolResults });
+        toolIterations++;
+        continue;
+      }
 
       if (stopReason === "max_tokens" && continuations < maxContinuations) {
         console.log(`[code-chat] Auto-continuing (${continuations + 1}/${maxContinuations})...`);

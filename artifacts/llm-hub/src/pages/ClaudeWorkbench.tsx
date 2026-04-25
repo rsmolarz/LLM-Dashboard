@@ -15,6 +15,8 @@ import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManage
 import ProjectSidebar from "@/components/workbench/ProjectSidebar";
 import { FolderPlus, Upload, Paperclip } from "lucide-react";
 import { usePersistedState } from "@/hooks/usePersistedState";
+import { useSelectedProject, projectDescriptorFromSidebar } from "@/hooks/useSelectedProject";
+import { ProjectContextHeader } from "@/components/workbench/ProjectContextHeader";
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return "0 B";
@@ -581,8 +583,10 @@ function ClaudeCodePanel() {
   const [messages, setMessages] = usePersistedState<ChatMessage[]>("cw-claude-messages", []);
   const [isStreaming, setIsStreaming] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [toolEvents, setToolEvents] = useState<{ name: string; summary: string; error?: boolean }[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { project: selectedProject } = useSelectedProject();
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
@@ -609,9 +613,10 @@ function ClaudeCodePanel() {
 
     try {
       const conversationHistory = messages.filter(m => !m.streaming).map(m => ({ role: m.role, content: m.content }));
+      setToolEvents([]);
       const res = await fetch(`/api/workbench/code-chat`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, messages: conversationHistory }),
+        body: JSON.stringify({ prompt, messages: conversationHistory, project: selectedProject || undefined }),
         signal: controller.signal, credentials: "include",
       });
       if (!res.ok) { const err = await res.json().catch(() => ({ error: "Failed" })); throw new Error(err.error || `HTTP ${res.status}`); }
@@ -631,6 +636,10 @@ function ClaudeCodePanel() {
               if (data.type === "chunk") { setMessages(prev => { const u = [...prev]; const l = u[u.length-1]; if (l?.streaming) u[u.length-1] = { ...l, content: l.content + data.content }; return u; }); scrollToBottom(); }
               else if (data.type === "done") { setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m)); }
               else if (data.type === "error") { setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: m.content + `\nError: ${data.content}` } : m)); }
+              else if (data.type === "tool_start") { setToolEvents(p => [...p, { name: data.name, summary: "running…" }]); }
+              else if (data.type === "tool_result") { setToolEvents(p => { const u = [...p]; for (let i = u.length - 1; i >= 0; i--) { if (u[i].name === data.name && u[i].summary === "running…") { u[i] = { name: data.name, summary: data.summary }; return u; } } return [...u, { name: data.name, summary: data.summary }]; }); }
+              else if (data.type === "tool_error") { setToolEvents(p => [...p, { name: data.name, summary: data.error, error: true }]); }
+              else if (data.type === "project") { setToolEvents(p => [...p, { name: "project", summary: `loaded ${data.origin} project${data.cloned ? " (fresh clone)" : ""}` }]); }
             } catch {}
           }
         }
@@ -651,12 +660,27 @@ function ClaudeCodePanel() {
         </div>
         <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => setMessages([])}><Trash2 className="h-3 w-3" /></button>
       </div>
+      {selectedProject && (
+        <div className="px-3 py-1 bg-[#11111b] border-b border-[#313244] text-[10px] text-[#6c7086] font-mono flex items-center gap-2">
+          <span className="text-[#fab387]">●</span>
+          <span>scoped to <span className="text-[#cdd6f4]">{selectedProject.origin}</span>:{selectedProject.name || selectedProject.path}</span>
+        </div>
+      )}
+      {toolEvents.length > 0 && (
+        <div className="px-3 py-1 bg-[#11111b] border-b border-[#313244] flex flex-wrap gap-1">
+          {toolEvents.slice(-6).map((t, i) => (
+            <span key={i} className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${t.error ? "bg-[#f38ba8]/15 text-[#f38ba8]" : "bg-[#313244] text-[#a6adc8]"}`}>
+              {t.name}: {t.summary}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto p-3" ref={scrollRef}>
         <div className="space-y-3">
           {messages.length === 0 && (
             <div className="text-center py-8 space-y-3">
               <div className="flex justify-center"><div className="h-12 w-12 rounded-full bg-gradient-to-br from-[#fab387] to-[#f9e2af] flex items-center justify-center"><Sparkles className="h-6 w-6 text-[#1e1e2e]" /></div></div>
-              <div><p className="text-[#cdd6f4] text-sm font-medium">Claude Code</p><p className="text-[#6c7086] text-xs mt-1">Production-ready code, debugging, and architecture.</p></div>
+              <div><p className="text-[#cdd6f4] text-sm font-medium">Claude Code</p><p className="text-[#6c7086] text-xs mt-1">{selectedProject ? `Edits land directly in ${selectedProject.name || selectedProject.path}.` : "Pick a project from the sidebar to enable file editing."}</p></div>
               <div className="flex flex-wrap gap-1.5 justify-center pt-1">
                 {["Refactor this module", "Find security issues", "Write unit tests", "Explain architecture"].map(s => (
                   <button key={s} onClick={() => { setInput(s); textareaRef.current?.focus(); }}
@@ -1742,9 +1766,11 @@ export default function ClaudeWorkbench() {
   const [showBottom, setShowBottom] = usePersistedState("cw-show-bottom", false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("cw-sidebar-collapsed", false);
   const [selectedProject, setSelectedProject] = usePersistedState<string | null>("cw-selected-project", null);
+  const { project: sharedProject, setProject: setSharedProject } = useSelectedProject();
 
   const handleSelectProject = (project: any) => {
     setSelectedProject(project.path);
+    setSharedProject(projectDescriptorFromSidebar(project));
   };
 
   return (
@@ -1756,6 +1782,11 @@ export default function ClaudeWorkbench() {
           </div>
           <h1 className="text-base font-semibold tracking-tight text-[#cdd6f4]">Claude Workbench</h1>
           <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#313244] text-[#6c7086]">IDE</span>
+          {sharedProject && (
+            <span className="text-[10px] px-2 py-0.5 rounded bg-[#313244] text-[#cdd6f4] font-mono">
+              {sharedProject.origin}: {sharedProject.name || sharedProject.path}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button className={cn("px-3 py-1 rounded-lg text-xs font-medium transition-colors",

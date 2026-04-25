@@ -504,11 +504,7 @@ export default function ProjectSidebar({
                   isDragOver={dragOverKey === key && draggedKey !== key}
                   selectedProjectPath={selectedProjectPath}
                   onSelect={() => {
-                    if (project.origin === "replit" && project.url) {
-                      window.open(project.url, "_blank");
-                    } else {
-                      onSelectProject?.(project);
-                    }
+                    onSelectProject?.(project);
                   }}
                   onMoveUp={() => moveProject(key, "up")}
                   onMoveDown={() => moveProject(key, "down")}

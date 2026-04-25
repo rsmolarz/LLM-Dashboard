@@ -14,6 +14,8 @@ import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManage
 import ProjectSidebar from "@/components/workbench/ProjectSidebar";
 import { FolderPlus, Upload, Paperclip } from "lucide-react";
 import { usePersistedState } from "@/hooks/usePersistedState";
+import { useSelectedProject, projectDescriptorFromSidebar } from "@/hooks/useSelectedProject";
+import { ProjectContextHeader } from "@/components/workbench/ProjectContextHeader";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -733,10 +735,16 @@ function CodeChatPanel() {
         content: m.content,
       }));
 
+      let selectedProject: any = null;
+      try {
+        const raw = localStorage.getItem("workbench-selected-project");
+        if (raw) selectedProject = JSON.parse(raw);
+      } catch {}
+
       const res = await fetch(`/api/workbench/code-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, messages: conversationHistory }),
+        body: JSON.stringify({ prompt, messages: conversationHistory, project: selectedProject || undefined }),
         signal: controller.signal,
         credentials: "include",
       });
@@ -931,6 +939,8 @@ function SSHPanel() {
   const [aiStreaming, setAiStreaming] = useState(false);
   const [aiAbort, setAiAbort] = useState<AbortController | null>(null);
   const [aiModel, setAiModel] = usePersistedState<string>("wb-ssh-ai-model", "auto");
+  const [aiIncludeProjectContext, setAiIncludeProjectContext] = usePersistedState<boolean>("wb-ssh-include-project-ctx", true);
+  const { project: sshSelectedProject } = useSelectedProject();
   const [aiAvailableModels, setAiAvailableModels] = useState<{ id: string; label: string; provider: string }[]>([]);
   const [aiDragOver, setAiDragOver] = useState(false);
   const [aiUploading, setAiUploading] = useState(false);
@@ -1214,7 +1224,7 @@ function SSHPanel() {
       const res = await fetch(`/api/workbench/ssh/ai-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...sshBodyBase(), prompt, messages: convHistory, modelOverride: aiModel !== "auto" ? aiModel : undefined }),
+        body: JSON.stringify({ ...sshBodyBase(), prompt, messages: convHistory, modelOverride: aiModel !== "auto" ? aiModel : undefined, project: sshSelectedProject || undefined, includeProjectContext: aiIncludeProjectContext }),
         signal: controller.signal,
         credentials: "include",
       });
@@ -1602,13 +1612,22 @@ function SSHPanel() {
                 >
                   <Paperclip className="h-3.5 w-3.5" />
                 </button>
+                <label className="flex items-center gap-1 text-[10px] text-[#a6adc8] whitespace-nowrap" title="Auto-include selected project's files & summary in chat context">
+                  <input
+                    type="checkbox"
+                    checked={aiIncludeProjectContext}
+                    onChange={e => setAiIncludeProjectContext(e.target.checked)}
+                    className="h-3 w-3 accent-[#cba6f7]"
+                  />
+                  ctx
+                </label>
                 <textarea
                   ref={aiInputRef}
                   value={aiInput}
                   onChange={e => setAiInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleAISubmit(); } }}
                   className="flex-1 bg-[#1e1e2e] text-[#cdd6f4] text-xs rounded border border-[#313244] px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#cba6f7] placeholder:text-[#585b70] resize-none min-h-[28px] max-h-[80px]"
-                  placeholder={aiAttachedFiles.length > 0 ? "Ask about the uploaded files..." : "Ask AI to run commands, or attach files..."}
+                  placeholder={aiAttachedFiles.length > 0 ? "Ask about the uploaded files..." : sshSelectedProject && aiIncludeProjectContext ? `Ask AI (project ctx: ${sshSelectedProject.name || sshSelectedProject.path})…` : "Ask AI to run commands, or attach files..."}
                   rows={1}
                   disabled={aiStreaming}
                 />
@@ -1876,9 +1895,11 @@ export default function Workbench() {
   const [showBottom, setShowBottom] = usePersistedState("wb-show-bottom", false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("wb-sidebar-collapsed", false);
   const [selectedProject, setSelectedProject] = usePersistedState<string | null>("wb-selected-project", null);
+  const { project: sharedProject, setProject: setSharedProject } = useSelectedProject();
 
   const handleSelectProject = (project: any) => {
     setSelectedProject(project.path);
+    setSharedProject(projectDescriptorFromSidebar(project));
   };
 
   return (
@@ -1890,6 +1911,11 @@ export default function Workbench() {
           </div>
           <h1 className="text-base font-semibold tracking-tight text-white">Coding Workbench</h1>
           <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#313244] text-[#6c7086]">IDE</span>
+          {sharedProject && (
+            <span className="text-[10px] px-2 py-0.5 rounded bg-[#313244] text-[#cdd6f4] font-mono">
+              {sharedProject.origin}: {sharedProject.name || sharedProject.path}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button

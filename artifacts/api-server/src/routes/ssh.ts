@@ -3,6 +3,7 @@ import { Client } from "ssh2";
 import * as fs from "fs";
 import * as path from "path";
 import { db, llmConfigTable } from "@workspace/db";
+import * as projectCtx from "../lib/project-context";
 
 const router: IRouter = Router();
 
@@ -403,10 +404,21 @@ function execSSH(config: SSHConfig, command: string): Promise<{ stdout: string; 
 
 router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
   const config = getSSHConfig(req.body);
-  const { prompt, messages: history, modelOverride } = req.body;
+  const { prompt, messages: history, modelOverride, project: projectDescriptor, includeProjectContext } = req.body;
 
   if (!prompt) { res.status(400).json({ error: "prompt is required" }); return; }
   if (!config.host || !config.username) { res.status(400).json({ error: "SSH not configured" }); return; }
+
+  let projectContextText = "";
+  if (projectDescriptor && projectDescriptor.origin && projectDescriptor.path && includeProjectContext !== false) {
+    try {
+      const resolved = await projectCtx.resolveDescriptor(projectDescriptor);
+      if (resolved) {
+        const summary = await projectCtx.getSummary(resolved, { tokenBudget: 2500 });
+        projectContextText = `\n\n## Selected Project Context (auto-included)\n${summary}\n`;
+      }
+    } catch {}
+  }
 
   const [llmConfig] = await db.select().from(llmConfigTable).limit(1);
   const serverUrl = llmConfig?.serverUrl;
@@ -590,7 +602,7 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
     availableDirs = `\n\nAVAILABLE LOCAL DIRECTORIES (use these paths with list_local_files and read_local_file):\n${dirs.map(d => `- ${d}/`).join("\n")}`;
   } catch {}
 
-  const conversationMessages: any[] = [{ role: "system", content: systemPrompt + availableDirs }];
+  const conversationMessages: any[] = [{ role: "system", content: systemPrompt + availableDirs + projectContextText }];
   if (history && Array.isArray(history)) {
     const filtered = history.filter((m: any) => {
       if (m.role === "assistant" && typeof m.content === "string") {
