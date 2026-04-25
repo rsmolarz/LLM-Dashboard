@@ -1,7 +1,17 @@
-import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { HardDrive, Copy, Check } from "lucide-react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { HardDrive, Trash2, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // Event name used by panels that observe live quota changes (e.g. the
 // shell mutation response carries the latest snapshot) to broadcast the
@@ -49,8 +59,6 @@ function formatScratchBytes(bytes: number): string {
   return `${rounded} ${sizes[i]}`;
 }
 
-const CLEAR_COMMAND = "rm -rf -- ./* ./.[!.]*";
-
 /**
  * Footer affordance for the workbench shell panel that surfaces the
  * user's per-scratch-dir disk usage. Task #51 added a hard 1 GiB cap
@@ -61,9 +69,12 @@ const CLEAR_COMMAND = "rm -rf -- ./* ./.[!.]*";
  * Visual states:
  *   - < 80%   neutral grey
  *   - >= 80%  warning yellow
- *   - == 100% blocking red + "clear scratch" affordance with a copy-able
- *             rm command (we don't run the rm ourselves; users always
- *             stay in control of destructive shell commands).
+ *   - == 100% blocking red + a "Clear scratch" button that opens a
+ *             confirmation modal and POSTs to the server-side clear
+ *             endpoint (task #84). The previous "Copy clear cmd"
+ *             affordance asked users to run `rm -rf -- ./* ./.[!.]*`
+ *             themselves, which was both error-prone (typo / wrong
+ *             cwd) and unfriendly to non-shell users.
  *
  * The bar also fetches an initial quota snapshot via GET /quota so it
  * shows up immediately on mount, before the user has run any command.
@@ -71,13 +82,22 @@ const CLEAR_COMMAND = "rm -rf -- ./* ./.[!.]*";
 export function ScratchQuotaBar({
   apiBase,
   quota,
-  onCopyClear,
+  onCleared,
 }: {
   apiBase: string;
   quota: ScratchQuota | null;
-  onCopyClear?: (command: string) => void;
+  /**
+   * Notify the parent when the user has cleared their scratch dir so
+   * the parent's locally-cached `quota` state (driven by shell/git
+   * responses) can drop back to the freshly-cleared snapshot. Without
+   * this the bar's own React Query cache would update but the parent
+   * would keep handing us the stale "100% used" value via `quota`.
+   */
+  onCleared?: (quota: ScratchQuota) => void;
 }) {
-  const [copied, setCopied] = useState(false);
+  const queryClient = useQueryClient();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [clearError, setClearError] = useState<string | null>(null);
 
   // Initial load: fetch the user's current quota so the indicator
   // appears before any shell command. After the first shell response
@@ -95,6 +115,45 @@ export function ScratchQuotaBar({
     enabled: !quota,
     staleTime: 30_000,
     refetchOnWindowFocus: false,
+  });
+
+  const clearMutation = useMutation({
+    mutationFn: async (): Promise<ScratchQuota | null> => {
+      const res = await fetch(`${apiBase}/api/workbench/scratch/clear`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const body = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const reason = typeof (body as any)?.error === "string"
+          ? (body as any).error
+          : `Clear failed (HTTP ${res.status})`;
+        throw new Error(reason);
+      }
+      return parseScratchQuota((body as any)?.quota) ?? null;
+    },
+    onSuccess: (newQuota) => {
+      setClearError(null);
+      setConfirmOpen(false);
+      // Update the bar's own cached snapshot so the indicator
+      // refreshes immediately even if the parent doesn't pass us
+      // a fresh `quota`.
+      if (newQuota) {
+        queryClient.setQueryData(["workbench-quota", apiBase], newQuota);
+        if (onCleared) onCleared(newQuota);
+      } else {
+        // No quota in response — at least force a re-fetch so the
+        // next render reflects reality.
+        queryClient.invalidateQueries({ queryKey: ["workbench-quota", apiBase] });
+      }
+      // The scratch panel (if mounted) lists files and quota
+      // independently — invalidate it so the file list also drops
+      // back to "nothing here yet".
+      queryClient.invalidateQueries({ queryKey: ["workbench-scratch"] });
+    },
+    onError: (err: Error) => {
+      setClearError(err.message);
+    },
   });
 
   const effective = quota ?? initial.data ?? null;
@@ -121,18 +180,6 @@ export function ScratchQuotaBar({
     : warn
       ? "border-[#f9e2af]/30"
       : "border-[#313244]";
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(CLEAR_COMMAND);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-      if (onCopyClear) onCopyClear(CLEAR_COMMAND);
-    } catch {
-      // Clipboard can fail in non-secure contexts; users still see the
-      // command in the button label, so they can copy by hand.
-    }
-  };
 
   return (
     <div
@@ -164,26 +211,94 @@ export function ScratchQuotaBar({
       {atCap ? (
         <button
           type="button"
-          onClick={handleCopy}
+          onClick={() => {
+            setClearError(null);
+            setConfirmOpen(true);
+          }}
+          disabled={clearMutation.isPending}
           className={cn(
             "shrink-0 inline-flex items-center gap-1 rounded px-1.5 py-0.5 border transition-colors",
             "border-[#f38ba8]/40 text-[#f38ba8] hover:bg-[#f38ba8]/10",
+            "disabled:opacity-50 disabled:cursor-not-allowed",
           )}
-          title={`Copy a command that clears your scratch dir (${CLEAR_COMMAND})`}
+          title="Wipe every file you created in your scratch dir (workspace mirror is preserved)"
           data-testid="scratch-quota-clear-button"
         >
-          {copied ? (
-            <Check className="h-3 w-3" />
+          {clearMutation.isPending ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
           ) : (
-            <Copy className="h-3 w-3" />
+            <Trash2 className="h-3 w-3" />
           )}
-          <span>{copied ? "Copied" : "Copy clear cmd"}</span>
+          <span>{clearMutation.isPending ? "Clearing…" : "Clear scratch"}</span>
         </button>
       ) : warn ? (
         <span className="shrink-0 text-[#f9e2af]" data-testid="scratch-quota-warn-label">
           Approaching cap
         </span>
       ) : null}
+
+      <AlertDialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (clearMutation.isPending) return;
+          setConfirmOpen(open);
+          if (!open) setClearError(null);
+        }}
+      >
+        <AlertDialogContent data-testid="scratch-quota-clear-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear your scratch space?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  This permanently deletes every file you've created in
+                  your workbench scratch dir
+                  (<span className="font-mono">{formatScratchBytes(usedBytes)}</span> in use).
+                  The shared workspace mirror — symlinks back to the
+                  project files — stays intact.
+                </p>
+                <p className="text-muted-foreground">
+                  This action cannot be undone.
+                </p>
+                {clearError ? (
+                  <p
+                    className="text-[#f38ba8] font-mono text-xs"
+                    data-testid="scratch-quota-clear-error"
+                  >
+                    {clearError}
+                  </p>
+                ) : null}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={clearMutation.isPending}
+              data-testid="scratch-quota-clear-cancel"
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                clearMutation.mutate();
+              }}
+              disabled={clearMutation.isPending}
+              data-testid="scratch-quota-clear-confirm"
+              className="bg-[#f38ba8] text-[#1e1e2e] hover:bg-[#f38ba8]/90"
+            >
+              {clearMutation.isPending ? (
+                <span className="inline-flex items-center gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Clearing…
+                </span>
+              ) : (
+                "Clear scratch"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

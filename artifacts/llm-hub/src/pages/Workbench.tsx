@@ -780,7 +780,7 @@ function ShellPanel() {
       <ScratchQuotaBar
         apiBase={API_BASE}
         quota={quota}
-        onCopyClear={(cmd) => setInput(cmd)}
+        onCleared={(q) => setQuota(q)}
       />
     </div>
   );
