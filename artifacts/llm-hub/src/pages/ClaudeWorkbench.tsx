@@ -620,10 +620,13 @@ function ClaudeCodePanel() {
       setToolEvents([]);
       const res = await fetch(`/api/workbench/code-chat`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, messages: conversationHistory, project: selectedProject || undefined }),
+        body: JSON.stringify({ prompt, messages: conversationHistory, project: selectedProject || undefined, writeMode: !!selectedProject }),
         signal: controller.signal, credentials: "include",
       });
-      if (!res.ok) { const err = await res.json().catch(() => ({ error: "Failed" })); throw new Error(err.error || `HTTP ${res.status}`); }
+      if (!res.ok) {
+        if (res.status === 401) { throw new Error("Sign in required to use file/shell tools on the selected project."); }
+        const err = await res.json().catch(() => ({ error: "Failed" })); throw new Error(err.error || `HTTP ${res.status}`);
+      }
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       if (reader) {
@@ -1787,6 +1790,28 @@ export default function ClaudeWorkbench() {
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("cw-sidebar-collapsed", false);
   const { project: sharedProject, setProject: setSharedProject } = useSelectedProject();
   const selectedProjectPath = sharedProject?.path || null;
+  const [cloneStatus, setCloneStatus] = useState<{ state: "idle" | "pending" | "cloned" | "error" | "auth"; localPath?: string; error?: string }>({ state: "idle" });
+
+  useEffect(() => {
+    if (!sharedProject || sharedProject.origin !== "replit") { setCloneStatus({ state: "idle" }); return; }
+    let cancelled = false;
+    setCloneStatus({ state: "pending" });
+    fetch("/api/project-context/ensure-clone", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project: sharedProject }),
+      credentials: "include",
+    })
+      .then(async r => {
+        if (cancelled) return;
+        if (r.status === 401) { setCloneStatus({ state: "auth" }); return; }
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { setCloneStatus({ state: "error", error: j.error || `HTTP ${r.status}` }); return; }
+        setCloneStatus({ state: "cloned", localPath: j.localPath });
+      })
+      .catch(err => { if (!cancelled) setCloneStatus({ state: "error", error: err?.message }); });
+    return () => { cancelled = true; };
+  }, [sharedProject?.origin, sharedProject?.path, sharedProject?.url]);
 
   const handleSelectProject = (project: any) => {
     setSharedProject(projectDescriptorFromSidebar(project));
@@ -1806,6 +1831,25 @@ export default function ClaudeWorkbench() {
               {sharedProject.origin}: {sharedProject.name || sharedProject.path}
             </span>
           )}
+          {sharedProject?.origin === "replit" && (
+            <span
+              className={cn(
+                "text-[10px] px-2 py-0.5 rounded font-mono border",
+                cloneStatus.state === "cloned" && "border-[#a6e3a1]/40 text-[#a6e3a1] bg-[#a6e3a1]/10",
+                cloneStatus.state === "pending" && "border-[#89b4fa]/40 text-[#89b4fa] bg-[#89b4fa]/10",
+                cloneStatus.state === "error" && "border-[#f38ba8]/40 text-[#f38ba8] bg-[#f38ba8]/10",
+                cloneStatus.state === "auth" && "border-[#f9e2af]/40 text-[#f9e2af] bg-[#f9e2af]/10",
+                cloneStatus.state === "idle" && "border-[#313244] text-[#6c7086]"
+              )}
+              title={cloneStatus.localPath || cloneStatus.error || ""}
+            >
+              {cloneStatus.state === "cloned" && `cloned → ${cloneStatus.localPath?.split("/").slice(-2).join("/") || "local"}`}
+              {cloneStatus.state === "pending" && "cloning…"}
+              {cloneStatus.state === "error" && "clone failed"}
+              {cloneStatus.state === "auth" && "sign in to clone"}
+              {cloneStatus.state === "idle" && "not cloned"}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button className={cn("px-3 py-1 rounded-lg text-xs font-medium transition-colors",
@@ -1815,6 +1859,8 @@ export default function ClaudeWorkbench() {
           </button>
         </div>
       </div>
+
+      <ProjectContextHeader compact />
 
       <div className="flex-1 flex min-h-0">
         <ProjectSidebar

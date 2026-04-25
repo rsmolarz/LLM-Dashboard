@@ -748,12 +748,15 @@ function CodeChatPanel() {
       const res = await fetch(`/api/workbench/code-chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, messages: conversationHistory, project: selectedProject || undefined }),
+        body: JSON.stringify({ prompt, messages: conversationHistory, project: selectedProject || undefined, writeMode: !!selectedProject }),
         signal: controller.signal,
         credentials: "include",
       });
 
       if (!res.ok) {
+        if (res.status === 401) {
+          throw new Error("Sign in required to use file/shell tools on the selected project.");
+        }
         const err = await res.json().catch(() => ({ error: "Request failed" }));
         throw new Error(err.error || `HTTP ${res.status}`);
       }
@@ -1932,6 +1935,8 @@ export default function Workbench() {
           </button>
         </div>
       </div>
+
+      <ProjectContextHeader compact />
 
       <div className="flex-1 flex min-h-0">
         <ProjectSidebar

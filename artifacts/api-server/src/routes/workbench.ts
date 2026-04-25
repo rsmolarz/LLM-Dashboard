@@ -77,6 +77,10 @@ router.get("/files", async (req, res): Promise<void> => {
   if (projectRaw) {
     try {
       const project = JSON.parse(projectRaw);
+      if (project?.origin === "vps" && !(req as any).user) {
+        res.status(401).json({ items: [], error: "Authentication required for VPS-origin project access" });
+        return;
+      }
       const resolved = await projectCtx.resolveDescriptor(project);
       if (!resolved) { res.json({ items: [], error: "could not resolve project" }); return; }
       if (resolved.origin === "replit" && !resolved.localPath) {
@@ -141,6 +145,10 @@ router.get("/file-content", async (req, res): Promise<void> => {
   if (projectRaw) {
     try {
       const project = JSON.parse(projectRaw);
+      if (project?.origin === "vps" && !(req as any).user) {
+        res.status(401).json({ error: "Authentication required for VPS-origin project access" });
+        return;
+      }
       const resolved = await projectCtx.resolveDescriptor(project);
       if (!resolved) { res.json({ error: "could not resolve project" }); return; }
       if (resolved.origin === "replit" && !resolved.localPath) {
@@ -369,7 +377,7 @@ router.get("/agent-activity", async (_req, res): Promise<void> => {
 });
 
 router.post("/code-chat", async (req, res): Promise<void> => {
-  const { prompt, messages: history, project: projectDescriptor } = req.body || {};
+  const { prompt, messages: history, project: projectDescriptor, writeMode } = req.body || {};
   if (!prompt) {
     res.status(400).json({ error: "prompt is required" });
     return;
@@ -383,6 +391,14 @@ router.post("/code-chat", async (req, res): Promise<void> => {
   }
 
   const isAuthed = !!(req as any).user;
+  if (writeMode === true && !isAuthed) {
+    res.status(401).json({ error: "Authentication required for writeMode chat (write_file/run_shell)" });
+    return;
+  }
+  if (projectDescriptor?.origin === "vps" && !isAuthed) {
+    res.status(401).json({ error: "Authentication required for VPS-origin project access" });
+    return;
+  }
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");

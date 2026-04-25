@@ -27,9 +27,18 @@ function parseDescriptor(body: any): ProjectDescriptor | null {
   };
 }
 
+function gateVps(req: any, res: any, desc: ProjectDescriptor): boolean {
+  if (desc.origin === "vps" && !req.user) {
+    res.status(401).json({ error: "Authentication required for VPS-origin project access" });
+    return false;
+  }
+  return true;
+}
+
 router.post("/summary", async (req, res): Promise<void> => {
   const desc = parseDescriptor(req.body);
   if (!desc) { res.status(400).json({ error: "project descriptor required" }); return; }
+  if (!gateVps(req, res, desc)) return;
   try {
     const resolved = await resolveDescriptor(desc);
     if (!resolved) { res.status(400).json({ error: "could not resolve project" }); return; }
@@ -50,6 +59,7 @@ router.post("/summary", async (req, res): Promise<void> => {
 router.post("/list", async (req, res): Promise<void> => {
   const desc = parseDescriptor(req.body);
   if (!desc) { res.status(400).json({ error: "project descriptor required" }); return; }
+  if (!gateVps(req, res, desc)) return;
   try {
     const resolved = await resolveDescriptor(desc);
     if (!resolved) { res.status(400).json({ error: "could not resolve project" }); return; }
@@ -64,6 +74,7 @@ router.post("/list", async (req, res): Promise<void> => {
 router.post("/read", async (req, res): Promise<void> => {
   const desc = parseDescriptor(req.body);
   if (!desc) { res.status(400).json({ error: "project descriptor required" }); return; }
+  if (!gateVps(req, res, desc)) return;
   const filePath = typeof req.body.filePath === "string" ? req.body.filePath : "";
   if (!filePath) { res.status(400).json({ error: "filePath required" }); return; }
   try {
