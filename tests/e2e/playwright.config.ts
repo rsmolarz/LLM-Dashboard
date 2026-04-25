@@ -23,7 +23,12 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: 0,
-  reporter: process.env.CI ? "github" : "list",
+  reporter: process.env.CI
+    ? [
+        ["github"],
+        ["html", { open: "never", outputFolder: "playwright-report" }],
+      ]
+    : "list",
   // The shell endpoint shells out through bwrap on the first command,
   // which can take a few seconds to warm up.
   timeout: 60_000,

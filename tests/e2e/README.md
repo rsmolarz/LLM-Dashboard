@@ -6,37 +6,38 @@ notably the workbench shell's persisted history flow (up-arrow walk, Ctrl-R
 reverse search, the `(reverse-i-search)` overlay, Tab/Esc accept/cancel, and
 the trash-can clear that calls `DELETE /api/workbench/shell-history`).
 
-## Prerequisites
+## Automated entry point
 
-The Playwright config ships a `webServer` block that boots a dedicated
-api-server + llm-hub Vite dev server on their own ports for the duration of
-the run, so no long-running dev workflow is required. The fixture-login env
-var (`WORKBENCH_E2E_AUTH=1`) is scoped to the api-server subprocess Playwright
-spawns — it is **not** exported into the long-running `artifacts/api-server`
-dev workflow.
+The suite is wired into the project's validation hook as the **`e2e`** check
+and into the root `pnpm test:e2e` script. Both call
+[`scripts/run-e2e.sh`](../../scripts/run-e2e.sh), which:
 
-The only manual prerequisites are:
+1. Installs Playwright's Chromium binary on the first run and caches it
+   under `~/.cache/ms-playwright` (or `$XDG_CACHE_HOME/ms-playwright`
+   when set, which is the case on the Replit container). Subsequent runs
+   reuse the cached copy so a clean re-run stays well under ~2 min.
+2. Forwards `REPLIT_LD_LIBRARY_PATH` so Chromium can find the Nix-provided
+   libraries (`libnss3.so`, etc.) it links against on the dev container.
+3. Hands off to `playwright test`, which then **boots a self-contained
+   stack** via the `webServer` block in `playwright.config.ts` — a
+   dedicated api-server + llm-hub Vite dev server on their own ports, so
+   no long-running dev workflow is required. The fixture-login env var
+   (`WORKBENCH_E2E_AUTH=1`) is scoped to the api-server subprocess
+   Playwright spawns — it is **not** exported into the long-running
+   `artifacts/api-server` dev workflow.
 
-1. Chromium needs the system libraries Playwright depends on. If
-   `pnpm exec playwright test` errors with `error while loading shared
-   libraries: libnss3.so` (or similar), make sure the workspace's
-   `LD_LIBRARY_PATH` is exported
-   (`export LD_LIBRARY_PATH="$REPLIT_LD_LIBRARY_PATH"`).
-2. Chromium browser binaries must be installed once
-   (`pnpm --filter @workspace/tests-e2e test:e2e:install-browsers`).
+A failing spec blocks the merge with the trace, screenshot, and video
+artifacts that Playwright records under `tests/e2e/test-results/` (and,
+in CI, also `tests/e2e/playwright-report/`).
 
-## Running
+So in practice: **you don't have to start anything.** Push your branch
+and the validation hook runs the suite. Locally, just:
 
 ```bash
-# one-time: install the Chromium browser binaries Playwright drives
-pnpm --filter @workspace/tests-e2e test:e2e:install-browsers
-
-# from the repo root
-pnpm --filter @workspace/tests-e2e test:e2e
-
-# or, headed for local debugging
-pnpm --filter @workspace/tests-e2e test:e2e:headed
+pnpm test:e2e
 ```
+
+## Running ad-hoc
 
 The bundled `webServer` block listens on `127.0.0.1:8095` (api-server) and
 `127.0.0.1:18238` (Vite). Override the ports with `PLAYWRIGHT_API_PORT` /
@@ -47,8 +48,16 @@ To skip the bundled servers entirely and target an already-running stack
 disabled when that env var is present:
 
 ```bash
-PLAYWRIGHT_BASE_URL=https://my-preview.example.com \
-  pnpm --filter @workspace/tests-e2e test:e2e
+# Repo-root convenience script (auto-boots the dedicated stack):
+pnpm test:e2e
+
+# Or call Playwright directly inside the package, against an already-running stack:
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 \
+  pnpm --filter @workspace/tests-e2e exec playwright test
+
+# Headed browser for local debugging (also against a running stack):
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:8080 \
+  pnpm --filter @workspace/tests-e2e test:e2e:headed
 ```
 
 When pointing at an external stack you are responsible for ensuring the
