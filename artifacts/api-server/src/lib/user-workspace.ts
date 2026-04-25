@@ -1125,6 +1125,325 @@ export function materializeScratchFile(
   return { absPath: destAbs, bytesWritten: stat.size };
 }
 
+/**
+ * One entry returned by `listUserScratchEntries`. Symlinks are
+ * surfaced as their own type with `isSymlink=true` so the UI can
+ * mark them as not-deletable (they belong to the system mirror of
+ * the host workspace, not user content).
+ */
+export interface ScratchEntry {
+  name: string;
+  type: "file" | "directory" | "symlink" | "other";
+  /** Recursive bytes for directories, st.size for files, 0 for symlinks. */
+  sizeBytes: number;
+  mtime: number;
+  isSymlink: boolean;
+  symlinkTarget?: string;
+}
+
+export interface ListUserScratchResult {
+  /** Path requested, relative to the user's scratch root ("" for root). */
+  path: string;
+  entries: ScratchEntry[];
+  quota: UserQuotaInfo;
+}
+
+/**
+ * A scratch-relative path with `..` removed and slashes normalised.
+ * Returns `""` for the root.
+ */
+function normalizeScratchSubPath(subPath: string | undefined): string {
+  if (typeof subPath !== "string" || subPath.length === 0) return "";
+  // Strip leading slashes — every scratch path is relative to the
+  // user's scratch root regardless of whether the caller spelled it
+  // with a leading "/" or not.
+  const trimmed = subPath.replace(/^[/\\]+/, "");
+  if (trimmed === "" || trimmed === ".") return "";
+  return trimmed;
+}
+
+/**
+ * Resolve a caller-supplied scratch-relative path and verify it
+ * stays inside the user's scratch dir. Returns `null` on escape so
+ * the caller can map that to a 400.
+ */
+function resolveWithinScratch(scratchDir: string, subPath: string): string | null {
+  const norm = normalizeScratchSubPath(subPath);
+  if (norm === "") return scratchDir;
+  // path.resolve normalises away `..` segments, so the prefix check
+  // below is sufficient — a path that tried to traverse out via
+  // `../<otherHash>/host/secret` resolves to a sibling of scratchDir
+  // and gets rejected here.
+  const resolved = path.resolve(scratchDir, norm);
+  if (resolved !== scratchDir && !resolved.startsWith(scratchDir + path.sep)) {
+    return null;
+  }
+  return resolved;
+}
+
+/**
+ * Return true if any *intermediate* path component on the way from
+ * `scratchDir` to `target` is a symlink. The final component is
+ * allowed to be a symlink (so listing/deletion can name a symlink
+ * directly without claiming the whole tree is escaping). This
+ * defends against `<symlink>/foo` style paths that would otherwise
+ * resolve out into the host workspace once readdir/lstat dereferenced
+ * the symlink.
+ */
+function hasIntermediateSymlink(scratchDir: string, target: string): boolean {
+  if (target === scratchDir) return false;
+  const rel = path.relative(scratchDir, target);
+  if (!rel || rel.startsWith("..")) return true;
+  const parts = rel.split(path.sep);
+  let cur = scratchDir;
+  // Walk every parent component but stop before the final segment —
+  // it's the entry being addressed and may legitimately be a symlink.
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur = path.join(cur, parts[i]);
+    let st: fs.Stats | null = null;
+    try { st = fs.lstatSync(cur); } catch { return false; /* missing dir; safe */ }
+    if (st.isSymbolicLink()) return true;
+  }
+  return false;
+}
+
+class ScratchPathError extends Error {
+  code: string;
+  constructor(message: string, code: string) {
+    super(message);
+    this.name = "ScratchPathError";
+    this.code = code;
+  }
+}
+
+/**
+ * List the entries of a directory inside the user's scratch root.
+ * `subPath` defaults to the scratch root. Symlinks are returned
+ * (with `isSymlink=true`) so the UI can show the full directory but
+ * mark the system-mirror entries as not-deletable. Recursion stops
+ * at symlinks: we never follow a symlink and walk into the shared
+ * host workspace from this endpoint (the file-explorer endpoint is
+ * the right place for that).
+ */
+export function listUserScratchEntries(
+  userId: string,
+  subPath: string = "",
+): ListUserScratchResult {
+  const scratchDir = ensureUserScratchDir(userId);
+  const target = resolveWithinScratch(scratchDir, subPath);
+  if (!target) {
+    throw new ScratchPathError(
+      `scratch path escapes user scratch dir: ${subPath}`,
+      "ESCAPE",
+    );
+  }
+  if (hasIntermediateSymlink(scratchDir, target)) {
+    throw new ScratchPathError(
+      `scratch path traverses through a symlink: ${subPath}`,
+      "ESCAPE",
+    );
+  }
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    throw new ScratchPathError(
+      `scratch path not found: ${subPath || "/"}`,
+      "ENOENT",
+    );
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) {
+    throw new ScratchPathError(
+      `scratch path is not a directory: ${subPath || "/"}`,
+      "ENOTDIR",
+    );
+  }
+
+  let dirents: fs.Dirent[] = [];
+  try { dirents = fs.readdirSync(target, { withFileTypes: true }); } catch {}
+
+  const entries: ScratchEntry[] = [];
+  for (const ent of dirents) {
+    const full = path.join(target, ent.name);
+    let entryStat: fs.Stats;
+    try { entryStat = fs.lstatSync(full); } catch { continue; }
+
+    let type: ScratchEntry["type"] = "other";
+    let isSymlink = false;
+    let symlinkTarget: string | undefined;
+    let sizeBytes = 0;
+
+    if (entryStat.isSymbolicLink()) {
+      type = "symlink";
+      isSymlink = true;
+      try { symlinkTarget = fs.readlinkSync(full); } catch {}
+      // Deliberately 0 bytes: following the symlink would charge the
+      // user's quota for shared host files they cannot delete.
+    } else if (entryStat.isDirectory()) {
+      type = "directory";
+      sizeBytes = walkRealFileBytes(full);
+    } else if (entryStat.isFile()) {
+      type = "file";
+      sizeBytes = entryStat.size;
+    }
+
+    const entry: ScratchEntry = {
+      name: ent.name,
+      type,
+      sizeBytes,
+      mtime: entryStat.mtimeMs,
+      isSymlink,
+    };
+    if (symlinkTarget !== undefined) entry.symlinkTarget = symlinkTarget;
+    entries.push(entry);
+  }
+  // Stable display order: directories before files, then alphabetical.
+  // Symlinks land alongside whatever `type` they map to (we keep
+  // their `type=symlink` separate so they sort last within a name
+  // group, but most are top-level mirror entries pointing at host
+  // files/dirs we never recurse into).
+  entries.sort((a, b) => {
+    const rank = (e: ScratchEntry) => (e.type === "directory" ? 0 : e.type === "file" ? 1 : 2);
+    const ra = rank(a);
+    const rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    return a.name.localeCompare(b.name);
+  });
+
+  return {
+    path: path.relative(scratchDir, target),
+    entries,
+    quota: getUserQuotaInfo(userId),
+  };
+}
+
+/**
+ * Delete a single file or directory inside the user's scratch root.
+ * Refuses paths that escape the scratch dir, traverse through a
+ * symlink, address the scratch root itself, or address one of the
+ * top-level mirror symlinks (those belong to the system view, not
+ * the user). Returns the freshly-computed quota snapshot so the UI
+ * can update its "remaining bytes" display in one round trip.
+ */
+export function deleteUserScratchEntry(
+  userId: string,
+  subPath: string,
+): { deletedPath: string; quota: UserQuotaInfo } {
+  const scratchDir = ensureUserScratchDir(userId);
+  if (typeof subPath !== "string" || subPath.length === 0) {
+    throw new ScratchPathError("scratch path is required", "EARG");
+  }
+  const target = resolveWithinScratch(scratchDir, subPath);
+  if (!target) {
+    throw new ScratchPathError(
+      `scratch path escapes user scratch dir: ${subPath}`,
+      "ESCAPE",
+    );
+  }
+  if (target === scratchDir) {
+    throw new ScratchPathError(
+      "cannot delete the scratch root itself; use the clear endpoint",
+      "EROOT",
+    );
+  }
+  if (hasIntermediateSymlink(scratchDir, target)) {
+    throw new ScratchPathError(
+      `scratch path traverses through a symlink: ${subPath}`,
+      "ESCAPE",
+    );
+  }
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch (err: any) {
+    if (err?.code === "ENOENT") {
+      throw new ScratchPathError(
+        `scratch entry not found: ${subPath}`,
+        "ENOENT",
+      );
+    }
+    throw err;
+  }
+  if (stat.isSymbolicLink()) {
+    // Top-level symlinks mirror the shared host workspace. Removing
+    // them would either no-op (unlinking the symlink itself, which
+    // `syncSymlinkView` would just recreate on the next request) or
+    // — if the caller meant to follow it — risk deleting the host
+    // file. Refuse explicitly so the UI can tell the user this is a
+    // shared-workspace entry, not user scratch.
+    throw new ScratchPathError(
+      "cannot delete this entry; it is a symlink to the shared workspace",
+      "ESYMLINK",
+    );
+  }
+  if (stat.isDirectory()) {
+    fs.rmSync(target, { recursive: true, force: true });
+  } else {
+    fs.unlinkSync(target);
+  }
+  // Bump scratch dir mtime so the cleanup task doesn't garbage-
+  // collect an actively-used scratch dir just because the user is
+  // pruning files instead of writing them.
+  try {
+    const now = new Date();
+    fs.utimesSync(scratchDir, now, now);
+    fs.utimesSync(path.dirname(scratchDir), now, now);
+  } catch {}
+  return {
+    deletedPath: path.relative(scratchDir, target),
+    quota: getUserQuotaInfo(userId),
+  };
+}
+
+/**
+ * Wipe every real (non-symlink) entry under the user's scratch root,
+ * then re-sync the symlink view so the host-mirror entries are
+ * intact. This is the "clear" affordance the UI exposes when a user
+ * is over the per-user quota and wants to start fresh.
+ */
+export function clearUserScratchDir(
+  userId: string,
+): { removed: string[]; quota: UserQuotaInfo } {
+  const scratchDir = ensureUserScratchDir(userId);
+  const removed: string[] = [];
+  let entries: fs.Dirent[] = [];
+  try {
+    entries = fs.readdirSync(scratchDir, { withFileTypes: true });
+  } catch {
+    return { removed, quota: getUserQuotaInfo(userId) };
+  }
+  for (const entry of entries) {
+    // Symlinks belong to the system mirror of PROJECT_ROOT — leave
+    // them alone. (`syncSymlinkView` is also invoked below to
+    // re-create any symlink that was previously shadowed by a
+    // user-created real file/dir of the same name.)
+    if (entry.isSymbolicLink()) continue;
+    const full = path.join(scratchDir, entry.name);
+    try {
+      if (entry.isDirectory()) {
+        fs.rmSync(full, { recursive: true, force: true });
+      } else {
+        fs.unlinkSync(full);
+      }
+      removed.push(entry.name);
+    } catch {
+      // best-effort: a transient permission error on one entry
+      // shouldn't fail the whole clear.
+    }
+  }
+  // Re-establish any symlinks the user had shadowed with real
+  // entries — without this, a user who `mkdir node_modules` and
+  // then `clear`s would lose the symlink view of the host workspace
+  // until their next shell command triggered ensureUserScratchDir.
+  syncSymlinkView(scratchDir);
+  try {
+    const now = new Date();
+    fs.utimesSync(scratchDir, now, now);
+    fs.utimesSync(path.dirname(scratchDir), now, now);
+  } catch {}
+  return { removed, quota: getUserQuotaInfo(userId) };
+}
+
 let cleanupTimer: NodeJS.Timeout | null = null;
 
 /**

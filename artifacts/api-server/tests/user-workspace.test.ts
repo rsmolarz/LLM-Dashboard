@@ -783,7 +783,7 @@ async function listFiles(userId: string | null, requestedPath = "."): Promise<Fi
   const text = await res.text();
   let body: any = {};
   try { body = text ? JSON.parse(text) : {}; } catch { body = { _raw: text }; }
-  return { status: res.status, body };
+  return { status: res.status, body } as FilesResult;
 }
 
 test("GET /api/files (anonymous) lists PROJECT_ROOT in host mode without privacy badges", async () => {
@@ -887,6 +887,235 @@ test("GET /api/file-content (authenticated) tags scratch reads with privacy", as
   const sharedBody = await sharedRes.json() as { scope?: { mode?: string; privacy?: string } };
   assert.equal(sharedBody.scope?.mode, "scratch");
   assert.equal(sharedBody.scope?.privacy, "shared");
+});
+
+// =============================================================================
+// Scratch dir management endpoints (GET/DELETE /api/scratch + clear)
+// =============================================================================
+
+async function listScratch(userId: string, subPath?: string): Promise<{ status: number; body: any }> {
+  const qs = subPath ? `?path=${encodeURIComponent(subPath)}` : "";
+  const res = await fetch(`${serverUrl}/api/scratch${qs}`, {
+    headers: { "x-test-user": userId },
+  });
+  const text = await res.text();
+  let body: any = {};
+  try { body = text ? JSON.parse(text) : {}; } catch { body = { _raw: text }; }
+  return { status: res.status, body };
+}
+
+async function deleteScratch(userId: string, subPath: string): Promise<{ status: number; body: any }> {
+  const res = await fetch(`${serverUrl}/api/scratch?path=${encodeURIComponent(subPath)}`, {
+    method: "DELETE",
+    headers: { "x-test-user": userId },
+  });
+  const text = await res.text();
+  let body: any = {};
+  try { body = text ? JSON.parse(text) : {}; } catch { body = { _raw: text }; }
+  return { status: res.status, body };
+}
+
+async function clearScratch(userId: string): Promise<{ status: number; body: any }> {
+  const res = await fetch(`${serverUrl}/api/scratch/clear`, {
+    method: "POST",
+    headers: { "x-test-user": userId },
+  });
+  const text = await res.text();
+  let body: any = {};
+  try { body = text ? JSON.parse(text) : {}; } catch { body = { _raw: text }; }
+  return { status: res.status, body };
+}
+
+test("GET /api/scratch requires auth", async () => {
+  const res = await fetch(`${serverUrl}/api/scratch`);
+  assert.equal(res.status, 401);
+});
+
+test("DELETE /api/scratch requires auth", async () => {
+  const res = await fetch(`${serverUrl}/api/scratch?path=foo`, { method: "DELETE" });
+  assert.equal(res.status, 401);
+});
+
+test("POST /api/scratch/clear requires auth", async () => {
+  const res = await fetch(`${serverUrl}/api/scratch/clear`, { method: "POST" });
+  assert.equal(res.status, 401);
+});
+
+test("GET /api/scratch lists user-created files alongside the symlink mirror", async () => {
+  const userId = trackUser(`scratch-list-${randomBytes(4).toString("hex")}`);
+  // Create some real entries via the shell route — that's the same
+  // path real users hit, so we know the listing reflects what the
+  // shell wrote.
+  await shell(userId, `mkdir -p stuff && echo hello > stuff/hi.txt && echo world > top.txt`);
+  const r = await listScratch(userId);
+  assert.equal(r.status, 200);
+  const names = (r.body.entries || []).map((e: any) => e.name);
+  assert.ok(names.includes("top.txt"), `expected top.txt in entries, got ${names.join(",")}`);
+  assert.ok(names.includes("stuff"), `expected stuff/ in entries, got ${names.join(",")}`);
+  // package.json is mirrored at every host top level via symlink.
+  const symlinkPkg = (r.body.entries || []).find((e: any) => e.name === "package.json");
+  assert.ok(symlinkPkg, "package.json symlink should be in the listing");
+  assert.equal(symlinkPkg.isSymlink, true);
+  assert.equal(symlinkPkg.type, "symlink");
+  // Quota snapshot must accompany the listing so the UI can render
+  // the gauge in one round trip.
+  assert.ok(r.body.quota && typeof r.body.quota.usedBytes === "number");
+  assert.ok(r.body.quota.capBytes > 0);
+});
+
+test("GET /api/scratch reports recursive sizes for user directories", async () => {
+  const userId = trackUser(`scratch-size-${randomBytes(4).toString("hex")}`);
+  // Write a known number of bytes inside a nested directory.
+  await shell(userId, `mkdir -p deep/inner && head -c 1024 /dev/zero > deep/inner/blob`);
+  const r = await listScratch(userId);
+  assert.equal(r.status, 200);
+  const dir = (r.body.entries || []).find((e: any) => e.name === "deep");
+  assert.ok(dir, "deep/ entry should be present");
+  assert.ok(dir.sizeBytes >= 1024, `expected dir sizeBytes>=1024, got ${dir.sizeBytes}`);
+});
+
+test("GET /api/scratch can drill into a user-created subdir", async () => {
+  const userId = trackUser(`scratch-drill-${randomBytes(4).toString("hex")}`);
+  await shell(userId, `mkdir -p sub && echo x > sub/inner.txt`);
+  const r = await listScratch(userId, "sub");
+  assert.equal(r.status, 200);
+  const names = (r.body.entries || []).map((e: any) => e.name);
+  assert.ok(names.includes("inner.txt"));
+  assert.equal(r.body.path, "sub");
+});
+
+test("GET /api/scratch refuses paths that escape the scratch dir", async () => {
+  const userId = trackUser(`scratch-escape-${randomBytes(4).toString("hex")}`);
+  const r = await listScratch(userId, "../../etc/passwd");
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "ESCAPE");
+});
+
+test("GET /api/scratch refuses to traverse into the host through a symlink", async () => {
+  const userId = trackUser(`scratch-syml-${randomBytes(4).toString("hex")}`);
+  userWs.ensureUserScratchDir(userId);
+  // package.json is a top-level symlink to the host workspace; using
+  // it as an intermediate component must be rejected so we never
+  // walk out into shared host state via this endpoint.
+  const r = await listScratch(userId, "package.json/anything");
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "ESCAPE");
+});
+
+test("DELETE /api/scratch removes a user file and updates the quota snapshot", async () => {
+  const userId = trackUser(`scratch-del-${randomBytes(4).toString("hex")}`);
+  await shell(userId, `head -c 4096 /dev/zero > deleteme.bin`);
+  const before = await listScratch(userId);
+  assert.equal(before.status, 200);
+  const beforeUsed = before.body.quota.usedBytes;
+  assert.ok(beforeUsed >= 4096, `expected >=4096 used before delete, got ${beforeUsed}`);
+
+  const r = await deleteScratch(userId, "deleteme.bin");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.deletedPath, "deleteme.bin");
+  assert.ok(r.body.quota.usedBytes < beforeUsed, "quota should drop after delete");
+
+  const after = await listScratch(userId);
+  const names = (after.body.entries || []).map((e: any) => e.name);
+  assert.ok(!names.includes("deleteme.bin"), "file should be gone after delete");
+});
+
+test("DELETE /api/scratch refuses paths that escape the scratch dir", async () => {
+  const userId = trackUser(`scratch-del-escape-${randomBytes(4).toString("hex")}`);
+  userWs.ensureUserScratchDir(userId);
+  const r = await deleteScratch(userId, "../../etc/passwd");
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "ESCAPE");
+});
+
+test("DELETE /api/scratch refuses to delete a top-level mirror symlink", async () => {
+  const userId = trackUser(`scratch-del-syml-${randomBytes(4).toString("hex")}`);
+  userWs.ensureUserScratchDir(userId);
+  // package.json is a top-level symlink — refusing this protects the
+  // shared host workspace from accidental damage and keeps the
+  // mirror view consistent across requests.
+  const r = await deleteScratch(userId, "package.json");
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "ESYMLINK");
+  // The host's package.json must still exist.
+  assert.ok(fs.existsSync(path.join(PROJECT_ROOT, "package.json")));
+});
+
+test("DELETE /api/scratch refuses an empty path (cannot wipe the root via DELETE)", async () => {
+  const userId = trackUser(`scratch-del-empty-${randomBytes(4).toString("hex")}`);
+  userWs.ensureUserScratchDir(userId);
+  const res = await fetch(`${serverUrl}/api/scratch?path=`, {
+    method: "DELETE",
+    headers: { "x-test-user": userId },
+  });
+  assert.equal(res.status, 400);
+});
+
+test("DELETE /api/scratch returns 404 for a non-existent entry", async () => {
+  const userId = trackUser(`scratch-del-missing-${randomBytes(4).toString("hex")}`);
+  userWs.ensureUserScratchDir(userId);
+  const r = await deleteScratch(userId, "nope.txt");
+  assert.equal(r.status, 404);
+  assert.equal(r.body.code, "ENOENT");
+});
+
+test("DELETE /api/scratch isolates per-user scratch — user A cannot delete user B's files", async () => {
+  const userA = trackUser(`scratch-del-isoA-${randomBytes(4).toString("hex")}`);
+  const userB = trackUser(`scratch-del-isoB-${randomBytes(4).toString("hex")}`);
+  await shell(userB, `echo secret > b-secret.txt`);
+  // Even spelling B's file via the relative path resolves under A's
+  // scratch dir, so it should 404 (A doesn't have the file at all).
+  const r = await deleteScratch(userA, "b-secret.txt");
+  assert.equal(r.status, 404);
+  // B's file must still exist.
+  const bDir = userWs.getUserScratchDir(userB);
+  assert.ok(fs.existsSync(path.join(bDir, "b-secret.txt")));
+});
+
+test("POST /api/scratch/clear wipes user files but keeps the symlink mirror", async () => {
+  const userId = trackUser(`scratch-clear-${randomBytes(4).toString("hex")}`);
+  await shell(userId, `mkdir -p a && echo x > a/y.txt && echo z > top.txt`);
+  const before = await listScratch(userId);
+  const beforeReal = (before.body.entries || []).filter((e: any) => !e.isSymlink).map((e: any) => e.name);
+  assert.ok(beforeReal.includes("top.txt") && beforeReal.includes("a"), `expected real entries before clear, got ${beforeReal.join(",")}`);
+
+  const r = await clearScratch(userId);
+  assert.equal(r.status, 200);
+  assert.ok(Array.isArray(r.body.removed));
+  assert.ok(r.body.removed.includes("top.txt"));
+  assert.ok(r.body.removed.includes("a"));
+  assert.equal(r.body.quota.usedBytes, 0, "used bytes should be 0 after clear");
+
+  const after = await listScratch(userId);
+  const realAfter = (after.body.entries || []).filter((e: any) => !e.isSymlink);
+  assert.equal(realAfter.length, 0, "no real user entries should survive clear");
+  // The symlink mirror is intact: package.json must still be a
+  // symlink-typed entry in the listing.
+  const sym = (after.body.entries || []).find((e: any) => e.name === "package.json");
+  assert.ok(sym && sym.isSymlink, "package.json mirror symlink should be re-established after clear");
+});
+
+test("POST /api/scratch/clear unblocks a user who was over quota", async () => {
+  const userId = trackUser(`scratch-clear-quota-${randomBytes(4).toString("hex")}`);
+  // Tighten the cap, fill above it, confirm the shell route refuses,
+  // clear scratch, and confirm the shell route now accepts.
+  userWs.__testing__.setUserQuotaBytes(64 * 1024); // 64 KiB
+  try {
+    await shell(userId, `head -c 80000 /dev/zero > big.bin`); // 80 KB > 64 KiB cap
+    const blocked = await shell(userId, `echo still here`);
+    assert.equal(blocked.body.exitCode, 1, "shell should refuse: user is over quota");
+    assert.ok(blocked.body.quotaExceeded, "blocked response should set quotaExceeded");
+
+    const cleared = await clearScratch(userId);
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.quota.usedBytes, 0);
+
+    const allowed = await shell(userId, `echo unblocked`);
+    assert.equal(allowed.body.exitCode, 0, `shell should run after clear, got stderr=${allowed.body.stderr}`);
+    assert.ok((allowed.body.stdout || "").includes("unblocked"));
+  } finally {
+    userWs.__testing__.setUserQuotaBytes(null);
+  }
 });
 
 test("POST /api/shell blocks writes through symlinks back to the host workspace", async () => {

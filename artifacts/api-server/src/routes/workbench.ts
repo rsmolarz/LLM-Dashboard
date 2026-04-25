@@ -11,7 +11,7 @@ import * as projectCtx from "../lib/project-context";
 import { unifiedDiff } from "../lib/file-diff";
 import { checkShellSafety, checkGitSafety, isGitCommand } from "../lib/command-safety";
 import { runSandboxed } from "../lib/command-sandbox";
-import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo, getUserScratchDir, materializeScratchFile } from "../lib/user-workspace";
+import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo, getUserScratchDir, materializeScratchFile, listUserScratchEntries, deleteUserScratchEntry, clearUserScratchDir } from "../lib/user-workspace";
 import { requireAuth } from "../middlewares/rateLimiter";
 import { randomBytes } from "crypto";
 
@@ -312,7 +312,17 @@ type WorkbenchErrorCode =
   | "DB_QUERY_FAILED"
   | "AI_REQUEST_FAILED"
   | "AI_NOT_CONFIGURED"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  // Scratch-dir management codes (propagated from `ScratchPathError` in
+  // `lib/user-workspace.ts`). EARG is emitted directly by the route as a
+  // 400 when the `path` query param is missing — the others surface via
+  // `err.code` after the user-workspace helpers reject a request.
+  | "ESCAPE"
+  | "EROOT"
+  | "ESYMLINK"
+  | "ENOTDIR"
+  | "EARG"
+  | "ENOENT";
 
 function classifyWorkbenchError(err: unknown): { status: number; code: WorkbenchErrorCode; message: string } {
   const message = (err as any)?.message || String(err) || "Unknown error";
@@ -977,6 +987,93 @@ router.post("/git", requireAuth, async (req, res): Promise<void> => {
     });
   } catch (err: any) {
     res.json({ stdout: err.stdout || "", stderr: err.stderr || err.message, exitCode: err.status || 1 });
+  }
+});
+
+// =============================================================================
+// Per-user scratch dir management
+// =============================================================================
+//
+// The `POST /shell` and `POST /git` routes execute inside a per-user
+// scratch dir whose disk usage is bounded by `WORKBENCH_USER_QUOTA_BYTES`
+// (default 1 GiB; see `lib/user-workspace.ts`). Once a user fills that
+// quota, the pre-flight check refuses every new shell/git command —
+// including the `rm` they would normally use to free space. These
+// endpoints break the chicken-and-egg cycle by exposing the user's
+// scratch dir as a manageable resource: list it, delete individual
+// entries, or wipe the whole thing back to the symlink-only baseline.
+// All three reuse the same containment helpers as the shell route so
+// users can never reach into another user's scratch or escape into
+// the shared host workspace via these endpoints.
+
+function scratchErrorStatus(code: string | undefined): number {
+  switch (code) {
+    case "ESCAPE": return 400;
+    case "EROOT": return 400;
+    case "ESYMLINK": return 400;
+    case "ENOTDIR": return 400;
+    case "EARG": return 400;
+    case "ENOENT": return 404;
+    default: return 500;
+  }
+}
+
+router.get("/scratch", requireAuth, async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required (missing user id)" });
+    return;
+  }
+  const subPath = typeof req.query.path === "string" ? req.query.path : "";
+  try {
+    const result = listUserScratchEntries(userId, subPath);
+    res.json(result);
+  } catch (err: any) {
+    const code = typeof err?.code === "string" ? err.code : undefined;
+    res.status(scratchErrorStatus(code)).json({
+      error: err?.message || "Failed to list scratch dir",
+      code: code || "INTERNAL_ERROR",
+    });
+  }
+});
+
+router.delete("/scratch", requireAuth, async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required (missing user id)" });
+    return;
+  }
+  const subPath = typeof req.query.path === "string" ? req.query.path : "";
+  if (!subPath) {
+    res.status(400).json({ error: "path query param is required", code: "EARG" });
+    return;
+  }
+  try {
+    const result = deleteUserScratchEntry(userId, subPath);
+    res.json(result);
+  } catch (err: any) {
+    const code = typeof err?.code === "string" ? err.code : undefined;
+    res.status(scratchErrorStatus(code)).json({
+      error: err?.message || "Failed to delete scratch entry",
+      code: code || "INTERNAL_ERROR",
+    });
+  }
+});
+
+router.post("/scratch/clear", requireAuth, async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required (missing user id)" });
+    return;
+  }
+  try {
+    const result = clearUserScratchDir(userId);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({
+      error: err?.message || "Failed to clear scratch dir",
+      code: "INTERNAL_ERROR",
+    });
   }
 });
 
