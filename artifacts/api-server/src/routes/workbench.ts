@@ -11,7 +11,7 @@ import * as projectCtx from "../lib/project-context";
 import { unifiedDiff } from "../lib/file-diff";
 import { checkShellSafety, checkGitSafety, isGitCommand } from "../lib/command-safety";
 import { runSandboxed } from "../lib/command-sandbox";
-import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo } from "../lib/user-workspace";
+import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo, getUserScratchDir } from "../lib/user-workspace";
 import { requireAuth } from "../middlewares/rateLimiter";
 import { randomBytes } from "crypto";
 
@@ -204,12 +204,91 @@ const upload = multer({
 });
 
 function safePath(requestedPath: string): string {
-  const resolved = path.resolve(PROJECT_ROOT, requestedPath);
-  const relative = path.relative(PROJECT_ROOT, resolved);
+  return safeBasedPath(PROJECT_ROOT, requestedPath);
+}
+
+function safeBasedPath(base: string, requestedPath: string): string {
+  const resolved = path.resolve(base, requestedPath);
+  const relative = path.relative(base, resolved);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error("Path traversal not allowed");
   }
   return resolved;
+}
+
+/**
+ * Per-entry classification used by the file browser so the UI can
+ * tell users which top-level entries are private to them (concrete
+ * scratch files / dirs they created) vs. shared host symlinks
+ * (read-only here; writes through the symlink are blocked by the
+ * sandbox). See `lib/user-workspace.ts` for the underlying scratch-
+ * dir + symlink-view design.
+ */
+export type EntryPrivacy = "private" | "shared";
+
+/**
+ * Classify a single filesystem entry sitting directly in the user's
+ * scratch dir (or any private subdir thereof). A symlink at this
+ * level is one of the "shared host file" mirrors set up by
+ * ensureUserScratchDir; everything else is the user's own state.
+ * Errors fall through to "private" — a transient lstat failure
+ * shouldn't claim host ownership.
+ */
+function classifyEntryPrivacy(absPath: string): EntryPrivacy {
+  try {
+    const lst = fs.lstatSync(absPath);
+    if (lst.isSymbolicLink()) return "shared";
+  } catch {
+    return "private";
+  }
+  return "private";
+}
+
+/**
+ * Classify a directory the user is browsing. Used when the requested
+ * path is nested past a top-level symlink: at that depth every entry
+ * inherits the parent dir's scope (private subdir → all entries are
+ * private; symlink-resolved into PROJECT_ROOT → all entries are
+ * shared). We compare realpath against `scratchDir` because following
+ * the symlink chain is the only way to know whether the cwd lives in
+ * scratch or in the shared host workspace.
+ */
+function classifyPathPrivacy(absPath: string, scratchDir: string): EntryPrivacy {
+  try {
+    const real = fs.realpathSync(absPath);
+    if (real === scratchDir || real.startsWith(scratchDir + path.sep)) {
+      return "private";
+    }
+    return "shared";
+  } catch {
+    // Could not realpath — fall back to the safer claim.
+    return "private";
+  }
+}
+
+/**
+ * Resolve the per-request "host workspace" base dir for the file
+ * browser / file-content endpoints.
+ *
+ * Authenticated callers get their per-user scratch dir so the file
+ * browser is consistent with what `POST /api/shell` actually runs
+ * against — including any private scratch files they've created.
+ * Anonymous callers fall back to PROJECT_ROOT (the shell rejects
+ * them upstream, but anon listing of host-public state is still
+ * supported). The `mode` field lets the UI badge entries and show
+ * the right banner copy.
+ */
+function resolveHostBase(req: any): {
+  base: string;
+  mode: "scratch" | "host";
+  scratchDir?: string;
+} {
+  const userId = String(req.user?.id || "");
+  if (userId) {
+    const scratchDir = ensureUserScratchDir(userId);
+    return { base: scratchDir, mode: "scratch", scratchDir };
+  }
+  return { base: PROJECT_ROOT, mode: "host" };
 }
 
 // Stable error codes returned in the JSON body of a 4xx/5xx response so
@@ -410,8 +489,22 @@ router.get("/files", async (req, res): Promise<void> => {
     }
   }
   try {
-    const fullPath = safePath(requestedPath);
+    const { base, mode, scratchDir } = resolveHostBase(req);
+    const fullPath = safeBasedPath(base, requestedPath);
     const entries = fs.readdirSync(fullPath, { withFileTypes: true });
+
+    // For nested listings, the parent dir's realpath determines whether
+    // every entry inherits "shared" (we crossed a symlink into the host
+    // workspace) or "private" (still inside the user's own scratch).
+    // For top-level listings (cwd === scratchDir) we classify per
+    // entry: a symlink is shared, a real file/dir is private.
+    let inheritedDirPrivacy: EntryPrivacy | null = null;
+    if (mode === "scratch" && scratchDir) {
+      const isAtScratchRoot = fullPath === scratchDir;
+      if (!isAtScratchRoot) {
+        inheritedDirPrivacy = classifyPathPrivacy(fullPath, scratchDir);
+      }
+    }
 
     const items = entries
       .filter(e => !e.name.startsWith(".") || e.name === ".env")
@@ -433,11 +526,23 @@ router.get("/files", async (req, res): Promise<void> => {
             result.size = stat.size;
           } catch {}
         }
+        if (mode === "scratch" && scratchDir) {
+          if (inheritedDirPrivacy !== null) {
+            result.privacy = inheritedDirPrivacy;
+          } else {
+            result.privacy = classifyEntryPrivacy(path.join(fullPath, e.name));
+          }
+        }
         return result;
       })
       .filter(e => e.name !== "node_modules" && e.name !== ".git");
 
-    res.json({ items, path: requestedPath });
+    const scope: Record<string, unknown> = { origin: "workspace", mode };
+    if (mode === "scratch" && scratchDir) {
+      scope.scratchPath = scratchDir;
+      scope.dirPrivacy = inheritedDirPrivacy ?? "mixed";
+    }
+    res.json({ items, path: requestedPath, scope });
   } catch (err: any) {
     const c = classifyWorkbenchError(err);
     res.status(c.status).json({ items: [], error: c.message, code: c.code });
@@ -487,7 +592,8 @@ router.get("/file-content", async (req, res): Promise<void> => {
   }
 
   try {
-    const fullPath = safePath(filePath);
+    const { base, mode, scratchDir } = resolveHostBase(req);
+    const fullPath = safeBasedPath(base, filePath);
     const stat = fs.statSync(fullPath);
 
     if (stat.size > 500000) {
@@ -496,7 +602,11 @@ router.get("/file-content", async (req, res): Promise<void> => {
     }
 
     const content = fs.readFileSync(fullPath, "utf-8");
-    res.json({ content, size: stat.size, path: filePath });
+    const scope: Record<string, unknown> = { origin: "workspace", mode };
+    if (mode === "scratch" && scratchDir) {
+      scope.privacy = classifyPathPrivacy(fullPath, scratchDir);
+    }
+    res.json({ content, size: stat.size, path: filePath, scope });
   } catch (err: any) {
     const c = classifyWorkbenchError(err);
     res.status(c.status).json({ error: c.message, code: c.code });
@@ -571,7 +681,8 @@ router.get("/file-download", async (req, res): Promise<void> => {
     }
   }
   try {
-    const fullPath = safePath(filePath);
+    const { base } = resolveHostBase(req);
+    const fullPath = safeBasedPath(base, filePath);
     sendStream(fullPath, baseName);
   } catch (err: any) {
     const c = classifyWorkbenchError(err);

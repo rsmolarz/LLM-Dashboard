@@ -42,18 +42,53 @@ type SandboxContainmentNotice = {
   path: string;
   message: string;
 };
+type EntryPrivacy = "private" | "shared";
+type ShellScope = { origin?: string; path?: string; mode?: string };
 type ShellEntry = {
   command: string;
   stdout: string;
   stderr: string;
   exitCode: number;
   timestamp: number;
+  // OS-level sandbox containment — surfaces when nsjail (or the
+  // platform sandbox) refuses a write that escapes the project
+  // boundary (e.g. EROFS / EACCES on a system path).
   sandboxContained?: SandboxContainmentNotice;
+  // Logical sandbox refusal — surfaces when the server's per-user
+  // scratch resolver refuses a write through a host symlink or other
+  // path-containment escape, and returns a user-facing reason
+  // instead of opaque stderr.
+  sandboxBlocked?: string;
+  scope?: ShellScope;
 };
-type FileItem = { name: string; type: "file" | "directory"; path: string; size?: number };
+type FileItem = {
+  name: string;
+  type: "file" | "directory";
+  path: string;
+  size?: number;
+  // Present only when the server resolves a per-user scratch dir
+  // (authenticated, host mode). "shared" = host-workspace symlink
+  // mirrored into scratch (read-only here; writes are sandboxed).
+  // "private" = a file/dir the user created in their scratch.
+  privacy?: EntryPrivacy;
+};
+type FileScope = {
+  origin?: string;
+  mode?: "scratch" | "host";
+  scratchPath?: string;
+  dirPrivacy?: EntryPrivacy | "mixed";
+};
 
 type ShellMutationResult =
-  | { ok: true; stdout: string; stderr: string; exitCode: number; sandboxContained?: SandboxContainmentNotice }
+  | {
+      ok: true;
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      sandboxContained?: SandboxContainmentNotice;
+      sandboxBlocked?: string;
+      scope?: ShellScope;
+    }
   | { ok: false; error: { message: string; code: string } };
 
 function parseSandboxContainment(raw: unknown): SandboxContainmentNotice | undefined {
@@ -87,6 +122,107 @@ function SandboxContainedNotice({ notice }: { notice: SandboxContainmentNotice }
           {notice.message}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Inline notice rendered after a shell command whose write was
+ * refused by the per-user sandbox. Translates the engine's reason
+ * (e.g. "escapes sandbox via symlink") into plain language and
+ * points at the two ways forward:
+ *   1) write to a private path inside the user's scratch dir, or
+ *   2) re-run with a `project` descriptor so the command targets a
+ *      project-scoped working tree instead of the host workspace.
+ */
+function SandboxBlockedNotice({
+  reason,
+  scope,
+  hasProject,
+}: {
+  reason: string;
+  scope?: ShellScope;
+  hasProject: boolean;
+}) {
+  return (
+    <div className="ml-3 mt-1 mb-1 rounded border border-[#f9e2af]/40 bg-[#f9e2af]/10 p-2 text-[11px] leading-relaxed">
+      <div className="flex items-center gap-1.5 text-[#f9e2af]">
+        <Shield className="h-3 w-3" />
+        <span className="font-semibold">Sandbox blocked this write</span>
+      </div>
+      <div className="mt-1 text-[#cdd6f4]">{reason}</div>
+      <div className="mt-2 text-[#a6adc8]">
+        Files like <span className="font-mono">package.json</span>,{" "}
+        <span className="font-mono">artifacts/</span>, etc. are <strong>shared</strong> with
+        every user — your shell sees them through read-only links into the host workspace, and writes through them are refused so two people can&apos;t step on each other.
+      </div>
+      <div className="mt-2 text-[#a6adc8]">
+        <span className="text-[#cdd6f4] font-semibold">What you can do:</span>
+        <ul className="mt-1 ml-3 list-disc space-y-0.5">
+          <li>
+            Create the file inside your <strong>private scratch</strong> instead — anything you{" "}
+            <span className="font-mono">touch</span>, <span className="font-mono">mkdir</span>, or
+            <span className="font-mono">{" >"}redirect</span> at a fresh path stays just for you.
+          </li>
+          {!hasProject && (
+            <li>
+              Pick a project from the sidebar to run with a project descriptor — those commands target the project&apos;s own working tree (where edits are allowed and tracked).
+            </li>
+          )}
+        </ul>
+      </div>
+      {scope?.path && (
+        <div className="mt-2 text-[10px] text-[#585b70] font-mono break-all">
+          scratch dir: {scope.path}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Compact pill rendered next to each entry in the file browser to
+ * tell the user "this row is your private scratch file" vs. "this
+ * is a shared host symlink — read-only here, ask the project shell
+ * to edit it." Omitted entirely for entries without a privacy tag
+ * (anonymous host listings, project-scoped listings).
+ */
+function PrivacyBadge({ privacy }: { privacy?: EntryPrivacy }) {
+  if (!privacy) return null;
+  if (privacy === "private") {
+    return (
+      <span
+        className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded bg-[#a6e3a1]/15 text-[#a6e3a1] border border-[#a6e3a1]/30"
+        title="Private to you — lives in your per-user scratch dir."
+      >
+        Private
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded bg-[#89b4fa]/15 text-[#89b4fa] border border-[#89b4fa]/30"
+      title="Shared with the project — read-only here. Use the project shell to edit."
+    >
+      Shared
+    </span>
+  );
+}
+
+/**
+ * Banner shown above the entry list when the workbench is browsing
+ * the user's per-user scratch dir. Explains the two-coloured world
+ * (your private files vs. shared host symlinks) and primes the user
+ * for the sandbox refusals they'll hit if they try to write through
+ * a shared entry.
+ */
+function ScratchModeBanner({ scope }: { scope: FileScope }) {
+  if (scope.mode !== "scratch") return null;
+  return (
+    <div className="px-2 py-1.5 mb-1 text-[10px] leading-snug text-[#a6adc8] border-l-2 border-[#89b4fa] bg-[#181825]">
+      You&apos;re browsing your <strong className="text-[#a6e3a1]">private scratch</strong>.{" "}
+      <span className="text-[#a6e3a1]">Private</span> entries are yours alone;{" "}
+      <span className="text-[#89b4fa]">Shared</span> entries are read-only links into the host workspace — pick a project to edit them.
     </div>
   );
 }
@@ -131,6 +267,8 @@ function ShellPanel() {
         ...(parseSandboxContainment(body.sandboxContained)
           ? { sandboxContained: parseSandboxContainment(body.sandboxContained) }
           : {}),
+        sandboxBlocked: typeof body.sandboxBlocked === "string" ? body.sandboxBlocked : undefined,
+        scope: (body.scope && typeof body.scope === "object") ? (body.scope as ShellScope) : undefined,
       };
     },
     onSuccess: (data, command) => {
@@ -147,6 +285,8 @@ function ShellPanel() {
         exitCode: data.exitCode,
         timestamp: Date.now(),
         ...(data.sandboxContained ? { sandboxContained: data.sandboxContained } : {}),
+        sandboxBlocked: data.sandboxBlocked,
+        scope: data.scope,
       }]);
       setCmdHistory(h => [command, ...h.slice(0, 49)]);
       setHistoryIndex(-1);
@@ -206,7 +346,15 @@ function ShellPanel() {
                 <span className="text-[#cdd6f4]">{entry.command}</span>
               </div>
               {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stdout}</pre>}
-              {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>}
+              {entry.sandboxBlocked ? (
+                <SandboxBlockedNotice
+                  reason={entry.sandboxBlocked}
+                  scope={entry.scope}
+                  hasProject={Boolean(project)}
+                />
+              ) : (
+                entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>
+              )}
               {entry.sandboxContained && (
                 <SandboxContainedNotice notice={entry.sandboxContained} />
               )}
@@ -282,6 +430,7 @@ function FileExplorerPanel() {
   }, [fileContent?.code, selectedFile, refetch]);
 
   const items: FileItem[] = data?.items || [];
+  const fileScope: FileScope = (data?.scope && typeof data.scope === "object") ? data.scope : {};
   const breadcrumbs = currentPath === "." ? ["root"] : ["root", ...currentPath.split("/").filter(Boolean)];
 
   const handleClick = (item: FileItem) => {
@@ -329,6 +478,7 @@ function FileExplorerPanel() {
       <div className="flex flex-1 min-h-0">
         <div className="w-1/3 border-r border-[#313244] overflow-y-auto">
           <div className="p-1">
+            <ScratchModeBanner scope={fileScope} />
             {currentPath !== "." && (
               <button
                 className="w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5"
@@ -363,6 +513,7 @@ function FileExplorerPanel() {
                 >
                   {item.type === "directory" ? <Folder className="h-3.5 w-3.5 text-yellow-500" /> : getFileIcon(item.name)}
                   <span className="truncate flex-1 text-[#cdd6f4]">{item.name}</span>
+                  <PrivacyBadge privacy={item.privacy} />
                   {item.size !== undefined && <span className="text-[10px] text-[#585b70]">{formatBytes(item.size)}</span>}
                 </button>
               ))
@@ -384,7 +535,10 @@ function FileExplorerPanel() {
             ) : (
               <div className="relative">
                 <div className="flex items-center justify-between px-3 py-1 bg-[#313244] border-b border-[#313244] sticky top-0">
-                  <span className="text-xs font-mono text-[#6c7086]">{selectedFile}</span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="text-xs font-mono text-[#6c7086] truncate">{selectedFile}</span>
+                    <PrivacyBadge privacy={fileContent?.scope?.privacy as EntryPrivacy | undefined} />
+                  </div>
                   <div className="flex items-center gap-1.5">
                     <span className="text-[10px] text-[#585b70]">{formatBytes(fileContent?.size || 0)}</span>
                     <button className="p-0.5 rounded hover:bg-[#45475a]" onClick={() => navigator.clipboard.writeText(fileContent?.content || "")}>
@@ -392,6 +546,11 @@ function FileExplorerPanel() {
                     </button>
                   </div>
                 </div>
+                {fileContent?.scope?.privacy === "shared" && (
+                  <div className="px-3 py-1 text-[10px] text-[#a6adc8] bg-[#181825] border-b border-[#313244]">
+                    Shared with the project — read-only here. To edit, pick a project and use the project-aware shell.
+                  </div>
+                )}
                 <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all text-[#cdd6f4] select-text cursor-text">{fileContent?.content}</pre>
               </div>
             )

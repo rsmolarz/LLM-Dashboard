@@ -759,6 +759,136 @@ test("cleanupAbandonedScratchDirs leaves the tree alone when host cap is not cro
   }
 });
 
+// File browser privacy classification (task #50)
+// =============================================================================
+
+interface FilesResult {
+  status: number;
+  body: {
+    items: Array<{ name: string; type: string; path: string; privacy?: "private" | "shared" }>;
+    path?: string;
+    scope?: { origin: string; mode?: string; scratchPath?: string; dirPrivacy?: string };
+    error?: string;
+    code?: string;
+  };
+}
+
+async function listFiles(userId: string | null, requestedPath = "."): Promise<FilesResult> {
+  const headers: Record<string, string> = {};
+  if (userId) headers["x-test-user"] = userId;
+  const res = await fetch(
+    `${serverUrl}/api/files?path=${encodeURIComponent(requestedPath)}`,
+    { method: "GET", headers },
+  );
+  const text = await res.text();
+  let body: any = {};
+  try { body = text ? JSON.parse(text) : {}; } catch { body = { _raw: text }; }
+  return { status: res.status, body };
+}
+
+test("GET /api/files (anonymous) lists PROJECT_ROOT in host mode without privacy badges", async () => {
+  const r = await listFiles(null, ".");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.scope?.origin, "workspace");
+  assert.equal(r.body.scope?.mode, "host");
+  assert.equal(r.body.scope?.scratchPath, undefined);
+  // Anonymous host-mode listing must not invent a privacy field — the
+  // user has no scratch dir, so there is no per-user/per-host distinction
+  // to surface in the UI.
+  for (const item of r.body.items) {
+    assert.equal(item.privacy, undefined, `anon listing leaked privacy field on ${item.name}`);
+  }
+});
+
+test("GET /api/files (authenticated, root) labels host symlinks 'shared' and scratch files 'private'", async () => {
+  const userId = trackUser(`files-root-${randomBytes(4).toString("hex")}`);
+  // Create a scratch-only file the user "owns".
+  const privateName = `mine-${randomBytes(4).toString("hex")}.txt`;
+  const writeMine = await shell(userId, `printf '%s' 'hi' > ${privateName}`);
+  assert.equal(writeMine.body.exitCode, 0, `setup: write private file failed: ${writeMine.body.stderr}`);
+
+  const r = await listFiles(userId, ".");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.scope?.origin, "workspace");
+  assert.equal(r.body.scope?.mode, "scratch");
+  assert.equal(r.body.scope?.scratchPath, scratchPathFor(userId));
+  // Top-level dirPrivacy is "mixed" because the scratch root contains
+  // both private user files and shared host symlinks side by side.
+  assert.equal(r.body.scope?.dirPrivacy, "mixed");
+
+  const findItem = (name: string) => r.body.items.find(i => i.name === name);
+  // package.json sits at the host root and is one of the symlinked
+  // mirror entries — must be tagged shared.
+  const pkg = findItem("package.json");
+  assert.ok(pkg, `package.json missing from listing: ${JSON.stringify(r.body.items.map(i => i.name))}`);
+  assert.equal(pkg!.privacy, "shared", `package.json should be shared (symlink), got ${pkg!.privacy}`);
+
+  const mine = findItem(privateName);
+  assert.ok(mine, `user's private file ${privateName} missing from listing`);
+  assert.equal(mine!.privacy, "private", `user-created file should be private, got ${mine!.privacy}`);
+});
+
+test("GET /api/files (authenticated, nested into a shared dir) inherits 'shared' for every entry", async () => {
+  const userId = trackUser(`files-shared-${randomBytes(4).toString("hex")}`);
+  // `artifacts/` is one of the top-level host directories and is
+  // mirrored as a symlink. Listing inside it crosses the symlink into
+  // PROJECT_ROOT/artifacts — every entry under that point is shared
+  // host state (writes through it are blocked by the sandbox).
+  const r = await listFiles(userId, "artifacts");
+  assert.equal(r.status, 200);
+  assert.equal(r.body.scope?.dirPrivacy, "shared");
+  assert.ok(r.body.items.length > 0, "expected at least one entry under artifacts/");
+  for (const item of r.body.items) {
+    assert.equal(
+      item.privacy,
+      "shared",
+      `entry ${item.name} inside a shared dir must inherit shared, got ${item.privacy}`,
+    );
+  }
+});
+
+test("GET /api/files (authenticated, nested into a user-created private dir) tags every entry 'private'", async () => {
+  const userId = trackUser(`files-private-${randomBytes(4).toString("hex")}`);
+  const dirName = `notes-${randomBytes(4).toString("hex")}`;
+  const fileName = `child-${randomBytes(4).toString("hex")}.md`;
+  const setup = await shell(userId, `mkdir ${dirName} && printf 'x' > ${dirName}/${fileName}`);
+  assert.equal(setup.body.exitCode, 0, `setup failed: ${setup.body.stderr}`);
+
+  const r = await listFiles(userId, dirName);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.scope?.dirPrivacy, "private");
+  const child = r.body.items.find(i => i.name === fileName);
+  assert.ok(child, `child file missing: ${JSON.stringify(r.body.items.map(i => i.name))}`);
+  assert.equal(child!.privacy, "private");
+});
+
+test("GET /api/file-content (authenticated) tags scratch reads with privacy", async () => {
+  const userId = trackUser(`content-private-${randomBytes(4).toString("hex")}`);
+  const fileName = `note-${randomBytes(4).toString("hex")}.txt`;
+  const setup = await shell(userId, `printf 'hello' > ${fileName}`);
+  assert.equal(setup.body.exitCode, 0);
+
+  const res = await fetch(
+    `${serverUrl}/api/file-content?path=${encodeURIComponent(fileName)}`,
+    { headers: { "x-test-user": userId } },
+  );
+  assert.equal(res.status, 200);
+  const body = await res.json() as { content: string; scope?: { mode?: string; privacy?: string } };
+  assert.equal(body.content, "hello");
+  assert.equal(body.scope?.mode, "scratch");
+  assert.equal(body.scope?.privacy, "private");
+
+  // A symlinked host file (package.json) should come back tagged shared.
+  const sharedRes = await fetch(
+    `${serverUrl}/api/file-content?path=${encodeURIComponent("package.json")}`,
+    { headers: { "x-test-user": userId } },
+  );
+  assert.equal(sharedRes.status, 200);
+  const sharedBody = await sharedRes.json() as { scope?: { mode?: string; privacy?: string } };
+  assert.equal(sharedBody.scope?.mode, "scratch");
+  assert.equal(sharedBody.scope?.privacy, "shared");
+});
+
 test("POST /api/shell blocks writes through symlinks back to the host workspace", async () => {
   const userA = trackUser(`isolate-noescape-${randomBytes(4).toString("hex")}`);
   // Touch a top-level entry that exists in the host (artifacts/) and
