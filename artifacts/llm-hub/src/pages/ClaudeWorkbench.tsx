@@ -19,17 +19,11 @@ import { FolderPlus, Upload, Paperclip } from "lucide-react";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { useSelectedProject, projectDescriptorFromSidebar } from "@/hooks/useSelectedProject";
 import { ProjectContextHeader } from "@/components/workbench/ProjectContextHeader";
-import { WorkbenchErrorView } from "@/components/workbench/WorkbenchErrorView";
 import { PanelLoadError, PanelQueryError, asPanelQueryError } from "@/components/workbench/PanelLoadError";
-import {
-  PrivacyBadge,
-  ScratchModeBanner,
-  type EntryPrivacy,
-  type FileScope,
-} from "@/components/workbench/SandboxNotices";
 import { ScratchQuotaBadge } from "@/components/workbench/ScratchQuotaBar";
 import { ScratchPanel } from "@/components/workbench/ScratchPanel";
 import { ShellPanel as SharedShellPanel } from "@/components/workbench/ShellPanel";
+import { FileExplorerPanel as SharedFileExplorerPanel } from "@/components/workbench/FileExplorerPanel";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -47,127 +41,8 @@ function formatUptime(seconds: number) {
   return `${h}h ${m}m`;
 }
 
-type FileItem = {
-  name: string;
-  type: "file" | "directory";
-  path: string;
-  size?: number;
-  // Present only when the server resolves a per-user scratch dir
-  // (authenticated, host mode). "shared" = host-workspace symlink
-  // mirrored into scratch (read-only here; writes are sandboxed).
-  // "private" = a file/dir the user created in their scratch.
-  privacy?: EntryPrivacy;
-};
 type ChatMessage = { role: "user" | "assistant"; content: string; timestamp: number; streaming?: boolean; model?: string; tokens?: number; errorCode?: string };
 
-
-function FileExplorerPanel() {
-  const [currentPath, setCurrentPath] = usePersistedState("cw-file-path", ".");
-  const [selectedFile, setSelectedFile] = usePersistedState<string | null>("cw-file-selected", null);
-  const { project } = useSelectedProject();
-  const projectKey = project ? JSON.stringify(project) : "";
-  const projectQuery = project ? `&project=${encodeURIComponent(JSON.stringify(project))}` : "";
-
-  const { data, isLoading, refetch } = useQuery<any>({
-    queryKey: ["cw-files", currentPath, projectKey],
-    queryFn: async () => { const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}${projectQuery}`, { credentials: "include" }); return res.json(); },
-  });
-
-  const { data: fileContent, isLoading: contentLoading, refetch: refetchContent } = useQuery<any>({
-    queryKey: ["cw-file-content", selectedFile, projectKey],
-    queryFn: async () => { const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}${projectQuery}`, { credentials: "include" }); return res.json(); },
-    enabled: !!selectedFile,
-  });
-
-  useEffect(() => {
-    if (fileContent?.code === "NOT_FOUND" && selectedFile) {
-      refetch();
-    }
-  }, [fileContent?.code, selectedFile, refetch]);
-
-  const items: FileItem[] = data?.items || [];
-  const fileScope: FileScope = (data?.scope && typeof data.scope === "object") ? data.scope : {};
-  const breadcrumbs = currentPath === "." ? ["root"] : ["root", ...currentPath.split("/").filter(Boolean)];
-
-  const getFileIcon = (name: string) => {
-    const ext = name.split(".").pop()?.toLowerCase();
-    if (["ts", "tsx", "js", "jsx"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-[#89b4fa]" />;
-    if (["json", "yaml", "yml", "toml"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-[#f9e2af]" />;
-    if (["py"].includes(ext || "")) return <FileCode className="h-3.5 w-3.5 text-[#a6e3a1]" />;
-    return <File className="h-3.5 w-3.5 text-[#6c7086]" />;
-  };
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
-        <div className="flex items-center gap-1 text-xs text-[#6c7086] overflow-x-auto">
-          {breadcrumbs.map((crumb, i) => (
-            <span key={i} className="flex items-center gap-0.5">
-              {i > 0 && <ChevronRight className="h-3 w-3" />}
-              <button className="hover:text-[#cdd6f4]" onClick={() => { setCurrentPath(i === 0 ? "." : breadcrumbs.slice(1, i + 1).join("/")); setSelectedFile(null); }}>{crumb}</button>
-            </span>
-          ))}
-        </div>
-        <button className="p-1 rounded hover:bg-white/5 text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
-      </div>
-      <div className="flex flex-1 min-h-0">
-        <div className="w-1/3 border-r border-[#313244] overflow-y-auto">
-          <div className="p-1">
-            <ScratchModeBanner scope={fileScope} />
-            {currentPath !== "." && (
-              <button className="w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5"
-                onClick={() => { const parts = currentPath.split("/"); parts.pop(); setCurrentPath(parts.length ? parts.join("/") : "."); setSelectedFile(null); }}>
-                <Folder className="h-3.5 w-3.5 text-[#fab387]" /><span className="text-[#6c7086]">..</span>
-              </button>
-            )}
-            {isLoading ? <div className="p-2 space-y-1">{[1,2,3,4].map(i => <div key={i} className="h-5 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
-              data?.error || data?.code ? (
-                <WorkbenchErrorView
-                  payload={{ error: data.error, code: data.code, size: data.size }}
-                  context="files"
-                  onRetry={() => refetch()}
-                />
-              ) :
-              items.map(item => (
-                <button key={item.path} className={cn("w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5", selectedFile === item.path && "bg-[#313244]")}
-                  onClick={() => item.type === "directory" ? (setCurrentPath(item.path), setSelectedFile(null)) : setSelectedFile(item.path)}>
-                  {item.type === "directory" ? <Folder className="h-3.5 w-3.5 text-[#fab387]" /> : getFileIcon(item.name)}
-                  <span className="truncate flex-1 text-[#cdd6f4]">{item.name}</span>
-                  <PrivacyBadge privacy={item.privacy} />
-                  {item.size !== undefined && <span className="text-[10px] text-[#585b70]">{formatBytes(item.size)}</span>}
-                </button>
-              ))}
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {selectedFile ? (contentLoading ? <div className="p-4"><Loader2 className="h-4 w-4 animate-spin text-[#6c7086]" /></div> :
-            fileContent?.error || fileContent?.code ? (
-              <WorkbenchErrorView
-                payload={{ error: fileContent.error, code: fileContent.code, size: fileContent.size }}
-                context="content"
-                onRetry={() => refetchContent()}
-                onClear={() => setSelectedFile(null)}
-                downloadHref={selectedFile ? `/api/workbench/file-download?path=${encodeURIComponent(selectedFile)}${projectQuery}` : undefined}
-              />
-            ) :
-            <div className="relative">
-              <div className="flex items-center justify-between px-3 py-1 bg-[#181825] border-b border-[#313244] sticky top-0">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-xs font-mono text-[#6c7086] truncate">{selectedFile}</span>
-                  <PrivacyBadge privacy={fileContent?.scope?.privacy as EntryPrivacy | undefined} />
-                </div>
-                <button className="p-0.5 rounded hover:bg-[#313244]" onClick={() => navigator.clipboard.writeText(fileContent?.content || "")}>
-                  <Copy className="h-3 w-3 text-[#6c7086]" />
-                </button>
-              </div>
-              <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-all text-[#cdd6f4] select-text cursor-text">{fileContent?.content}</pre>
-            </div>
-          ) : <div className="p-8 text-center text-sm text-[#585b70]"><FileCode className="h-8 w-8 mx-auto mb-2 opacity-30" />Select a file</div>}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function PreviewPanel() {
   const [url, setUrl] = useState("");
@@ -2144,7 +2019,7 @@ const PANELS = [
   { id: "scratch", label: "Scratch", icon: HardDrive, component: ScratchPanel },
   { id: "ssh", label: "SSH", icon: Server, component: CWSSHPanel },
   { id: "upload", label: "Upload", icon: Upload, component: () => <div className="p-3 h-full overflow-auto"><UploadArea catppuccin={true} /></div> },
-  { id: "files", label: "Files", icon: FolderTree, component: FileExplorerPanel },
+  { id: "files", label: "Files", icon: FolderTree, component: () => <SharedFileExplorerPanel storagePrefix="cw" variant="claude" /> },
   { id: "preview", label: "Preview", icon: Eye, component: PreviewPanel },
   { id: "git", label: "Git", icon: GitBranch, component: GitPanel },
   { id: "activity", label: "Activity", icon: Bot, component: AgentActivityPanel },
