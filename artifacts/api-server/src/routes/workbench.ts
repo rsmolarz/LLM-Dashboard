@@ -209,6 +209,39 @@ function safePath(requestedPath: string): string {
   return resolved;
 }
 
+// Stable error codes returned in the JSON body of a 4xx/5xx response so
+// frontend code (and CDNs/log dashboards) can branch on the actual reason
+// instead of substring-matching a free-form message. Keep this union in
+// sync with every literal `code:` value emitted from the workbench routes.
+type WorkbenchErrorCode =
+  | "PATH_TRAVERSAL"
+  | "FILE_TOO_LARGE"
+  | "NOT_FOUND"
+  | "MISSING_PATH"
+  | "INVALID_PROJECT"
+  | "PROJECT_UNRESOLVED"
+  | "PROJECT_NOT_PULLED"
+  | "AUTH_REQUIRED"
+  | "INTERNAL_ERROR";
+
+function classifyWorkbenchError(err: unknown): { status: number; code: WorkbenchErrorCode; message: string } {
+  const message = (err as any)?.message || String(err) || "Unknown error";
+  const errno = (err as NodeJS.ErrnoException)?.code;
+  if (/path traversal|absolute path not allowed/i.test(message)) {
+    return { status: 400, code: "PATH_TRAVERSAL", message };
+  }
+  if (/not cloned yet|not pulled yet|use ['"]?pull files for editing/i.test(message)) {
+    return { status: 409, code: "PROJECT_NOT_PULLED", message };
+  }
+  if (/has no local path|cannot determine git clone url/i.test(message)) {
+    return { status: 409, code: "PROJECT_NOT_PULLED", message };
+  }
+  if (errno === "ENOENT" || /ENOENT/.test(message)) {
+    return { status: 404, code: "NOT_FOUND", message };
+  }
+  return { status: 500, code: "INTERNAL_ERROR", message };
+}
+
 router.post("/shell", requireAuth, async (req, res): Promise<void> => {
   const { command, project } = req.body || {};
   if (!command || typeof command !== "string") {
@@ -255,16 +288,29 @@ router.get("/files", async (req, res): Promise<void> => {
   const requestedPath = (req.query.path as string) || ".";
   const projectRaw = req.query.project as string | undefined;
   if (projectRaw) {
+    let project: any;
     try {
-      const project = JSON.parse(projectRaw);
-      if (project?.origin === "vps" && !(req as any).user) {
-        res.status(401).json({ items: [], error: "Authentication required for VPS-origin project access" });
+      project = JSON.parse(projectRaw);
+    } catch {
+      res.status(400).json({ items: [], error: "Invalid project descriptor JSON", code: "INVALID_PROJECT" });
+      return;
+    }
+    if (project?.origin === "vps" && !(req as any).user) {
+      res.status(401).json({ items: [], error: "Authentication required for VPS-origin project access", code: "AUTH_REQUIRED" });
+      return;
+    }
+    try {
+      const resolved = await projectCtx.resolveDescriptor(project);
+      if (!resolved) {
+        res.status(400).json({ items: [], error: "could not resolve project", code: "PROJECT_UNRESOLVED" });
         return;
       }
-      const resolved = await projectCtx.resolveDescriptor(project);
-      if (!resolved) { res.json({ items: [], error: "could not resolve project" }); return; }
       if (resolved.origin === "replit" && !resolved.localPath) {
-        res.json({ items: [], notice: "Replit project not pulled yet — open the Replit Workbench and click 'Pull files for editing' (sign-in required)." });
+        res.status(409).json({
+          items: [],
+          error: "Replit project not pulled yet — open the Replit Workbench and click 'Pull files for editing' (sign-in required).",
+          code: "PROJECT_NOT_PULLED",
+        });
         return;
       }
       const entries = await projectCtx.listFiles(resolved, requestedPath);
@@ -277,7 +323,8 @@ router.get("/files", async (req, res): Promise<void> => {
       res.json({ items, path: requestedPath, scope: { origin: resolved.origin } });
       return;
     } catch (err: any) {
-      res.json({ items: [], error: err.message });
+      const c = classifyWorkbenchError(err);
+      res.status(c.status).json({ items: [], error: c.message, code: c.code });
       return;
     }
   }
@@ -311,7 +358,8 @@ router.get("/files", async (req, res): Promise<void> => {
 
     res.json({ items, path: requestedPath });
   } catch (err: any) {
-    res.json({ items: [], error: err.message });
+    const c = classifyWorkbenchError(err);
+    res.status(c.status).json({ items: [], error: c.message, code: c.code });
   }
 });
 
@@ -319,27 +367,40 @@ router.get("/file-content", async (req, res): Promise<void> => {
   const filePath = req.query.path as string;
   const projectRaw = req.query.project as string | undefined;
   if (!filePath) {
-    res.status(400).json({ error: "path is required" });
+    res.status(400).json({ error: "path is required", code: "MISSING_PATH" });
     return;
   }
   if (projectRaw) {
+    let project: any;
     try {
-      const project = JSON.parse(projectRaw);
-      if (project?.origin === "vps" && !(req as any).user) {
-        res.status(401).json({ error: "Authentication required for VPS-origin project access" });
+      project = JSON.parse(projectRaw);
+    } catch {
+      res.status(400).json({ error: "Invalid project descriptor JSON", code: "INVALID_PROJECT" });
+      return;
+    }
+    if (project?.origin === "vps" && !(req as any).user) {
+      res.status(401).json({ error: "Authentication required for VPS-origin project access", code: "AUTH_REQUIRED" });
+      return;
+    }
+    try {
+      const resolved = await projectCtx.resolveDescriptor(project);
+      if (!resolved) {
+        res.status(400).json({ error: "could not resolve project", code: "PROJECT_UNRESOLVED" });
         return;
       }
-      const resolved = await projectCtx.resolveDescriptor(project);
-      if (!resolved) { res.json({ error: "could not resolve project" }); return; }
       if (resolved.origin === "replit" && !resolved.localPath) {
-        res.json({ error: "Replit project not pulled yet — open the Replit Workbench and click 'Pull files for editing' (sign-in required)." });
+        res.status(409).json({
+          error: "Replit project not pulled yet — open the Replit Workbench and click 'Pull files for editing' (sign-in required).",
+          code: "PROJECT_NOT_PULLED",
+        });
         return;
       }
       const r = await projectCtx.readFile(resolved, filePath);
       res.json({ content: r.content, size: r.size, truncated: r.truncated, path: filePath, scope: { origin: resolved.origin } });
       return;
     } catch (err: any) {
-      res.json({ error: err.message });
+      const c = classifyWorkbenchError(err);
+      res.status(c.status).json({ error: c.message, code: c.code });
       return;
     }
   }
@@ -349,14 +410,15 @@ router.get("/file-content", async (req, res): Promise<void> => {
     const stat = fs.statSync(fullPath);
 
     if (stat.size > 500000) {
-      res.json({ error: "File too large (>500KB)", size: stat.size });
+      res.status(413).json({ error: "File too large (>500KB)", code: "FILE_TOO_LARGE", size: stat.size });
       return;
     }
 
     const content = fs.readFileSync(fullPath, "utf-8");
     res.json({ content, size: stat.size, path: filePath });
   } catch (err: any) {
-    res.json({ error: err.message });
+    const c = classifyWorkbenchError(err);
+    res.status(c.status).json({ error: c.message, code: c.code });
   }
 });
 

@@ -223,16 +223,70 @@ test("GET /api/files (no project) lists workspace root and rejects path traversa
     assert.notEqual(item.name, ".git");
   }
 
-  const traversal = await getJson<{ items: unknown[]; error?: string }>(
+  const traversal = await getJson<{ items: unknown[]; error?: string; code?: string }>(
     "/api/files?path=" + encodeURIComponent("../../etc"),
   );
-  // safePath throws -> handler returns { items: [], error }. Whichever status,
-  // the assertion is that no useful filesystem listing comes back.
+  // Path traversal must be rejected with a 4xx status — clients/CDNs/log
+  // dashboards must not see a 200 here. items: [] is preserved so callers that
+  // were already reading data?.items don't crash.
+  assert.equal(traversal.status, 400);
+  assert.equal(traversal.body.code, "PATH_TRAVERSAL");
   assert.deepEqual(traversal.body.items, []);
   assert.ok(
     traversal.body.error && /traversal|allowed/i.test(traversal.body.error),
     `expected traversal-related error, got: ${JSON.stringify(traversal.body)}`,
   );
+});
+
+test("GET /api/files returns 400 with INVALID_PROJECT for malformed project JSON", async () => {
+  const r = await getJson<{ items: unknown[]; error?: string; code?: string }>(
+    "/api/files?path=.&project=" + encodeURIComponent("{not json"),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "INVALID_PROJECT");
+  assert.deepEqual(r.body.items, []);
+});
+
+test("GET /api/files returns 400 with PROJECT_UNRESOLVED when descriptor doesn't resolve", async () => {
+  // An unknown origin cannot be resolved → must be a 4xx, not a 200.
+  const bad = { origin: "nonsense", path: "whatever", name: "ghost" };
+  const r = await getJson<{ items: unknown[]; error?: string; code?: string }>(
+    `/api/files?path=.&project=${encodeURIComponent(JSON.stringify(bad))}`,
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "PROJECT_UNRESOLVED");
+  assert.deepEqual(r.body.items, []);
+});
+
+test("GET /api/files returns 409 PROJECT_NOT_PULLED for a Replit project that hasn't been cloned", async () => {
+  // A replit-origin descriptor whose cache dir doesn't contain a .git
+  // checkout resolves with localPath: null — the route must surface that
+  // as 409, not silently 200 with an empty list.
+  const replit = {
+    origin: "replit" as const,
+    path: `not-cloned-yet-${randomBytes(4).toString("hex")}`,
+    name: "ghost-replit",
+  };
+  const r = await getJson<{ items: unknown[]; error?: string; code?: string }>(
+    `/api/files?path=.&project=${encodeURIComponent(JSON.stringify(replit))}`,
+  );
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, "PROJECT_NOT_PULLED");
+  assert.deepEqual(r.body.items, []);
+  assert.match(r.body.error || "", /not pulled yet|not cloned yet/i);
+});
+
+test("GET /api/files returns 404 NOT_FOUND for a valid local project pointing at a missing dir", async () => {
+  // resolveDescriptor() succeeds for a local origin even if the path doesn't
+  // exist, but the subsequent listFiles() call surfaces ENOENT — that must
+  // come back as 404, not 200.
+  const bad = { origin: "local" as const, path: ".cache/does-not-exist-xyz", name: "ghost" };
+  const r = await getJson<{ items: unknown[]; error?: string; code?: string }>(
+    `/api/files?path=.&project=${encodeURIComponent(JSON.stringify(bad))}`,
+  );
+  assert.equal(r.status, 404);
+  assert.equal(r.body.code, "NOT_FOUND");
+  assert.deepEqual(r.body.items, []);
 });
 
 test("GET /api/files (local project) lists files inside the resolved local project", async () => {
@@ -287,14 +341,58 @@ test("GET /api/file-content (no project) reads workspace files and blocks path t
   assert.equal(r.status, 200);
   assert.ok(r.body.content && r.body.content.includes('"name"'));
 
-  const traversal = await getJson<{ content?: string; error?: string }>(
+  const traversal = await getJson<{ content?: string; error?: string; code?: string }>(
     "/api/file-content?path=" + encodeURIComponent("../../etc/passwd"),
   );
+  // Path traversal must be a 4xx — not a silent 200 with an `error` field.
+  assert.equal(traversal.status, 400);
+  assert.equal(traversal.body.code, "PATH_TRAVERSAL");
   assert.equal(traversal.body.content, undefined);
   assert.ok(
-    traversal.body.error && /traversal|allowed|ENOENT/i.test(traversal.body.error),
+    traversal.body.error && /traversal|allowed/i.test(traversal.body.error),
     `expected traversal-related error, got: ${JSON.stringify(traversal.body)}`,
   );
+});
+
+test("GET /api/file-content returns 404 NOT_FOUND for a missing workspace file", async () => {
+  const r = await getJson<{ content?: string; error?: string; code?: string }>(
+    "/api/file-content?path=" + encodeURIComponent(`does-not-exist-${randomBytes(4).toString("hex")}.txt`),
+  );
+  assert.equal(r.status, 404);
+  assert.equal(r.body.code, "NOT_FOUND");
+  assert.equal(r.body.content, undefined);
+});
+
+test("GET /api/file-content returns 400 INVALID_PROJECT for malformed project JSON", async () => {
+  const r = await getJson<{ error?: string; code?: string }>(
+    "/api/file-content?path=hello.txt&project=" + encodeURIComponent("{nope"),
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "INVALID_PROJECT");
+});
+
+test("GET /api/file-content returns 400 PROJECT_UNRESOLVED for an unknown origin", async () => {
+  const bad = { origin: "nonsense", path: "whatever" };
+  const r = await getJson<{ error?: string; code?: string }>(
+    `/api/file-content?path=hello.txt&project=${encodeURIComponent(JSON.stringify(bad))}`,
+  );
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "PROJECT_UNRESOLVED");
+});
+
+test("GET /api/file-content returns 409 PROJECT_NOT_PULLED for a Replit project that hasn't been cloned", async () => {
+  const replit = {
+    origin: "replit" as const,
+    path: `not-cloned-yet-${randomBytes(4).toString("hex")}`,
+    name: "ghost-replit",
+  };
+  const r = await getJson<{ content?: string; error?: string; code?: string }>(
+    `/api/file-content?path=anything.txt&project=${encodeURIComponent(JSON.stringify(replit))}`,
+  );
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, "PROJECT_NOT_PULLED");
+  assert.equal(r.body.content, undefined);
+  assert.match(r.body.error || "", /not pulled yet|not cloned yet/i);
 });
 
 test("GET /api/file-content (local project) reads from the resolved local project", async () => {
