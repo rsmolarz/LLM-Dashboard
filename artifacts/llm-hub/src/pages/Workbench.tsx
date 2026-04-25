@@ -65,6 +65,11 @@ type ShellEntry = {
   // path-containment escape, and returns a user-facing reason
   // instead of opaque stderr.
   sandboxBlocked?: string;
+  // Sub-case of sandboxBlocked: the per-user scratch quota is full,
+  // so the notice swaps in the one-click "free space" affordance
+  // (open the Scratch panel / clear scratch) instead of the generic
+  // path-containment guidance.
+  quotaExceeded?: boolean;
   scope?: ShellScope;
 };
 type FileItem = {
@@ -87,6 +92,7 @@ type ShellMutationResult =
       exitCode: number;
       sandboxContained?: SandboxContainmentNotice;
       sandboxBlocked?: string;
+      quotaExceeded?: boolean;
       scope?: ShellScope;
       quota?: ScratchQuota;
     }
@@ -400,6 +406,7 @@ function ShellPanel() {
           ? { sandboxContained: parseSandboxContainment(body.sandboxContained) }
           : {}),
         sandboxBlocked: typeof body.sandboxBlocked === "string" ? body.sandboxBlocked : undefined,
+        quotaExceeded: body.quotaExceeded === true,
         scope: (body.scope && typeof body.scope === "object") ? (body.scope as ShellScope) : undefined,
         ...(bodyQuota ? { quota: bodyQuota } : {}),
       };
@@ -433,6 +440,7 @@ function ShellPanel() {
         timestamp: Date.now(),
         ...(data.sandboxContained ? { sandboxContained: data.sandboxContained } : {}),
         sandboxBlocked: data.sandboxBlocked,
+        quotaExceeded: data.quotaExceeded,
         scope: data.scope,
       }]);
       setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
@@ -676,6 +684,7 @@ function ShellPanel() {
                   reason={entry.sandboxBlocked}
                   scope={entry.scope}
                   hasProject={Boolean(project)}
+                  quotaExceeded={entry.quotaExceeded}
                 />
               ) : (
                 entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>
@@ -1053,6 +1062,17 @@ function GitPanel() {
   const errorMessage = queryError?.message ?? dataError?.error ?? null;
   const errorCode = queryError?.code ?? dataError?.code ?? null;
 
+  // Git mutation results: previously discarded entirely, which meant
+  // a quota-exceeded `git pull` looked silently no-op'd to the user.
+  // We now surface any sandboxBlocked reason inline (re-using the
+  // same notice the Shell panel uses), so the one-click "free space"
+  // affordance shows up under the Git toolbar buttons too.
+  const [gitNotice, setGitNotice] = useState<{
+    command: string;
+    reason: string;
+    quotaExceeded: boolean;
+  } | null>(null);
+
   const gitMutation = useMutation({
     mutationFn: async (command: string) => {
       const res = await fetch(`/api/workbench/git`, {
@@ -1061,9 +1081,22 @@ function GitPanel() {
         body: JSON.stringify({ command }),
         credentials: "include",
       });
-      return res.json();
+      const body = await res.json().catch(() => ({} as Record<string, unknown>));
+      return { command, body };
     },
-    onSuccess: () => refetch(),
+    onSuccess: ({ command, body }) => {
+      const sandboxBlocked = typeof body?.sandboxBlocked === "string" ? body.sandboxBlocked : null;
+      if (sandboxBlocked) {
+        setGitNotice({
+          command,
+          reason: sandboxBlocked,
+          quotaExceeded: body?.quotaExceeded === true,
+        });
+      } else {
+        setGitNotice(null);
+        refetch();
+      }
+    },
   });
 
   return (
@@ -1082,6 +1115,26 @@ function GitPanel() {
           <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
         </div>
       </div>
+      {gitNotice && (
+        <div className="p-2 border-b border-[#313244] bg-[#181825]">
+          <div className="flex items-center gap-1 text-[11px] font-mono">
+            <span className="text-orange-400">$</span>
+            <span className="text-[#cdd6f4] flex-1 truncate">{gitNotice.command}</span>
+            <button
+              className="text-[10px] text-[#6c7086] hover:text-[#a6adc8]"
+              onClick={() => setGitNotice(null)}
+              title="Dismiss"
+            >
+              Dismiss
+            </button>
+          </div>
+          <SandboxBlockedNotice
+            reason={gitNotice.reason}
+            hasProject={false}
+            quotaExceeded={gitNotice.quotaExceeded}
+          />
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
           <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-6 w-full bg-[#313244] rounded animate-pulse" />)}</div>
