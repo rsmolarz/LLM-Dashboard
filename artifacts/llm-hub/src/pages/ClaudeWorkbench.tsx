@@ -40,22 +40,52 @@ type ShellEntry = { command: string; stdout: string; stderr: string; exitCode: n
 type FileItem = { name: string; type: "file" | "directory"; path: string; size?: number };
 type ChatMessage = { role: "user" | "assistant"; content: string; timestamp: number; streaming?: boolean; model?: string; tokens?: number; errorCode?: string };
 
+type ShellMutationResult =
+  | { ok: true; stdout: string; stderr: string; exitCode: number }
+  | { ok: false; error: { message: string; code: string } };
+
 function ShellPanel() {
   const [input, setInput] = useState("");
   const [history, setHistory] = usePersistedState<ShellEntry[]>("cw-shell-history", []);
   const [cmdHistory, setCmdHistory] = usePersistedState<string[]>("cw-shell-cmds", []);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [shellError, setShellError] = useState<{ command: string; message: string; code: string | null } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { project } = useSelectedProject();
-  const shellMutation = useMutation({
-    mutationFn: async (command: string) => {
-      const res = await fetch(`/api/workbench/shell`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command, ...(project ? { project } : {}) }), credentials: "include" });
-      return res.json();
+  const shellMutation = useMutation<ShellMutationResult, Error, string>({
+    mutationFn: async (command: string): Promise<ShellMutationResult> => {
+      let res: Response;
+      try {
+        res = await fetch(`/api/workbench/shell`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command, ...(project ? { project } : {}) }), credentials: "include" });
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : "Network error";
+        return { ok: false, error: { message: reason, code: "NETWORK_ERROR" } };
+      }
+      const body: Record<string, unknown> = await res.json().catch(() => ({}));
+      const bodyError = typeof body.error === "string" ? body.error : null;
+      const bodyCode = typeof body.code === "string" ? body.code : null;
+      if (!res.ok || bodyError) {
+        const message = bodyError ?? `Shell request failed (HTTP ${res.status})`;
+        const code = bodyCode ?? (res.status === 401 ? "AUTH_REQUIRED" : `HTTP_${res.status}`);
+        return { ok: false, error: { message, code } };
+      }
+      return {
+        ok: true,
+        stdout: typeof body.stdout === "string" ? body.stdout : "",
+        stderr: typeof body.stderr === "string" ? body.stderr : "",
+        exitCode: typeof body.exitCode === "number" ? body.exitCode : 0,
+      };
     },
     onSuccess: (data, command) => {
-      setHistory(h => [...h, { command, ...data, timestamp: Date.now() }]);
+      if (!data.ok) {
+        setShellError({ command, message: data.error.message, code: data.error.code || null });
+        setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
+        return;
+      }
+      setShellError(null);
+      setHistory(h => [...h, { command, stdout: data.stdout, stderr: data.stderr, exitCode: data.exitCode, timestamp: Date.now() }]);
       setCmdHistory(h => [command, ...h.slice(0, 49)]);
       setHistoryIndex(-1);
       setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
@@ -101,6 +131,20 @@ function ShellPanel() {
             </div>
           ))}
           {shellMutation.isPending && <div className="flex items-center gap-2 text-[#89b4fa]"><Loader2 className="h-3 w-3 animate-spin" /><span>Running...</span></div>}
+          {shellError && !shellMutation.isPending && (
+            <div className="mt-2">
+              <div className="flex items-center gap-1 mb-1">
+                <span className="text-green-400">$</span>
+                <span className="text-[#cdd6f4]">{shellError.command}</span>
+              </div>
+              <PanelLoadError
+                what="shell command"
+                message={shellError.message}
+                code={shellError.code}
+                onRetry={() => shellMutation.mutate(shellError.command)}
+              />
+            </div>
+          )}
         </div>
       </div>
       <form onSubmit={handleSubmit} className="flex items-center gap-1 px-2 py-1.5 border-t border-[#313244] bg-[#181825]">
@@ -414,15 +458,29 @@ function DatabasePanel() {
 
   const queryMutation = useMutation({
     mutationFn: async (q: string) => {
-      const res = await fetch(`/api/workbench/db-query?q=${encodeURIComponent(q)}`, { credentials: "include" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        return { error: body?.error || `Query failed (HTTP ${res.status})`, rows: [], fields: [], rowCount: 0 };
+      let res: Response;
+      try {
+        res = await fetch(`/api/workbench/db-query?q=${encodeURIComponent(q)}`, { credentials: "include" });
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : "Network error";
+        return { error: reason, code: "NETWORK_ERROR", rows: [], fields: [], rowCount: 0 };
+      }
+      const body: Record<string, unknown> = await res.json().catch(() => ({}));
+      const bodyError = typeof body.error === "string" ? body.error : null;
+      const bodyCode = typeof body.code === "string" ? body.code : null;
+      if (!res.ok || bodyError) {
+        return {
+          error: bodyError ?? `Query failed (HTTP ${res.status})`,
+          code: bodyCode ?? (res.status === 401 ? "AUTH_REQUIRED" : `HTTP_${res.status}`),
+          rows: [],
+          fields: [],
+          rowCount: 0,
+        };
       }
       return body;
     },
     onSuccess: (data) => setResults(data),
-    onError: (err: any) => setResults({ error: err?.message || "Query failed", rows: [], fields: [], rowCount: 0 }),
+    onError: (err: any) => setResults({ error: err?.message || "Query failed", code: "UNKNOWN", rows: [], fields: [], rowCount: 0 }),
   });
 
   return (
@@ -443,7 +501,14 @@ function DatabasePanel() {
         </div>
       </div>
       <div className="flex-1 overflow-auto">
-        {results?.error ? <div className="p-3 text-xs text-[#f38ba8]">{results.error}</div> :
+        {results?.error ? (
+          <PanelLoadError
+            what="query results"
+            message={results.error}
+            code={results.code || null}
+            onRetry={() => queryMutation.mutate(query)}
+          />
+        ) :
          results?.rows?.length > 0 ? (
           <table className="w-full text-xs">
             <thead className="bg-[#181825] sticky top-0"><tr>{results.fields.map((f: string) => (
@@ -535,10 +600,34 @@ function SecurityPanel() {
 
 function EnvPanel() {
   const [search, setSearch] = useState("");
-  const { data, isLoading, refetch } = useQuery<any>({
+  const { data, isLoading, error, refetch } = useQuery<any, PanelQueryError>({
     queryKey: ["wb-env"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/env`, { credentials: "include" }); return res.json(); },
+    queryFn: async () => {
+      let res: Response;
+      try {
+        res = await fetch(`/api/workbench/env`, { credentials: "include" });
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : "Network error";
+        throw new PanelQueryError(reason, "NETWORK_ERROR");
+      }
+      const body = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const reason = typeof body?.error === "string"
+          ? body.error
+          : `Failed to load environment variables (HTTP ${res.status})`;
+        const code = typeof body?.code === "string"
+          ? body.code
+          : res.status === 401 ? "AUTH_REQUIRED" : `HTTP_${res.status}`;
+        throw new PanelQueryError(reason, code);
+      }
+      return body;
+    },
+    retry: false,
   });
+  const queryError = asPanelQueryError(error);
+  const dataError = (data as { error?: string; code?: string } | undefined) ?? undefined;
+  const errorMessage = queryError?.message ?? dataError?.error ?? null;
+  const errorCode = queryError?.code ?? dataError?.code ?? null;
 
   const vars = (data?.variables || []).filter((v: any) => !search || v.key.toLowerCase().includes(search.toLowerCase()));
 
@@ -557,6 +646,7 @@ function EnvPanel() {
       </div>
       <div className="flex-1 overflow-y-auto p-1">
         {isLoading ? <div className="p-3 space-y-1">{[1,2,3].map(i => <div key={i} className="h-5 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
+         errorMessage ? <PanelLoadError what="environment variables" message={errorMessage} code={errorCode} onRetry={() => refetch()} /> :
          vars.map((v: any) => (
           <div key={v.key} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-[#313244] text-xs">
             <span className="font-mono font-medium text-[11px] shrink-0 text-[#cdd6f4]">{v.key}</span>
@@ -570,11 +660,35 @@ function EnvPanel() {
 }
 
 function ProcessPanel() {
-  const { data, isLoading, refetch } = useQuery<any>({
+  const { data, isLoading, error, refetch } = useQuery<any, PanelQueryError>({
     queryKey: ["wb-process-info"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/process-info`, { credentials: "include" }); return res.json(); },
+    queryFn: async () => {
+      let res: Response;
+      try {
+        res = await fetch(`/api/workbench/process-info`, { credentials: "include" });
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : "Network error";
+        throw new PanelQueryError(reason, "NETWORK_ERROR");
+      }
+      const body = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const reason = typeof body?.error === "string"
+          ? body.error
+          : `Failed to load process info (HTTP ${res.status})`;
+        const code = typeof body?.code === "string"
+          ? body.code
+          : res.status === 401 ? "AUTH_REQUIRED" : `HTTP_${res.status}`;
+        throw new PanelQueryError(reason, code);
+      }
+      return body;
+    },
+    retry: false,
     refetchInterval: 10000,
   });
+  const queryError = asPanelQueryError(error);
+  const dataError = (data as { error?: string; code?: string } | undefined) ?? undefined;
+  const errorMessage = queryError?.message ?? dataError?.error ?? null;
+  const errorCode = queryError?.code ?? dataError?.code ?? null;
 
   return (
     <div className="flex flex-col h-full">
@@ -583,7 +697,9 @@ function ProcessPanel() {
         <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {isLoading ? <div className="p-3"><Loader2 className="h-4 w-4 animate-spin text-[#6c7086]" /></div> : data ? (
+        {isLoading ? <div className="p-3"><Loader2 className="h-4 w-4 animate-spin text-[#6c7086]" /></div> :
+         errorMessage ? <PanelLoadError what="process info" message={errorMessage} code={errorCode} onRetry={() => refetch()} /> :
+         data ? (
           <div className="p-3 space-y-3">
             <div className="grid grid-cols-2 gap-2">
               {[
