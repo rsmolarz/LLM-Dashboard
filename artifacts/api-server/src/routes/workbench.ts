@@ -77,8 +77,12 @@ router.get("/files", async (req, res): Promise<void> => {
   if (projectRaw) {
     try {
       const project = JSON.parse(projectRaw);
-      const resolved = await projectCtx.resolveAndEnsureCloned(project);
+      const resolved = await projectCtx.resolveDescriptor(project);
       if (!resolved) { res.json({ items: [], error: "could not resolve project" }); return; }
+      if (resolved.origin === "replit" && !resolved.localPath) {
+        res.json({ items: [], notice: "Replit project not pulled yet — open the Replit Workbench and click 'Pull files for editing' (sign-in required)." });
+        return;
+      }
       const entries = await projectCtx.listFiles(resolved, requestedPath);
       const items = entries.map(e => ({
         name: e.name,
@@ -137,8 +141,12 @@ router.get("/file-content", async (req, res): Promise<void> => {
   if (projectRaw) {
     try {
       const project = JSON.parse(projectRaw);
-      const resolved = await projectCtx.resolveAndEnsureCloned(project);
+      const resolved = await projectCtx.resolveDescriptor(project);
       if (!resolved) { res.json({ error: "could not resolve project" }); return; }
+      if (resolved.origin === "replit" && !resolved.localPath) {
+        res.json({ error: "Replit project not pulled yet — open the Replit Workbench and click 'Pull files for editing' (sign-in required)." });
+        return;
+      }
       const r = await projectCtx.readFile(resolved, filePath);
       res.json({ content: r.content, size: r.size, truncated: r.truncated, path: filePath, scope: { origin: resolved.origin } });
       return;
@@ -390,7 +398,9 @@ router.post("/code-chat", async (req, res): Promise<void> => {
     let resolved: Awaited<ReturnType<typeof projectCtx.resolveDescriptor>> | null = null;
     if (projectDescriptor && projectDescriptor.origin && projectDescriptor.path) {
       try {
-        resolved = await projectCtx.resolveAndEnsureCloned(projectDescriptor);
+        resolved = isAuthed
+          ? await projectCtx.resolveAndEnsureCloned(projectDescriptor)
+          : await projectCtx.resolveDescriptor(projectDescriptor);
         if (resolved) {
           const summary = await projectCtx.getSummary(resolved, { tokenBudget: 3500 });
           projectContext = `\n\n## Selected Project Context\n${summary}\n`;
@@ -564,7 +574,9 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
           try {
             const writeOrExec = tu.name === "write_file" || tu.name === "run_shell";
             if (writeOrExec && !isAuthed) {
-              throw new Error("Authentication required for write_file/run_shell. Please sign in.");
+              res.write(`data: ${JSON.stringify({ type: "error", status: 401, content: "Authentication required for write_file/run_shell. Please sign in." })}\n\n`);
+              res.end();
+              return;
             }
             if (writeOrExec && resolved && resolved.origin === "replit" && !resolved.localPath) {
               const ec = await projectCtx.ensureCloned(projectDescriptor);
