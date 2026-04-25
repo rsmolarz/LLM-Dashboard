@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { db, llmConfigTable } from "@workspace/db";
 import * as projectCtx from "../lib/project-context";
+import { requireAuth } from "../middlewares/rateLimiter";
 
 const router: IRouter = Router();
 
@@ -77,7 +78,7 @@ router.post("/ssh/test", async (req, res): Promise<void> => {
     });
 });
 
-router.post("/ssh/exec", async (req, res): Promise<void> => {
+router.post("/ssh/exec", requireAuth, async (req, res): Promise<void> => {
   const config = getSSHConfig(req.body);
   const { command } = req.body;
 
@@ -153,7 +154,7 @@ router.post("/ssh/exec", async (req, res): Promise<void> => {
     });
 });
 
-router.post("/ssh/upload-file", async (req, res): Promise<void> => {
+router.post("/ssh/upload-file", requireAuth, async (req, res): Promise<void> => {
   const config = getSSHConfig(req.body);
   const { localPath, remotePath, content, contentBase64 } = req.body;
 
