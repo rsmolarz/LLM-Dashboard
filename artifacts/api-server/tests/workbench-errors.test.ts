@@ -157,6 +157,85 @@ test("GET /api/file-content returns 404 + NOT_FOUND for a missing workspace file
   );
 });
 
+// -----------------------------------------------------------------------------
+// GET /api/file-download
+//
+// The download route advertises the same `{ error, code }` contract as
+// /files and /file-content. Because it normally streams binary octets back,
+// it's especially easy to regress into "200 + plain text error in the body"
+// — these tests pin the failure modes to real 4xx responses with the
+// documented codes.
+// -----------------------------------------------------------------------------
+
+test("GET /api/file-download returns 400 + PATH_TRAVERSAL for a `..`-style traversal input", async () => {
+  // No `project` param → the workspace branch runs safePath() which throws
+  // "Path traversal not allowed", and classifyWorkbenchError translates that
+  // into 400 + PATH_TRAVERSAL. A regression that streams the file or
+  // returns 200 with a text error would fail this test.
+  const r = await getJson<{ error?: string; code?: string }>(
+    "/api/file-download?path=" + encodeURIComponent("../../etc/passwd"),
+  );
+  assert.equal(r.status, 400, `expected HTTP 400, got ${r.status}: ${JSON.stringify(r.body)}`);
+  assert.equal(r.body.code, "PATH_TRAVERSAL");
+  assert.ok(
+    r.body.error && /traversal|allowed/i.test(r.body.error),
+    `expected traversal-related error, got ${JSON.stringify(r.body)}`,
+  );
+});
+
+test("GET /api/file-download returns 400 + INVALID_PROJECT for malformed project JSON", async () => {
+  // The handler tries `JSON.parse(projectRaw)` first thing inside the
+  // project branch; a parse failure must be a 400 with INVALID_PROJECT —
+  // never a 500 or a 200 with a stringified error.
+  const r = await getJson<{ error?: string; code?: string }>(
+    "/api/file-download?path=hello.txt&project=" + encodeURIComponent("{nope"),
+  );
+  assert.equal(r.status, 400, `expected HTTP 400, got ${r.status}: ${JSON.stringify(r.body)}`);
+  assert.equal(r.body.code, "INVALID_PROJECT");
+  assert.ok(
+    r.body.error && /invalid project/i.test(r.body.error),
+    `expected an invalid-project error, got ${JSON.stringify(r.body)}`,
+  );
+});
+
+test("GET /api/file-download returns 404 + NOT_FOUND for a missing local file", async () => {
+  // No `project` param → safePath() succeeds (the path is inside
+  // PROJECT_ROOT and contains no `..`), then sendStream() calls
+  // fs.statSync() which throws ENOENT. classifyWorkbenchError must turn
+  // that into 404 + NOT_FOUND, not a 500 or a 200 with a partial stream.
+  const missing = `does-not-exist-${randomBytes(6).toString("hex")}.bin`;
+  const r = await getJson<{ error?: string; code?: string }>(
+    "/api/file-download?path=" + encodeURIComponent(missing),
+  );
+  assert.equal(r.status, 404, `expected HTTP 404, got ${r.status}: ${JSON.stringify(r.body)}`);
+  assert.equal(r.body.code, "NOT_FOUND");
+  assert.ok(
+    r.body.error && /enoent|no such file|not found/i.test(r.body.error),
+    `expected an ENOENT-like error, got ${JSON.stringify(r.body)}`,
+  );
+});
+
+test("GET /api/file-download returns 409 + PROJECT_NOT_PULLED for a Replit project that hasn't been cloned", async () => {
+  // A replit-origin descriptor whose cache dir doesn't contain a .git
+  // checkout resolves with localPath: null. The handler explicitly
+  // surfaces that as 409 + PROJECT_NOT_PULLED with a sign-in hint, so
+  // the UI can prompt the user to pull instead of silently succeeding.
+  const replit = {
+    origin: "replit" as const,
+    path: `not-cloned-yet-${randomBytes(4).toString("hex")}`,
+    name: "ghost-replit",
+  };
+  const r = await getJson<{ error?: string; code?: string }>(
+    `/api/file-download?path=anything.bin&project=${encodeURIComponent(JSON.stringify(replit))}`,
+  );
+  assert.equal(r.status, 409, `expected HTTP 409, got ${r.status}: ${JSON.stringify(r.body)}`);
+  assert.equal(r.body.code, "PROJECT_NOT_PULLED");
+  assert.ok(
+    r.body.error && /not pulled yet|not cloned yet|pull files for editing/i.test(r.body.error),
+    `expected a not-pulled error, got ${JSON.stringify(r.body)}`,
+  );
+});
+
 test("POST /api/code-review returns 502 + AI_REQUEST_FAILED when the upstream Anthropic call fails", async () => {
   // The route gates on these two env vars before doing anything; if they're
   // not set in this test environment, set them to throwaway values so we hit
