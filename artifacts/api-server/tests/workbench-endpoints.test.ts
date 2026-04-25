@@ -652,6 +652,146 @@ test("POST /api/shell does NOT brand VPS EROFS stderr as sandboxContained when V
 });
 
 // =============================================================================
+// /api/shell-history (per-user, persisted)
+// =============================================================================
+
+test("GET /api/shell-history requires authentication (401 anonymous)", async () => {
+  const r = await getJson("/api/shell-history");
+  assert.equal(r.status, 401);
+});
+
+test("DELETE /api/shell-history requires authentication (401 anonymous)", async () => {
+  const r = await deleteReq("/api/shell-history");
+  assert.equal(r.status, 401);
+});
+
+test("POST /api/shell records the user's command into shell-history (newest-first, deduped)", async () => {
+  // Use a unique user id so this test doesn't collide with parallel tests
+  // touching `user-A`/`user-B`'s history (the same DB is shared across the
+  // suite — rows from earlier /shell calls would otherwise leak in).
+  const userId = `hist-user-${randomBytes(6).toString("hex")}`;
+
+  // Sanity: an unused user starts empty.
+  const empty = await getJson<{ history: Array<{ command: string }> }>(
+    "/api/shell-history",
+    { "x-test-user": userId },
+  );
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.body.history, []);
+
+  // Run two commands, then re-run the second to exercise the adjacent
+  // dedup path.
+  for (const cmd of ["echo first-cmd", "echo second-cmd", "echo second-cmd"]) {
+    const r = await postJson("/api/shell", { command: cmd }, { "x-test-user": userId });
+    assert.equal(r.status, 200, `unexpected status for "${cmd}"`);
+  }
+
+  const after = await getJson<{ history: Array<{ command: string; createdAt: string }> }>(
+    "/api/shell-history",
+    { "x-test-user": userId },
+  );
+  assert.equal(after.status, 200);
+  // Newest command first, dedup collapses the doubled "echo second-cmd".
+  assert.deepEqual(
+    after.body.history.map(h => h.command),
+    ["echo second-cmd", "echo first-cmd"],
+  );
+  // Each entry has an ISO timestamp the frontend can render.
+  for (const entry of after.body.history) {
+    assert.ok(typeof entry.createdAt === "string" && /T.*Z$/.test(entry.createdAt));
+  }
+});
+
+test("POST /api/shell records safety-blocked commands too (history matches what the user typed)", async () => {
+  // A command the safety layer rejects should still land in the user's
+  // history — otherwise the user can't ↑-arrow to fix the typo.
+  const userId = `hist-blocked-${randomBytes(6).toString("hex")}`;
+  const blocked = await postJson<{ stderr: string }>(
+    "/api/shell",
+    { command: "rm -rf /" },
+    { "x-test-user": userId },
+  );
+  assert.equal(blocked.status, 200);
+  assert.match(blocked.body.stderr, /blocked for safety/i);
+  const after = await getJson<{ history: Array<{ command: string }> }>(
+    "/api/shell-history",
+    { "x-test-user": userId },
+  );
+  assert.equal(after.status, 200);
+  assert.deepEqual(after.body.history.map(h => h.command), ["rm -rf /"]);
+});
+
+test("GET /api/shell-history scopes results per-user (cross-user isolation)", async () => {
+  const alice = `hist-alice-${randomBytes(6).toString("hex")}`;
+  const bob = `hist-bob-${randomBytes(6).toString("hex")}`;
+  await postJson("/api/shell", { command: "echo alice-only" }, { "x-test-user": alice });
+  await postJson("/api/shell", { command: "echo bob-only" }, { "x-test-user": bob });
+
+  const aliceView = await getJson<{ history: Array<{ command: string }> }>(
+    "/api/shell-history",
+    { "x-test-user": alice },
+  );
+  const bobView = await getJson<{ history: Array<{ command: string }> }>(
+    "/api/shell-history",
+    { "x-test-user": bob },
+  );
+  assert.deepEqual(aliceView.body.history.map(h => h.command), ["echo alice-only"]);
+  assert.deepEqual(bobView.body.history.map(h => h.command), ["echo bob-only"]);
+});
+
+test("GET /api/shell-history honours the `limit` query parameter (clamped to per-user cap)", async () => {
+  const userId = `hist-limit-${randomBytes(6).toString("hex")}`;
+  for (const cmd of ["echo one", "echo two", "echo three"]) {
+    await postJson("/api/shell", { command: cmd }, { "x-test-user": userId });
+  }
+
+  const limited = await getJson<{ history: Array<{ command: string }> }>(
+    "/api/shell-history?limit=2",
+    { "x-test-user": userId },
+  );
+  assert.equal(limited.body.history.length, 2);
+  assert.deepEqual(
+    limited.body.history.map(h => h.command),
+    ["echo three", "echo two"],
+  );
+
+  // Garbage / huge `limit` values must be clamped — don't trust client input.
+  const huge = await getJson<{ history: unknown[] }>(
+    "/api/shell-history?limit=999999",
+    { "x-test-user": userId },
+  );
+  assert.equal(huge.status, 200);
+  assert.ok(huge.body.history.length <= 500);
+});
+
+test("DELETE /api/shell-history wipes only the calling user's rows", async () => {
+  const userId = `hist-del-${randomBytes(6).toString("hex")}`;
+  const otherId = `hist-keep-${randomBytes(6).toString("hex")}`;
+  await postJson("/api/shell", { command: "echo to-delete" }, { "x-test-user": userId });
+  await postJson("/api/shell", { command: "echo keep-me" }, { "x-test-user": otherId });
+
+  const del = await deleteReq<{ ok: boolean }>(
+    "/api/shell-history",
+    { "x-test-user": userId },
+  );
+  assert.equal(del.status, 200);
+  assert.equal(del.body.ok, true);
+
+  const empty = await getJson<{ history: unknown[] }>(
+    "/api/shell-history",
+    { "x-test-user": userId },
+  );
+  assert.deepEqual(empty.body.history, []);
+
+  const otherStill = await getJson<{ history: Array<{ command: string }> }>(
+    "/api/shell-history",
+    { "x-test-user": otherId },
+  );
+  // The DELETE must not touch other users' history.
+  assert.deepEqual(otherStill.body.history.map(h => h.command), ["echo keep-me"]);
+});
+
+// =============================================================================
 // POST /api/git
 // =============================================================================
 

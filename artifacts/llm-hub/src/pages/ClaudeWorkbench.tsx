@@ -92,13 +92,44 @@ function SandboxContainedNotice({ notice }: { notice: SandboxContainmentNotice }
 function ShellPanel() {
   const [input, setInput] = useState("");
   const [history, setHistory] = usePersistedState<ShellEntry[]>("cw-shell-history", []);
+  // `cmdHistory[0]` is the *most recent* command. The localStorage copy
+  // is kept around as an instant cache so the up-arrow works before the
+  // server hydrate completes (and as a fallback when the server call
+  // fails, e.g. signed out).
   const [cmdHistory, setCmdHistory] = usePersistedState<string[]>("cw-shell-cmds", []);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [shellError, setShellError] = useState<{ command: string; message: string; code: string | null } | null>(null);
+  // Reverse-i-search state, mirroring bash's Ctrl-R. `matchIndex` walks
+  // older as the user keeps pressing Ctrl-R.
+  const [search, setSearch] = useState<{ query: string; matchIndex: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const { project } = useSelectedProject();
+
+  // Hydrate shell history from the server on mount so a freshly
+  // refreshed tab still gets the user's prior up-arrow / Ctrl-R
+  // history. We only overwrite the localStorage cache when the server
+  // returns a non-empty list — an unauthenticated user (or transient
+  // 5xx) shouldn't wipe out the local fallback.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/workbench/shell-history?limit=500`, { credentials: "include" });
+        if (!res.ok) return;
+        const body = await res.json().catch(() => null);
+        if (cancelled || !body || !Array.isArray(body.history)) return;
+        const cmds: string[] = body.history
+          .map((h: any) => (typeof h?.command === "string" ? h.command : ""))
+          .filter((c: string) => c.length > 0);
+        if (cmds.length > 0) setCmdHistory(cmds);
+      } catch {}
+    })();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const shellMutation = useMutation<ShellMutationResult, Error, string>({
     mutationFn: async (command: string): Promise<ShellMutationResult> => {
       let res: Response;
@@ -127,6 +158,11 @@ function ShellPanel() {
       };
     },
     onSuccess: (data, command) => {
+      // Mirror the server-side dedup so a chain of repeated commands
+      // doesn't bury the rest of the user's recent history in the
+      // local cache either.
+      setCmdHistory(h => (h[0] === command ? h : [command, ...h].slice(0, 500)));
+      setHistoryIndex(-1);
       if (!data.ok) {
         setShellError({ command, message: data.error.message, code: data.error.code || null });
         setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
@@ -141,29 +177,85 @@ function ShellPanel() {
         timestamp: Date.now(),
         ...(data.sandboxContained ? { sandboxContained: data.sandboxContained } : {}),
       }]);
-      setCmdHistory(h => [command, ...h.slice(0, 49)]);
-      setHistoryIndex(-1);
       setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
     },
   });
 
+  const searchMatches = useMemo(() => {
+    if (!search || !search.query) return [];
+    const q = search.query.toLowerCase();
+    return cmdHistory.filter(c => c.toLowerCase().includes(q));
+  }, [search, cmdHistory]);
+  const currentMatch = search && searchMatches.length > 0
+    ? searchMatches[Math.min(search.matchIndex, searchMatches.length - 1)]
+    : null;
+
+  const runCommand = (cmd: string) => {
+    const trimmed = cmd.trim();
+    if (!trimmed) return;
+    if (trimmed === "clear") { setHistory([]); setInput(""); setSearch(null); return; }
+    shellMutation.mutate(trimmed);
+    setInput("");
+    setSearch(null);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
-    if (input.trim() === "clear") { setHistory([]); setInput(""); return; }
-    shellMutation.mutate(input.trim());
-    setInput("");
+    runCommand(currentMatch ?? input);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === "r" || e.key === "R")) {
+      e.preventDefault();
+      if (search) {
+        setSearch(s => (s ? { ...s, matchIndex: s.matchIndex + 1 } : s));
+      } else {
+        setSearch({ query: "", matchIndex: 0 });
+      }
+      return;
+    }
+    if (search) {
+      if (e.key === "Escape") { e.preventDefault(); setSearch(null); return; }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        if (currentMatch) { setInput(currentMatch); setSearch(null); }
+        return;
+      }
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setSearch(s => {
+          if (!s) return s;
+          const next = s.matchIndex + (e.key === "ArrowUp" ? 1 : -1);
+          return { ...s, matchIndex: Math.max(0, next) };
+        });
+        return;
+      }
+      return;
+    }
     if (e.key === "ArrowUp") {
       e.preventDefault();
-      if (historyIndex < cmdHistory.length - 1) { const n = historyIndex + 1; setHistoryIndex(n); setInput(cmdHistory[n]); }
+      if (historyIndex < cmdHistory.length - 1) { const n = historyIndex + 1; setHistoryIndex(n); setInput(cmdHistory[n] || ""); }
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      if (historyIndex > 0) { const n = historyIndex - 1; setHistoryIndex(n); setInput(cmdHistory[n]); }
+      if (historyIndex > 0) { const n = historyIndex - 1; setHistoryIndex(n); setInput(cmdHistory[n] || ""); }
       else { setHistoryIndex(-1); setInput(""); }
     }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    if (search) setSearch({ query: val, matchIndex: 0 });
+    else setInput(val);
+  };
+
+  const clearAll = async () => {
+    setHistory([]);
+    setCmdHistory([]);
+    setHistoryIndex(-1);
+    setSearch(null);
+    try {
+      await fetch(`/api/workbench/shell-history`, { method: "DELETE", credentials: "include" });
+    } catch {}
   };
 
   return (
@@ -173,11 +265,17 @@ function ShellPanel() {
           <Terminal className="h-3.5 w-3.5 text-green-400" />
           <span className="text-xs text-[#cdd6f4] font-mono">Shell</span>
         </div>
-        <button className="p-1 rounded hover:bg-white/5 text-white/40" onClick={() => setHistory([])}><Trash2 className="h-3 w-3" /></button>
+        <button
+          className="p-1 rounded hover:bg-white/5 text-white/40"
+          onClick={clearAll}
+          title="Clear transcript and saved command history"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
       </div>
       <div className="flex-1 overflow-y-auto p-2" ref={scrollRef}>
         <div className="font-mono text-xs space-y-1">
-          {history.length === 0 && <div className="text-[#6c7086] py-4 text-center">Type a command to get started.</div>}
+          {history.length === 0 && <div className="text-[#6c7086] py-4 text-center">Type a command to get started. Use arrow keys for history, Ctrl+R to search.</div>}
           {history.map((entry, i) => (
             <div key={i} className="mb-2">
               <div className="flex items-center gap-1"><span className="text-green-400">$</span><span className="text-[#cdd6f4]">{entry.command}</span></div>
@@ -203,11 +301,32 @@ function ShellPanel() {
           )}
         </div>
       </div>
+      {search && (
+        <div
+          className="px-2 py-1 text-[11px] font-mono bg-[#181825] border-t border-[#313244] flex items-center gap-2"
+          data-testid="shell-reverse-search"
+        >
+          <span className="text-[#f9e2af]">(reverse-i-search)`{search.query}':</span>
+          {currentMatch ? (
+            <span className="text-[#cdd6f4] truncate flex-1">{currentMatch}</span>
+          ) : (
+            <span className="text-[#6c7086] flex-1">no match</span>
+          )}
+          <span className="text-[#585b70] hidden sm:inline">Enter run · Ctrl-R older · Esc cancel</span>
+        </div>
+      )}
       <form onSubmit={handleSubmit} className="flex items-center gap-1 px-2 py-1.5 border-t border-[#313244] bg-[#181825]">
         <span className="text-green-400 font-mono text-xs">$</span>
-        <input ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+        <input
+          ref={inputRef}
+          value={search ? search.query : input}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
           className="flex-1 bg-transparent text-[#cdd6f4] font-mono text-xs outline-none placeholder:text-[#585b70]"
-          placeholder="Enter command..." disabled={shellMutation.isPending} autoFocus />
+          placeholder={search ? "Search history..." : "Enter command..."}
+          disabled={shellMutation.isPending}
+          autoFocus
+        />
       </form>
     </div>
   );

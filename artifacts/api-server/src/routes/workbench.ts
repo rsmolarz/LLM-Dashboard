@@ -3,8 +3,8 @@ import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { db, workbenchUndoEntriesTable, type PersistedProjectDescriptor } from "@workspace/db";
-import { sql, and, eq, lt } from "drizzle-orm";
+import { db, workbenchUndoEntriesTable, workbenchShellHistoryTable, type PersistedProjectDescriptor } from "@workspace/db";
+import { sql, and, eq, lt, desc } from "drizzle-orm";
 import multer from "multer";
 import AdmZip from "adm-zip";
 import * as projectCtx from "../lib/project-context";
@@ -329,12 +329,56 @@ function classifyWorkbenchError(err: unknown): { status: number; code: Workbench
   return { status: 500, code: "INTERNAL_ERROR", message };
 }
 
+// Per-user shell history: cap how many rows we keep so a chatty user
+// can't grow the table unbounded. The /shell-history GET endpoint clamps
+// its `limit` to the same value.
+const SHELL_HISTORY_MAX_PER_USER = 500;
+
+async function recordShellCommand(userId: string, command: string): Promise<void> {
+  if (!userId) return;
+  const trimmed = command.trim();
+  if (!trimmed) return;
+  try {
+    // De-duplicate against the immediately previous command for this
+    // user — re-running the exact same command in a row would otherwise
+    // crowd out older history with noise (think `ls`, `pwd`, ...).
+    const [last] = await db
+      .select({ command: workbenchShellHistoryTable.command })
+      .from(workbenchShellHistoryTable)
+      .where(eq(workbenchShellHistoryTable.userId, userId))
+      .orderBy(desc(workbenchShellHistoryTable.createdAt))
+      .limit(1);
+    if (last && last.command === trimmed) return;
+    await db.insert(workbenchShellHistoryTable).values({ userId, command: trimmed });
+    // Hard cap per user so one runaway terminal can't grow the table
+    // forever. We delete anything past the most recent N rows, FIFO.
+    await db.execute(sql`
+      DELETE FROM workbench_shell_history
+      WHERE id IN (
+        SELECT id FROM workbench_shell_history
+        WHERE user_id = ${userId}
+        ORDER BY created_at DESC
+        OFFSET ${SHELL_HISTORY_MAX_PER_USER}
+      )
+    `);
+  } catch (err: any) {
+    console.error("[workbench-shell-history] insert failed:", err?.message || err);
+  }
+}
+
 router.post("/shell", requireAuth, async (req, res): Promise<void> => {
   const { command, project } = req.body || {};
   if (!command || typeof command !== "string") {
     res.status(400).json({ error: "command is required" });
     return;
   }
+
+  // Record the command before running so even commands that crash mid-
+  // run, time out, or are sandbox-blocked still show up in the user's
+  // up-arrow history. The recorder no-ops on duplicates and on empty
+  // strings, and never throws back to the request handler.
+  const userIdForHistory = String((req.user as any)?.id || "");
+  await recordShellCommand(userIdForHistory, command);
 
   const safety = checkShellSafety(command);
   if (safety.blocked) {
@@ -1894,6 +1938,61 @@ router.post("/redo-last-file-edit", requireAuth, async (req, res): Promise<void>
     // shouldn't silently lose their redo entry.
     pushRedoEntry(popped);
     res.status(500).json({ error: err.message || "Redo failed" });
+  }
+});
+
+// Per-user shell command history. Returns the user's most recent
+// commands so the workbench shell can hydrate up-arrow / Ctrl-R history
+// across browser refreshes. Sorted newest -> oldest. `limit` is clamped
+// to the same hard cap we enforce on insert (SHELL_HISTORY_MAX_PER_USER)
+// so a malicious client can't OOM the API server with one giant query.
+router.get("/shell-history", requireAuth, async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required (missing user id)", history: [] });
+    return;
+  }
+  const rawLimit = parseInt(String(req.query.limit ?? "200"), 10);
+  const limit = Math.min(
+    Math.max(Number.isFinite(rawLimit) ? rawLimit : 200, 1),
+    SHELL_HISTORY_MAX_PER_USER,
+  );
+  try {
+    const rows = await db
+      .select({
+        id: workbenchShellHistoryTable.id,
+        command: workbenchShellHistoryTable.command,
+        createdAt: workbenchShellHistoryTable.createdAt,
+      })
+      .from(workbenchShellHistoryTable)
+      .where(eq(workbenchShellHistoryTable.userId, userId))
+      .orderBy(desc(workbenchShellHistoryTable.createdAt))
+      .limit(limit);
+    res.json({
+      history: rows.map(r => ({
+        id: r.id,
+        command: r.command,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Failed to load shell history", history: [] });
+  }
+});
+
+router.delete("/shell-history", requireAuth, async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required (missing user id)" });
+    return;
+  }
+  try {
+    await db
+      .delete(workbenchShellHistoryTable)
+      .where(eq(workbenchShellHistoryTable.userId, userId));
+    res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Failed to clear shell history" });
   }
 });
 

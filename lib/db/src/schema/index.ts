@@ -12,3 +12,4 @@ export * from "./api-keys";
 export * from "./rag-embeddings";
 export * from "./hipaa";
 export * from "./workbench-undo";
+export * from "./workbench-shell-history";
