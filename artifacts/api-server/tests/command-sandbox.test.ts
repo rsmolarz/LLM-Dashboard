@@ -1256,6 +1256,222 @@ test("detectOsContainment picks the FIRST offending write when multiple appear",
   }
 });
 
+// ---------------------------------------------------------------------
+// Non-coreutils stderr shapes: Python tracebacks, Go errors, Node libuv.
+// Same kernel error (EROFS/EACCES), different wording. The detector must
+// recognise all three so the Workbench shows the friendly "sandbox kept
+// this inside the project" notice no matter which runtime the user
+// ran their command in — without misclassifying in-project errors.
+// ---------------------------------------------------------------------
+
+test("detectOsContainment recognises Python OSError EROFS tracebacks", () => {
+  const root = mkSandbox();
+  try {
+    // Real Python traceback shape: the OSError line ends with the
+    // path AFTER the marker, not before. The detector must walk
+    // forward from the marker to find '/etc/x'.
+    const stderr =
+      "Traceback (most recent call last):\n" +
+      '  File "<stdin>", line 1, in <module>\n' +
+      "OSError: [Errno 30] Read-only file system: '/etc/wb-py'\n";
+    const got = detectOsContainment(stderr, root);
+    assert.ok(got, `expected containment for Python OSError EROFS, got null`);
+    assert.equal(got!.reason, "readonly");
+    assert.equal(got!.path, "/etc/wb-py");
+    assert.match(got!.message, /outside the project/i);
+    assert.ok(got!.message.includes("/etc/wb-py"));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment recognises Python EROFS with double-quoted path", () => {
+  const root = mkSandbox();
+  try {
+    // open() in Python normally renders single-quoted paths, but
+    // some libraries (and exception subclasses) render double-quoted.
+    // The forward extractor must accept both.
+    const stderr =
+      'OSError: [Errno 30] Read-only file system: "/usr/local/wb-py"\n';
+    const got = detectOsContainment(stderr, root);
+    assert.ok(got);
+    assert.equal(got!.reason, "readonly");
+    assert.equal(got!.path, "/usr/local/wb-py");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment recognises Go-style EROFS errors", () => {
+  const root = mkSandbox();
+  try {
+    // Go's `errors.errno.Error()` produces lowercase errno wording
+    // and prints "<op> <path>: <errno>" with no quotes around the
+    // path. The detector needs case-insensitive marker matching to
+    // catch the lowercase "read-only file system".
+    const stderr = "open /etc/wb-go: read-only file system\n";
+    const got = detectOsContainment(stderr, root);
+    assert.ok(got, `expected containment for Go EROFS, got null`);
+    assert.equal(got!.reason, "readonly");
+    assert.equal(got!.path, "/etc/wb-go");
+    assert.match(got!.message, /outside the project/i);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment recognises Go-style EACCES on system paths during writes", () => {
+  const root = mkSandbox();
+  try {
+    // Go's "mkdir /x: permission denied" includes the operation name
+    // up front, which the write-context patterns now recognise so we
+    // don't gate this out as an ambiguous EACCES.
+    const stderr = "mkdir /etc/wb-go-mk: permission denied\n";
+    const got = detectOsContainment(stderr, root);
+    assert.ok(got, `expected containment for Go EACCES write, got null`);
+    assert.equal(got!.reason, "permission");
+    assert.equal(got!.path, "/etc/wb-go-mk");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment recognises Node libuv EROFS shape", () => {
+  const root = mkSandbox();
+  try {
+    // Node's libuv error formatter emits:
+    //   "Error: EROFS: read-only file system, open '/x'"
+    // The path appears AFTER the marker, after a comma + op name.
+    const stderr =
+      "Error: EROFS: read-only file system, open '/etc/wb-node'\n";
+    const got = detectOsContainment(stderr, root);
+    assert.ok(got, `expected containment for Node EROFS, got null`);
+    assert.equal(got!.reason, "readonly");
+    assert.equal(got!.path, "/etc/wb-node");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment recognises Node libuv EACCES on writes", () => {
+  const root = mkSandbox();
+  try {
+    // Node's "EACCES: permission denied, mkdir '/x'" — the operation
+    // name (mkdir) is what marks this as a write attempt vs. a
+    // read/exec failure.
+    const stderr =
+      "Error: EACCES: permission denied, mkdir '/usr/local/wb-node'\n";
+    const got = detectOsContainment(stderr, root);
+    assert.ok(got, `expected containment for Node EACCES write, got null`);
+    assert.equal(got!.reason, "permission");
+    assert.equal(got!.path, "/usr/local/wb-node");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment does NOT flag Python PermissionError on in-project paths", () => {
+  const root = mkSandbox();
+  try {
+    // A Python script chmod-000'd its own data file. EACCES on an
+    // in-project path with no recognisable write context must not
+    // be branded a sandbox event.
+    const inside = path.join(root, "data.txt");
+    const stderr =
+      "Traceback (most recent call last):\n" +
+      `PermissionError: [Errno 13] Permission denied: '${inside}'\n`;
+    const got = detectOsContainment(stderr, root);
+    assert.equal(
+      got,
+      null,
+      `in-project Python PermissionError must not be flagged. got=${JSON.stringify(got)}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment does NOT flag Go-style errors on in-project paths", () => {
+  const root = mkSandbox();
+  try {
+    // A Go program tried to mkdir inside its own project tree and
+    // hit a real perms problem. Not a sandbox event.
+    const inside = path.join(root, "subdir");
+    const stderr = `mkdir ${inside}: permission denied\n`;
+    const got = detectOsContainment(stderr, root);
+    assert.equal(
+      got,
+      null,
+      `in-project Go EACCES must not be flagged. got=${JSON.stringify(got)}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment does NOT flag Go-style read EACCES (open is read-or-write ambiguous)", () => {
+  const root = mkSandbox();
+  try {
+    // Go's "open /etc/shadow: permission denied" is ambiguous —
+    // the open(2) syscall serves both read and write opens. Without
+    // a clearly write-only op (mkdir, write, unlink, …) on the line,
+    // we must NOT brand this a sandbox event; otherwise a normal
+    // read-perms failure on a system file would be mislabelled.
+    // EROFS on the same wording IS unambiguous and is covered by
+    // the marker test above (handled without the write-context gate).
+    const stderr = "open /etc/shadow: permission denied\n";
+    const got = detectOsContainment(stderr, root);
+    assert.equal(
+      got,
+      null,
+      `Go-style read EACCES on /etc/shadow must not be flagged. got=${JSON.stringify(got)}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment does NOT flag Node EACCES on read/exec paths", () => {
+  const root = mkSandbox();
+  try {
+    // Node `Error: EACCES: permission denied, open '/etc/shadow'` —
+    // `open` is ambiguous (could be read or write) and not in the
+    // write-context op list, so we must NOT flag this as a sandbox
+    // event. Read EACCES on /etc/shadow is a normal perms result.
+    const stderr =
+      "Error: EACCES: permission denied, open '/etc/shadow'\n";
+    const got = detectOsContainment(stderr, root);
+    assert.equal(
+      got,
+      null,
+      `Node EACCES on a read should not be flagged. got=${JSON.stringify(got)}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("detectOsContainment does NOT flag Python OSError on in-project EROFS-named files", () => {
+  const root = mkSandbox();
+  try {
+    // Defensive: even an EROFS marker on an in-project path should
+    // be ignored. EROFS inside the project bind cannot legitimately
+    // happen at runtime, but if a user writes a fake error message
+    // referencing their own file we still must not lie.
+    const inside = path.join(root, "fake.log");
+    const stderr =
+      `OSError: [Errno 30] Read-only file system: '${inside}'\n`;
+    const got = detectOsContainment(stderr, root);
+    assert.equal(
+      got,
+      null,
+      `EROFS marker on in-project path must not be flagged. got=${JSON.stringify(got)}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // runSandboxed: when the inner command emits an EROFS-style stderr, the
 // returned result must carry `sandboxContained` so the route can
 // forward it to the frontend. We can't easily produce a real EROFS on

@@ -1538,11 +1538,14 @@ function isOutsideSandboxRoot(p: string, sandboxRoot: string): boolean {
 /**
  * Walk backwards from a marker hit to recover the path token that
  * preceded it. Handles single-quoted, double-quoted, and bare paths
- * the way coreutils, bash, and busybox typically format errors:
+ * the way coreutils, bash, busybox, and Go's `errors.errno` typically
+ * format errors:
  *
  *   "cp: cannot create regular file '/etc/x': Read-only file system"
  *   "touch: cannot touch \"/usr/foo\": Permission denied"
  *   "bash: /usr/bin/foo: Permission denied"
+ *   "open /etc/x: read-only file system"           (Go)
+ *   "mkdir /etc/x: permission denied"              (Go)
  *
  * Returns null if no `/`-rooted token is found before the marker.
  */
@@ -1575,12 +1578,68 @@ function extractPathBefore(stderr: string, markerStart: number): string | null {
 }
 
 /**
+ * Walk forwards from the end of a marker hit to recover the path token
+ * that follows it. Handles the message shapes used by Python tracebacks
+ * and Node.js error formatting, where the syscall arg is rendered AFTER
+ * the kernel error string:
+ *
+ *   "OSError: [Errno 30] Read-only file system: '/etc/x'"           (Python)
+ *   "PermissionError: [Errno 13] Permission denied: '/etc/x'"       (Python)
+ *   "Error: EROFS: read-only file system, open '/etc/x'"            (Node)
+ *   "Error: EACCES: permission denied, mkdir '/etc/x'"              (Node)
+ *
+ * Stops at end-of-line so a marker on one line never picks up a path
+ * from the next line. Returns null if no `/`-rooted token is found.
+ */
+function extractPathAfter(stderr: string, markerEnd: number): string | null {
+  let i = markerEnd;
+  while (i < stderr.length) {
+    const c = stderr[i];
+    if (c === "\n" || c === "\r") return null;
+    if (c === "'" || c === '"' || c === "`") {
+      const quote = c;
+      const start = i + 1;
+      let end = start;
+      while (end < stderr.length && stderr[end] !== quote && stderr[end] !== "\n") end++;
+      const token = stderr.slice(start, end);
+      if (token.startsWith("/")) return token;
+      // Not a path token; advance past this quoted segment and keep
+      // scanning the same line for another candidate.
+      i = end < stderr.length && stderr[end] === quote ? end + 1 : end;
+      continue;
+    }
+    if (c === "/") {
+      let end = i;
+      while (end < stderr.length) {
+        const ch = stderr[end];
+        if (ch === ":" || ch === " " || ch === "\t" || ch === "\n" ||
+            ch === "\r" || ch === "," || ch === ")" || ch === '"' ||
+            ch === "'" || ch === "`") break;
+        end++;
+      }
+      return stderr.slice(i, end);
+    }
+    i++;
+  }
+  return null;
+}
+
+/**
  * Phrases that indicate the line of stderr is talking about a WRITE
  * operation. We use these to disambiguate `Permission denied` from
  * benign read/exec failures (e.g. opening a config file the user
  * happens not to have read perms on) before branding the result a
  * sandbox containment event. EROFS doesn't need this gate — any
  * `Read-only file system` error is by definition write-related.
+ *
+ * Covers coreutils/bash/busybox phrasing plus the structured shapes
+ * used by Node.js (`EACCES: permission denied, mkdir '/x'`) and
+ * Go's standard error formatter (`mkdir /etc/x: permission denied`).
+ * Python's `PermissionError` is intentionally NOT a write-context
+ * signal because it can also be raised on read-only opens — the only
+ * reliable Python signal is `OSError: [Errno 30] Read-only file
+ * system`, which is already covered by the EROFS marker (no write
+ * gate needed).
  */
 const WRITE_CONTEXT_PATTERNS: readonly RegExp[] = [
   /cannot create/i,
@@ -1594,6 +1653,23 @@ const WRITE_CONTEXT_PATTERNS: readonly RegExp[] = [
   /unable to write/i,
   /failed to (?:create|write|open .* for writing)/i,
   /error writing/i,
+  // Node.js libuv-style: "Error: EACCES: permission denied, mkdir '/x'".
+  // The operation name (mkdir, write, unlink, …) appears between the
+  // marker and the path, after a comma. We anchor on the errno token
+  // so we don't accidentally match free-form English elsewhere.
+  /(?:EACCES|EROFS|EPERM)[^\n,]*,\s*(?:mkdir|write|unlink|rmdir|rename|chmod|chown|symlink|link|truncate|copyfile|mkstemp|ftruncate|utimes|lchown|fchmod|fchown)\b/i,
+  // Go-style: a write-oriented op name appears at the start of the
+  // line, immediately followed by an absolute path:
+  //   "mkdir /etc/x: permission denied"
+  // `open` / `openat` are intentionally excluded: a Go EACCES on
+  // `open /path` is ambiguous between read and write (the syscall is
+  // the same for both), so flagging it as a sandbox write attempt
+  // would mislabel benign read failures like
+  // `open /etc/shadow: permission denied`. EROFS on the same wording
+  // is unambiguous and is handled by the EROFS marker on its own
+  // (no write-context gate). We require the path to be `/`-rooted so
+  // we don't match build tool output like `create file foo`.
+  /(?:^|\s)(?:mkdir|write|create|remove|removeall|unlink|rename|chmod|chown|lchown|symlink|link|truncate)\s+\//i,
 ];
 
 function lineOf(stderr: string, index: number): string {
@@ -1627,9 +1703,22 @@ function looksLikeWriteContext(line: string): boolean {
  *   - `Permission denied` (EACCES): only treated as containment when
  *     the offending path is a system path AND the surrounding line
  *     looks like a write context (`cannot create`, `cannot touch`,
- *     `unable to write`, etc.). This rules out read/exec EACCES (e.g.
+ *     `unable to write`, libuv `EACCES: ..., mkdir`, Go `mkdir /x`,
+ *     etc.). This rules out read/exec EACCES (e.g.
  *     `bash: /usr/local/sbin/foo: Permission denied` for a missing
  *     +x bit) which is NOT a sandbox event.
+ *
+ * Marker matching is case-insensitive so we recognise the lowercase
+ * spellings used by Go's `errors.errno` formatter and Node's libuv
+ * (`read-only file system`, `permission denied`) alongside the
+ * capitalised spellings used by glibc/coreutils.
+ *
+ * For the offending path we try the token immediately BEFORE the
+ * marker first (coreutils/bash/Go shape: `cp: cannot create '/x':
+ * Read-only file system` and `mkdir /x: permission denied`); if
+ * nothing usable is there we then try the token immediately AFTER the
+ * marker on the same line (Python/Node shape: `OSError: [Errno 30]
+ * Read-only file system: '/x'` and `Error: EROFS: ..., open '/x'`).
  */
 export function detectOsContainment(
   stderr: string,
@@ -1638,28 +1727,50 @@ export function detectOsContainment(
   if (typeof stderr !== "string" || stderr.length === 0) return null;
   // Search marker by marker; pick the FIRST match in stderr order so
   // the offending path matches the first thing the user's command
-  // actually tried to write to.
+  // actually tried to write to. Case-insensitive matching lets us
+  // catch the lowercase spellings emitted by Go and Node alongside
+  // the capitalised glibc/coreutils form.
   type Hit = { reason: "readonly" | "permission"; index: number; markerLen: number };
   const hits: Hit[] = [];
-  const RO = "Read-only file system";
-  const EACCES = "Permission denied";
-  let i = stderr.indexOf(RO);
-  while (i >= 0) {
-    hits.push({ reason: "readonly", index: i, markerLen: RO.length });
-    i = stderr.indexOf(RO, i + RO.length);
+  const RO_RE = /read-only file system/gi;
+  const EACCES_RE = /permission denied/gi;
+  let m: RegExpExecArray | null;
+  while ((m = RO_RE.exec(stderr)) !== null) {
+    hits.push({ reason: "readonly", index: m.index, markerLen: m[0].length });
   }
-  i = stderr.indexOf(EACCES);
-  while (i >= 0) {
-    hits.push({ reason: "permission", index: i, markerLen: EACCES.length });
-    i = stderr.indexOf(EACCES, i + EACCES.length);
+  while ((m = EACCES_RE.exec(stderr)) !== null) {
+    hits.push({ reason: "permission", index: m.index, markerLen: m[0].length });
   }
   if (hits.length === 0) return null;
   hits.sort((a, b) => a.index - b.index);
 
   for (const hit of hits) {
-    const offending = extractPathBefore(stderr, hit.index);
-    if (!offending) continue;
-    if (!isOutsideSandboxRoot(offending, sandboxRoot)) continue;
+    // Prefer the path token directly before the marker (coreutils,
+    // bash, busybox, Go). If it's missing OR resolves inside the
+    // project — meaning this line is talking about an in-project
+    // file, which is NOT containment — fall back to the path token
+    // AFTER the marker on the same line (Python OSError, Node libuv).
+    let offending = extractPathBefore(stderr, hit.index);
+    let inProjectBefore = false;
+    if (offending) {
+      if (!isOutsideSandboxRoot(offending, sandboxRoot)) {
+        inProjectBefore = true;
+        offending = null;
+      }
+    }
+    if (!offending) {
+      const after = extractPathAfter(stderr, hit.index + hit.markerLen);
+      if (after && isOutsideSandboxRoot(after, sandboxRoot)) {
+        offending = after;
+      }
+    }
+    if (!offending) {
+      // Either nothing parseable, or the only path on the line was
+      // in-project (legitimate user-owned permission/EROFS error).
+      // Either way, this hit is not containment; move on.
+      void inProjectBefore;
+      continue;
+    }
     if (hit.reason === "readonly") {
       // EROFS is a strong signal: nothing inside the project bind is
       // read-only, so EROFS against any path means the OS jail caught
