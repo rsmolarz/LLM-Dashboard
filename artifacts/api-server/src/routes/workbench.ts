@@ -1674,7 +1674,13 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
 
   const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
-  if (!apiKey || !baseUrl) { res.status(503).json({ error: "Anthropic not configured" }); return; }
+  if (!apiKey || !baseUrl) {
+    res.status(503).json({
+      error: "Anthropic AI integration not configured",
+      code: "AI_NOT_CONFIGURED" satisfies WorkbenchErrorCode,
+    });
+    return;
+  }
 
   let selectedModel = "claude-sonnet-4-6";
   if (mode === "manual" && model) {
@@ -1848,7 +1854,13 @@ router.get("/claude-code", async (req, res): Promise<void> => {
 
   const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
-  if (!apiKey || !baseUrl) { res.status(503).json({ error: "Anthropic not configured" }); return; }
+  if (!apiKey || !baseUrl) {
+    res.status(503).json({
+      error: "Anthropic AI integration not configured",
+      code: "AI_NOT_CONFIGURED" satisfies WorkbenchErrorCode,
+    });
+    return;
+  }
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");

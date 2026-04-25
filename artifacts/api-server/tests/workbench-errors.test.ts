@@ -360,6 +360,35 @@ test("POST /api/code-review returns 503 + AI_NOT_CONFIGURED when the Anthropic e
   });
 });
 
+test("POST /api/route-prompt returns 503 + AI_NOT_CONFIGURED when the Anthropic env vars are missing", async () => {
+  await withAnthropicEnvCleared(async () => {
+    const r = await postJson<{ error?: string; code?: string }>(
+      "/api/route-prompt",
+      { prompt: "hello" },
+    );
+    assert.equal(r.status, 503, `expected HTTP 503, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.code, "AI_NOT_CONFIGURED");
+    assert.ok(
+      r.body.error && /not configured|anthropic/i.test(r.body.error),
+      `expected an Anthropic-not-configured error, got ${JSON.stringify(r.body)}`,
+    );
+  });
+});
+
+test("GET /api/claude-code returns 503 + AI_NOT_CONFIGURED when the Anthropic env vars are missing", async () => {
+  await withAnthropicEnvCleared(async () => {
+    const r = await getJson<{ error?: string; code?: string }>(
+      "/api/claude-code?prompt=" + encodeURIComponent("hello"),
+    );
+    assert.equal(r.status, 503, `expected HTTP 503, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.code, "AI_NOT_CONFIGURED");
+    assert.ok(
+      r.body.error && /not configured|anthropic/i.test(r.body.error),
+      `expected an Anthropic-not-configured error, got ${JSON.stringify(r.body)}`,
+    );
+  });
+});
+
 // -----------------------------------------------------------------------------
 // /api/code-chat has THREE distinct sites that emit AI_REQUEST_FAILED:
 //   1. line ~886 — initial Anthropic upstream call returned a non-ok status,

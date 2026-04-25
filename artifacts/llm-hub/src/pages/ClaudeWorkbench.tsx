@@ -1206,7 +1206,17 @@ function AIRouterPanel() {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body), signal: controller.signal, credentials: "include",
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        if (err?.code === "AI_NOT_CONFIGURED") {
+          const aiErr: any = new Error(
+            "AI router isn't configured. Add the AI_INTEGRATIONS_ANTHROPIC_API_KEY and AI_INTEGRATIONS_ANTHROPIC_BASE_URL secrets in the Env Vars panel, then try again.",
+          );
+          aiErr.code = "AI_NOT_CONFIGURED";
+          throw aiErr;
+        }
+        throw new Error(err?.error || `HTTP ${res.status}`);
+      }
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       if (reader) {
@@ -1230,7 +1240,8 @@ function AIRouterPanel() {
       }
     } catch (err: any) {
       if (err.name === "AbortError") return;
-      setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: `Error: ${err.message}` } : m));
+      const errorCode: string | undefined = err?.code;
+      setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: `Error: ${err.message}`, errorCode } : m));
     } finally { setIsStreaming(false); setAbortController(null); setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m)); scrollToBottom(); }
   }, [input, isStreaming, routingMode, manualModel, messages, scrollToBottom]);
 
@@ -1282,6 +1293,21 @@ function AIRouterPanel() {
                 </div>}
                 <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed text-[#cdd6f4] select-text cursor-text">{msg.content}</pre>
                 {msg.streaming && <span className="inline-block w-1.5 h-3.5 bg-[#f9e2af] animate-pulse ml-0.5 align-middle" />}
+                {msg.errorCode === "AI_NOT_CONFIGURED" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.dispatchEvent(
+                        new CustomEvent("workbench:open-panel", {
+                          detail: { side: "right", panel: "env" },
+                        }),
+                      );
+                    }}
+                    className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-[#f9e2af]/15 text-[#f9e2af] hover:bg-[#f9e2af]/25 border border-[#f9e2af]/25"
+                  >
+                    Open Env Vars panel
+                  </button>
+                )}
               </div>
               {msg.role === "user" && <div className="h-5 w-5 rounded-full bg-[#89b4fa]/20 flex items-center justify-center shrink-0 mt-0.5"><User className="h-3 w-3 text-[#89b4fa]" /></div>}
             </div>
