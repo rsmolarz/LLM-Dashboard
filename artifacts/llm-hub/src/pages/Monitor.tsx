@@ -82,6 +82,12 @@ interface DashboardData {
     conversations: number;
     messages: number;
   };
+  sandbox?: {
+    posture: "kernel-jail" | "fallback";
+    osIsolation: { kind: "bwrap" | "firejail" | "nsjail"; bin: string } | null;
+    setpriv: string | null;
+    prlimit: string | null;
+  };
 }
 
 function StatusBadge({ status, label }: { status: "online" | "offline" | "running" | "stopped"; label: string }) {
@@ -579,8 +585,68 @@ export default function Monitor() {
         </motion.div>
       </div>
 
+      <SandboxPosturePanel sandbox={data.sandbox} />
+
       <RateLimitPanel />
     </div>
+  );
+}
+
+function SandboxPosturePanel({ sandbox }: { sandbox: DashboardData["sandbox"] }) {
+  if (!sandbox) return null;
+  const isStrong = sandbox.posture === "kernel-jail";
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="glass-panel rounded-2xl border border-white/5 p-5"
+      data-testid="sandbox-posture-panel"
+    >
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-semibold text-white flex items-center gap-2">
+          <Shield className={cn("w-5 h-5", isStrong ? "text-emerald-400" : "text-amber-400")} />
+          Workbench Sandbox
+        </h3>
+        <StatusBadge
+          status={isStrong ? "online" : "stopped"}
+          label={isStrong ? "Kernel jail active" : "Fallback (no kernel jail)"}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="bg-white/5 rounded-lg px-3 py-2">
+          <p className="text-xs text-muted-foreground">OS isolation</p>
+          <p className="text-sm font-mono text-white" data-testid="sandbox-os-kind">
+            {sandbox.osIsolation ? sandbox.osIsolation.kind : "none"}
+          </p>
+          {sandbox.osIsolation && (
+            <p className="text-[11px] text-muted-foreground truncate" title={sandbox.osIsolation.bin}>
+              {sandbox.osIsolation.bin}
+            </p>
+          )}
+        </div>
+        <div className="bg-white/5 rounded-lg px-3 py-2">
+          <p className="text-xs text-muted-foreground">setpriv (no-new-privs)</p>
+          <p className="text-sm font-mono text-white" data-testid="sandbox-setpriv">
+            {sandbox.setpriv ?? "not detected"}
+          </p>
+        </div>
+        <div className="bg-white/5 rounded-lg px-3 py-2">
+          <p className="text-xs text-muted-foreground">prlimit (resource caps)</p>
+          <p className="text-sm font-mono text-white" data-testid="sandbox-prlimit">
+            {sandbox.prlimit ?? "not detected"}
+          </p>
+        </div>
+      </div>
+
+      {!isStrong && (
+        <p className="mt-3 text-xs text-amber-300/90">
+          No kernel-enforced jail (bwrap/firejail/nsjail) is active. Workbench shell is
+          gated only by the path-validation layer. Install <code className="font-mono">bubblewrap</code>{" "}
+          and ensure unprivileged user namespaces are enabled to promote to the strong jail.
+        </p>
+      )}
+    </motion.div>
   );
 }
 

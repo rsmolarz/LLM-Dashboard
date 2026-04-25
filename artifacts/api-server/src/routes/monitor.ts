@@ -4,10 +4,41 @@ import { vpsDatabaseConfigTable, documentsTable, conversationsTable, chatMessage
 import { getCollectorState } from "./auto-collector";
 import { sql, count } from "drizzle-orm";
 import { getRateLimitMetrics, getActiveWindows, requireAdmin } from "../middlewares/rateLimiter";
+import { sandboxHelpers } from "../lib/command-sandbox";
 
 const router: IRouter = Router();
 
 router.use("/monitor", requireAdmin);
+
+/**
+ * Snapshot of the OS-level sandbox posture detected at module load.
+ *
+ * `posture` is the at-a-glance summary ops cares about:
+ *   - "kernel-jail": one of bwrap/firejail/nsjail passed the boot probe and
+ *     is being prepended to every Workbench/git spawn, so writes outside
+ *     the per-project cwd hit a private mount namespace (or fail with
+ *     EROFS). This is the strong jail.
+ *   - "fallback": no helper passed the probe (e.g. host kernel blocks
+ *     unprivileged user namespaces). The Workbench shell is still gated
+ *     by the path-validation layer, but there is no kernel-enforced
+ *     filesystem isolation. Production should never be in this state.
+ *
+ * `osIsolation`, `setpriv`, and `prlimit` mirror the same values the
+ * boot log emits, so this endpoint is a faithful at-a-moment view of
+ * what the server is actually serving traffic with — no need to dig
+ * through Replit deploy logs or restart the process.
+ */
+function getSandboxPosture() {
+  const os = sandboxHelpers.osIsolation;
+  return {
+    posture: os ? "kernel-jail" : "fallback",
+    osIsolation: os
+      ? { kind: os.kind, bin: os.bin }
+      : null,
+    setpriv: sandboxHelpers.setpriv,
+    prlimit: sandboxHelpers.prlimit,
+  } as const;
+}
 
 async function getVpsClient() {
   const [config] = await db.select().from(vpsDatabaseConfigTable).limit(1);
@@ -218,10 +249,24 @@ router.get("/monitor/dashboard", async (_req, res): Promise<void> => {
       vpsDb,
       knowledgeBase,
       chat,
+      sandbox: getSandboxPosture(),
     });
   } catch (err: any) {
     res.status(500).json({ error: err?.message || "Dashboard fetch failed" });
   }
+});
+
+/**
+ * Admin-only at-a-glance view of the Workbench shell sandbox posture.
+ *
+ * Returns the same data the boot-time `[sandbox] OS-level isolation: ...`
+ * log emits, so ops can confirm the running process is using the
+ * kernel-enforced jail (bwrap/firejail/nsjail) rather than the
+ * path-validation-only fallback — without restarting the server or
+ * reading Replit deploy logs.
+ */
+router.get("/monitor/sandbox", (_req, res): void => {
+  res.json(getSandboxPosture());
 });
 
 router.get("/monitor/rate-limits", async (_req, res): Promise<void> => {
