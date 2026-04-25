@@ -483,6 +483,44 @@ router.post("/ssh/ai-chat", requireAuth, async (req, res): Promise<void> => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
+  // Tracks whether the client has gone away (closed the tab, dropped the
+  // network, etc.) so the agent loop and the per-iteration heartbeat can
+  // both shut down promptly instead of running another upstream LLM
+  // completion (up to 8k tokens, up to 20 iterations) into a dead socket.
+  let clientClosed = false;
+  let activeHeartbeat: NodeJS.Timeout | null = null;
+  // Controller for the in-flight upstream fetch, captured so the close
+  // handler can abort it the moment the client disconnects instead of
+  // waiting for the upstream's 2–10 minute timeout.
+  let activeUpstreamController: AbortController | null = null;
+  const clearActiveHeartbeat = () => {
+    if (activeHeartbeat) {
+      clearInterval(activeHeartbeat);
+      activeHeartbeat = null;
+    }
+  };
+  const safeWrite = (chunk: string): boolean => {
+    if (clientClosed || res.writableEnded) return false;
+    try { res.write(chunk); return true; } catch {
+      clientClosed = true;
+      clearActiveHeartbeat();
+      return false;
+    }
+  };
+  // Listen on the response socket's close, not the request's: in Node
+  // 20+ / Express 5 the IncomingMessage's `close` fires as soon as the
+  // body parser is done — long before the response is — and would
+  // misfire on every chat. The response stream's close only fires when
+  // we end normally or the underlying socket is torn down by the client.
+  res.on("close", () => {
+    if (res.writableEnded) return;
+    clientClosed = true;
+    clearActiveHeartbeat();
+    if (activeUpstreamController) {
+      try { activeUpstreamController.abort(); } catch { /* already aborted */ }
+    }
+  });
+
   const ollamaTools = [
     {
       type: "function",
@@ -620,9 +658,9 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
   conversationMessages.push({ role: "user", content: prompt });
 
   if (!modelOverride && !useOllama && !ollamaOnline) {
-    res.write(`data: ${JSON.stringify({ type: "text", content: "⚠️ Ollama is offline — using cloud model.\n\n" })}\n\n`);
+    safeWrite(`data: ${JSON.stringify({ type: "text", content: "⚠️ Ollama is offline — using cloud model.\n\n" })}\n\n`);
   }
-  res.write(`data: ${JSON.stringify({ type: "routing", provider, model: activeModel })}\n\n`);
+  safeWrite(`data: ${JSON.stringify({ type: "routing", provider, model: activeModel })}\n\n`);
 
   try {
     let messages = conversationMessages.slice(-30);
@@ -630,11 +668,30 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
     const maxIterations = 20;
 
     while (iterationCount < maxIterations) {
+      // If the client disconnected between iterations, stop now instead of
+      // firing off another (up to 8k-token) LLM completion at a closed
+      // socket. Without this guard, a closed tab could ride out all 20
+      // iterations of the agent loop.
+      if (clientClosed) break;
       iterationCount++;
 
-      const heartbeat = setInterval(() => {
-        try { res.write(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`); } catch {}
+      // The previous implementation created a fresh interval per iteration
+      // with no way for the close handler to clear it; that's why an
+      // abandoned tab kept leaking heartbeats. Now we publish the handle
+      // into the shared `activeHeartbeat` so `res.on("close")` can clear
+      // it immediately.
+      clearActiveHeartbeat();
+      activeHeartbeat = setInterval(() => {
+        if (clientClosed) { clearActiveHeartbeat(); return; }
+        safeWrite(`data: ${JSON.stringify({ type: "heartbeat" })}\n\n`);
       }, 10000);
+
+      // Per-iteration controller wired into the upstream fetch via
+      // AbortSignal.any so that EITHER the existing per-call timeout OR
+      // a client disconnect aborts the in-flight request. The close
+      // handler reaches in and calls `controller.abort()` directly.
+      const controller = new AbortController();
+      activeUpstreamController = controller;
 
       let llmResponse: Response;
       try {
@@ -649,7 +706,7 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
             stream: false,
             options: { temperature: 0.3, num_predict: 4096 },
           }),
-          signal: AbortSignal.timeout(600000),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(600000)]),
         });
       } else if (useAnthropic) {
         const anthropicMessages = messages.filter((m: any) => m.role !== "system");
@@ -674,7 +731,7 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
             max_tokens: 8192,
             temperature: 0.3,
           }),
-          signal: AbortSignal.timeout(120000),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]),
         });
       } else {
         let retries = 0;
@@ -694,31 +751,61 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
               temperature: 0.3,
               max_tokens: 8192,
             }),
-            signal: AbortSignal.timeout(120000),
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(120000)]),
           });
           if (llmResponse.status === 429 && retries < maxRetries) {
+            // Bail out of the retry loop too if the client disappeared
+            // while we were sleeping on the rate-limit backoff.
+            if (clientClosed) break;
             retries++;
             const retryAfter = parseInt(llmResponse.headers.get("retry-after") || "10", 10);
             const waitTime = Math.min(retryAfter, 30) * 1000;
-            res.write(`data: ${JSON.stringify({ type: "text", content: `⏳ Rate limited, retrying in ${Math.ceil(waitTime / 1000)}s...\n` })}\n\n`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
+            safeWrite(`data: ${JSON.stringify({ type: "text", content: `⏳ Rate limited, retrying in ${Math.ceil(waitTime / 1000)}s...\n` })}\n\n`);
+            // Race the backoff sleep against the per-iteration controller's
+            // abort signal so a client disconnect during the (up to 30s)
+            // wait tears the handler down promptly instead of holding it
+            // alive for the full retry-after window.
+            await new Promise<void>((resolve) => {
+              const t = setTimeout(() => {
+                controller.signal.removeEventListener("abort", onAbort);
+                resolve();
+              }, waitTime);
+              const onAbort = () => { clearTimeout(t); resolve(); };
+              if (controller.signal.aborted) {
+                clearTimeout(t);
+                resolve();
+                return;
+              }
+              controller.signal.addEventListener("abort", onAbort, { once: true });
+            });
+            if (clientClosed) break;
             continue;
           }
           break;
         }
       }
       } finally {
-        clearInterval(heartbeat);
+        clearActiveHeartbeat();
+        activeUpstreamController = null;
       }
+
+      // The fetch above returned (or threw) — if the reason was a client
+      // disconnect, drop everything on the floor: no more upstream calls,
+      // no more SSE events to a dead socket.
+      if (clientClosed) return;
 
       if (!llmResponse.ok) {
         const errText = await llmResponse.text();
-        res.write(`data: ${JSON.stringify({ type: "error", content: `${provider} error ${llmResponse.status}: ${errText}` })}\n\n`);
-        res.end();
+        safeWrite(`data: ${JSON.stringify({ type: "error", content: `${provider} error ${llmResponse.status}: ${errText}` })}\n\n`);
+        if (!res.writableEnded) res.end();
         return;
       }
 
       const result = await llmResponse.json() as any;
+
+      // Reading the body finished — re-check the disconnect flag before
+      // doing any more work or emitting any more SSE events.
+      if (clientClosed) return;
 
       let assistantMsg: any;
       let toolCalls: any[] | undefined;
@@ -727,7 +814,7 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
         const textParts = (result.content || []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
         const toolParts = (result.content || []).filter((c: any) => c.type === "tool_use");
         if (textParts) {
-          res.write(`data: ${JSON.stringify({ type: "text", content: textParts })}\n\n`);
+          safeWrite(`data: ${JSON.stringify({ type: "text", content: textParts })}\n\n`);
         }
         toolCalls = toolParts.length > 0 ? toolParts.map((t: any) => ({
           id: t.id,
@@ -737,20 +824,23 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
       } else {
         assistantMsg = useOllama ? result.message : result.choices?.[0]?.message;
         if (assistantMsg?.content) {
-          res.write(`data: ${JSON.stringify({ type: "text", content: assistantMsg.content })}\n\n`);
+          safeWrite(`data: ${JSON.stringify({ type: "text", content: assistantMsg.content })}\n\n`);
         }
         toolCalls = assistantMsg?.tool_calls;
       }
 
       if (!toolCalls || toolCalls.length === 0) {
-        res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-        res.end();
+        safeWrite(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+        if (!res.writableEnded) res.end();
         return;
       }
 
       messages.push(assistantMsg);
 
       for (const tc of toolCalls) {
+        // Don't run more tool calls (which can issue real SSH commands /
+        // SFTP transfers) for a client that is no longer listening.
+        if (clientClosed) return;
         const toolName = tc.function?.name;
         const rawArgs = tc.function?.arguments;
         const toolArgs = typeof rawArgs === "string" ? JSON.parse(rawArgs) : (rawArgs || {});
@@ -759,60 +849,60 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
         try {
           if (toolName === "run_ssh_command") {
             const cmd = toolArgs.command;
-            res.write(`data: ${JSON.stringify({ type: "command", command: cmd })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command", command: cmd })}\n\n`);
             const cmdResult = await execSSH(config, cmd);
-            res.write(`data: ${JSON.stringify({ type: "command_result", command: cmd, ...cmdResult })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command_result", command: cmd, ...cmdResult })}\n\n`);
             toolResult = JSON.stringify(cmdResult);
           } else if (toolName === "run_ssh_commands") {
             const results: any[] = [];
             for (const cmd of toolArgs.commands) {
-              res.write(`data: ${JSON.stringify({ type: "command", command: cmd })}\n\n`);
+              safeWrite(`data: ${JSON.stringify({ type: "command", command: cmd })}\n\n`);
               const cmdResult = await execSSH(config, cmd);
-              res.write(`data: ${JSON.stringify({ type: "command_result", command: cmd, ...cmdResult })}\n\n`);
+              safeWrite(`data: ${JSON.stringify({ type: "command_result", command: cmd, ...cmdResult })}\n\n`);
               results.push({ command: cmd, ...cmdResult });
             }
             toolResult = JSON.stringify(results);
           } else if (toolName === "list_local_files") {
             const dirPath = toolArgs.path;
-            res.write(`data: ${JSON.stringify({ type: "command", command: `[local] ls ${dirPath}` })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command", command: `[local] ls ${dirPath}` })}\n\n`);
             const files = listLocalFiles(dirPath);
             const summary = files.map((f: any) => `${f.type === "directory" ? "dir" : "file"}: ${f.name}${f.type === "file" ? ` (${f.size} bytes)` : ""}`).join("\n");
-            res.write(`data: ${JSON.stringify({ type: "command_result", command: `[local] ls ${dirPath}`, stdout: summary || "(empty directory)", stderr: "", exitCode: 0 })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command_result", command: `[local] ls ${dirPath}`, stdout: summary || "(empty directory)", stderr: "", exitCode: 0 })}\n\n`);
             toolResult = JSON.stringify(files);
           } else if (toolName === "read_local_file") {
             const filePath = toolArgs.path;
-            res.write(`data: ${JSON.stringify({ type: "command", command: `[local] cat ${filePath}` })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command", command: `[local] cat ${filePath}` })}\n\n`);
             const content = readLocalFile(filePath);
             const preview = content.length > 2000 ? content.slice(0, 2000) + `\n... (${content.length} chars total)` : content;
-            res.write(`data: ${JSON.stringify({ type: "command_result", command: `[local] cat ${filePath}`, stdout: preview, stderr: "", exitCode: 0 })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command_result", command: `[local] cat ${filePath}`, stdout: preview, stderr: "", exitCode: 0 })}\n\n`);
             toolResult = content;
           } else if (toolName === "read_remote_file") {
             const remotePath = toolArgs.path;
-            res.write(`data: ${JSON.stringify({ type: "command", command: `[vps] cat ${remotePath}` })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command", command: `[vps] cat ${remotePath}` })}\n\n`);
             const result = await execSSH(config, `head -c 512000 ${JSON.stringify(remotePath)}`);
             if (result.exitCode !== 0) {
-              res.write(`data: ${JSON.stringify({ type: "command_result", command: `[vps] cat ${remotePath}`, stdout: "", stderr: result.stderr || "File not found", exitCode: result.exitCode })}\n\n`);
+              safeWrite(`data: ${JSON.stringify({ type: "command_result", command: `[vps] cat ${remotePath}`, stdout: "", stderr: result.stderr || "File not found", exitCode: result.exitCode })}\n\n`);
               toolResult = `Error reading file: ${result.stderr}`;
             } else {
               const preview = result.stdout.length > 2000 ? result.stdout.slice(0, 2000) + `\n... (${result.stdout.length} chars total)` : result.stdout;
-              res.write(`data: ${JSON.stringify({ type: "command_result", command: `[vps] cat ${remotePath}`, stdout: preview, stderr: "", exitCode: 0 })}\n\n`);
+              safeWrite(`data: ${JSON.stringify({ type: "command_result", command: `[vps] cat ${remotePath}`, stdout: preview, stderr: "", exitCode: 0 })}\n\n`);
               toolResult = result.stdout;
             }
           } else if (toolName === "list_remote_files") {
             const remotePath = toolArgs.path;
-            res.write(`data: ${JSON.stringify({ type: "command", command: `[vps] ls -la ${remotePath}` })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command", command: `[vps] ls -la ${remotePath}` })}\n\n`);
             const result = await execSSH(config, `ls -la ${JSON.stringify(remotePath)} 2>&1`);
-            res.write(`data: ${JSON.stringify({ type: "command_result", command: `[vps] ls -la ${remotePath}`, stdout: result.stdout || "(empty)", stderr: result.stderr, exitCode: result.exitCode })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command_result", command: `[vps] ls -la ${remotePath}`, stdout: result.stdout || "(empty)", stderr: result.stderr, exitCode: result.exitCode })}\n\n`);
             toolResult = result.stdout || result.stderr;
           } else if (toolName === "transfer_file_to_remote") {
             const { local_path, remote_path } = toolArgs;
-            res.write(`data: ${JSON.stringify({ type: "command", command: `[sftp] ${local_path} -> ${remote_path}` })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command", command: `[sftp] ${local_path} -> ${remote_path}` })}\n\n`);
             const uploadResult = await sftpUpload(config, local_path, remote_path);
-            res.write(`data: ${JSON.stringify({ type: "command_result", command: `[sftp] ${local_path} -> ${remote_path}`, stdout: `Transferred ${uploadResult.size} bytes`, stderr: "", exitCode: 0 })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command_result", command: `[sftp] ${local_path} -> ${remote_path}`, stdout: `Transferred ${uploadResult.size} bytes`, stderr: "", exitCode: 0 })}\n\n`);
             toolResult = JSON.stringify(uploadResult);
           } else if (toolName === "transfer_directory_to_remote") {
             const { local_dir, remote_dir } = toolArgs;
-            res.write(`data: ${JSON.stringify({ type: "command", command: `[sftp] ${local_dir}/ -> ${remote_dir}/` })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command", command: `[sftp] ${local_dir}/ -> ${remote_dir}/` })}\n\n`);
             const allFiles = walkDir(local_dir);
             const uploadResults: any[] = [];
             let successCount = 0;
@@ -833,21 +923,21 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
                 const r = await sftpUpload(config, localFilePath, remoteFilePath);
                 uploadResults.push({ file: f, success: true, size: r.size });
                 successCount++;
-                res.write(`data: ${JSON.stringify({ type: "text", content: "" })}\n\n`);
+                safeWrite(`data: ${JSON.stringify({ type: "text", content: "" })}\n\n`);
               } catch (err: any) {
                 uploadResults.push({ file: f, success: false, error: err.message });
                 failCount++;
               }
             }
             const summary = `Transferred ${successCount}/${allFiles.length} files${failCount > 0 ? ` (${failCount} failed)` : ""}`;
-            res.write(`data: ${JSON.stringify({ type: "command_result", command: `[sftp] ${local_dir}/ -> ${remote_dir}/`, stdout: summary, stderr: "", exitCode: failCount > 0 ? 1 : 0 })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "command_result", command: `[sftp] ${local_dir}/ -> ${remote_dir}/`, stdout: summary, stderr: "", exitCode: failCount > 0 ? 1 : 0 })}\n\n`);
             toolResult = JSON.stringify({ summary, files: uploadResults });
           } else {
             toolResult = `Unknown tool: ${toolName}`;
           }
         } catch (err: any) {
           const errMsg = `Error: ${err.message}`;
-          res.write(`data: ${JSON.stringify({ type: "command_error", error: errMsg })}\n\n`);
+          safeWrite(`data: ${JSON.stringify({ type: "command_error", error: errMsg })}\n\n`);
           toolResult = errMsg;
         }
 
@@ -861,11 +951,24 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
       }
     }
 
-    res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-    res.end();
+    safeWrite(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+    if (!res.writableEnded) res.end();
   } catch (err: any) {
-    res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`);
-    res.end();
+    // If the error originated from the close handler aborting the upstream
+    // fetch, don't try to write an SSE error event onto the closed socket
+    // — we're done either way.
+    if (clientClosed) {
+      if (!res.writableEnded) { try { res.end(); } catch {} }
+      return;
+    }
+    safeWrite(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`);
+    if (!res.writableEnded) res.end();
+  } finally {
+    // Belt-and-suspenders: if the request finished any way other than via
+    // the close handler, make sure no heartbeat or upstream controller is
+    // left dangling.
+    clearActiveHeartbeat();
+    activeUpstreamController = null;
   }
 });
 
