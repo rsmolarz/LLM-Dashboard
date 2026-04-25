@@ -340,28 +340,86 @@ function readLocalFile(filePath: string): string {
   return fs.readFileSync(fullPath, "utf-8");
 }
 
-function sftpUpload(config: SSHConfig, localFilePath: string, remoteFilePath: string): Promise<{ success: boolean; size: number }> {
+// AbortError used by both execSSH and sftpUpload when the caller's signal
+// fires. Distinct enough that the dispatch loop can recognize it and skip
+// emitting an error event onto the closed SSE socket.
+class SSHAbortError extends Error {
+  constructor(message = "Aborted") {
+    super(message);
+    this.name = "AbortError";
+  }
+}
+
+function sftpUpload(
+  config: SSHConfig,
+  localFilePath: string,
+  remoteFilePath: string,
+  signal?: AbortSignal,
+): Promise<{ success: boolean; size: number }> {
   const fullLocal = safePath(localFilePath);
   if (!fs.existsSync(fullLocal)) throw new Error(`Local file not found: ${localFilePath}`);
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new SSHAbortError("Upload aborted by client disconnect"));
+      return;
+    }
     const conn = new Client();
-    const timeout = setTimeout(() => { conn.end(); reject(new Error("Upload timed out after 60s")); }, 60000);
+    let settled = false;
+    const settle = (fn: () => void) => { if (settled) return; settled = true; fn(); };
+    const timeout = setTimeout(() => {
+      settle(() => {
+        try { conn.destroy(); } catch { /* ignore */ }
+        reject(new Error("Upload timed out after 60s"));
+      });
+    }, 60000);
+    const onAbort = () => {
+      settle(() => {
+        clearTimeout(timeout);
+        // Tear down the underlying ssh2 socket immediately so the
+        // in-flight SFTP write stops talking to the VPS instead of
+        // running to completion in the background.
+        try { conn.destroy(); } catch { /* ignore */ }
+        reject(new SSHAbortError("Upload aborted by client disconnect"));
+      });
+    };
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+    const cleanupSignal = () => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+    };
     conn
       .on("ready", () => {
         conn.sftp((err, sftp) => {
-          if (err) { clearTimeout(timeout); conn.end(); reject(err); return; }
+          if (settled) { try { conn.destroy(); } catch {} return; }
+          if (err) {
+            settle(() => {
+              clearTimeout(timeout);
+              cleanupSignal();
+              try { conn.end(); } catch {}
+              reject(err);
+            });
+            return;
+          }
           sftp.fastPut(fullLocal, remoteFilePath, (putErr: Error | undefined) => {
-            clearTimeout(timeout);
-            conn.end();
-            if (putErr) reject(putErr);
-            else {
-              const stats = fs.statSync(fullLocal);
-              resolve({ success: true, size: stats.size });
-            }
+            settle(() => {
+              clearTimeout(timeout);
+              cleanupSignal();
+              try { conn.end(); } catch {}
+              if (putErr) reject(putErr);
+              else {
+                const stats = fs.statSync(fullLocal);
+                resolve({ success: true, size: stats.size });
+              }
+            });
           });
         });
       })
-      .on("error", (err) => { clearTimeout(timeout); reject(err); })
+      .on("error", (err) => {
+        settle(() => {
+          clearTimeout(timeout);
+          cleanupSignal();
+          reject(err);
+        });
+      })
       .connect({ host: config.host, port: config.port, username: config.username, password: config.password, privateKey: config.privateKey, readyTimeout: 10000 });
   });
 }
@@ -382,23 +440,74 @@ function walkDir(dirPath: string, base: string = ""): string[] {
   return results;
 }
 
-function execSSH(config: SSHConfig, command: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+function execSSH(
+  config: SSHConfig,
+  command: string,
+  signal?: AbortSignal,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new SSHAbortError("SSH command aborted by client disconnect"));
+      return;
+    }
     const conn = new Client();
-    const timeout = setTimeout(() => { conn.end(); reject(new Error("Command timed out after 30s")); }, 30000);
+    let settled = false;
+    const settle = (fn: () => void) => { if (settled) return; settled = true; fn(); };
+    const timeout = setTimeout(() => {
+      settle(() => {
+        try { conn.destroy(); } catch { /* ignore */ }
+        reject(new Error("Command timed out after 30s"));
+      });
+    }, 30000);
+    const onAbort = () => {
+      settle(() => {
+        clearTimeout(timeout);
+        // Destroy (not end) so a long-running remote command — a 5-minute
+        // deploy, an apt-get, etc. — doesn't keep streaming output to a
+        // closed SSH channel after the user has gone away.
+        try { conn.destroy(); } catch { /* ignore */ }
+        reject(new SSHAbortError("SSH command aborted by client disconnect"));
+      });
+    };
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+    const cleanupSignal = () => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+    };
     conn
       .on("ready", () => {
         conn.exec(command, (err, stream) => {
-          if (err) { clearTimeout(timeout); conn.end(); reject(err); return; }
+          if (settled) { try { conn.destroy(); } catch {} return; }
+          if (err) {
+            settle(() => {
+              clearTimeout(timeout);
+              cleanupSignal();
+              try { conn.end(); } catch {}
+              reject(err);
+            });
+            return;
+          }
           let stdout = "";
           let stderr = "";
           stream
-            .on("close", (code: number) => { clearTimeout(timeout); conn.end(); resolve({ stdout, stderr, exitCode: code }); })
+            .on("close", (code: number) => {
+              settle(() => {
+                clearTimeout(timeout);
+                cleanupSignal();
+                try { conn.end(); } catch {}
+                resolve({ stdout, stderr, exitCode: code });
+              });
+            })
             .on("data", (d: Buffer) => { stdout += d.toString(); })
             .stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
         });
       })
-      .on("error", (err) => { clearTimeout(timeout); reject(err); })
+      .on("error", (err) => {
+        settle(() => {
+          clearTimeout(timeout);
+          cleanupSignal();
+          reject(err);
+        });
+      })
       .connect({ host: config.host, port: config.port, username: config.username, password: config.password, privateKey: config.privateKey, readyTimeout: 10000 });
   });
 }
@@ -493,6 +602,16 @@ router.post("/ssh/ai-chat", requireAuth, async (req, res): Promise<void> => {
   // handler can abort it the moment the client disconnects instead of
   // waiting for the upstream's 2–10 minute timeout.
   let activeUpstreamController: AbortController | null = null;
+  // Controller for the in-flight TOOL call (run_ssh_command / sftp /
+  // multi-step batches). Without this, a 5-minute deploy command or a
+  // recursive SFTP transfer kicked off by the AI keeps running on the
+  // VPS / pumping bytes into a closed socket long after the user's tab
+  // has gone away. The close handler aborts it, the wrapped helpers
+  // (execSSH / sftpUpload) react by destroying the underlying ssh2
+  // connection, and the per-batch loops (run_ssh_commands,
+  // transfer_directory_to_remote) check `clientClosed` between steps so
+  // they don't kick off the next command/file after the disconnect.
+  let activeToolController: AbortController | null = null;
   const clearActiveHeartbeat = () => {
     if (activeHeartbeat) {
       clearInterval(activeHeartbeat);
@@ -518,6 +637,9 @@ router.post("/ssh/ai-chat", requireAuth, async (req, res): Promise<void> => {
     clearActiveHeartbeat();
     if (activeUpstreamController) {
       try { activeUpstreamController.abort(); } catch { /* already aborted */ }
+    }
+    if (activeToolController) {
+      try { activeToolController.abort(); } catch { /* already aborted */ }
     }
   });
 
@@ -846,18 +968,30 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
         const toolArgs = typeof rawArgs === "string" ? JSON.parse(rawArgs) : (rawArgs || {});
         let toolResult = "";
 
+        // Per-tool-call AbortController so the close handler can tear
+        // down whatever ssh2 connection / sftp stream the helper has
+        // open. Cleared in the `finally` so it doesn't leak between
+        // tool calls.
+        const toolController = new AbortController();
+        activeToolController = toolController;
+        const toolSignal = toolController.signal;
+
         try {
           if (toolName === "run_ssh_command") {
             const cmd = toolArgs.command;
             safeWrite(`data: ${JSON.stringify({ type: "command", command: cmd })}\n\n`);
-            const cmdResult = await execSSH(config, cmd);
+            const cmdResult = await execSSH(config, cmd, toolSignal);
             safeWrite(`data: ${JSON.stringify({ type: "command_result", command: cmd, ...cmdResult })}\n\n`);
             toolResult = JSON.stringify(cmdResult);
           } else if (toolName === "run_ssh_commands") {
             const results: any[] = [];
             for (const cmd of toolArgs.commands) {
+              // Bail out between commands the moment the user closes
+              // the tab — otherwise a 10-step deploy keeps marching
+              // through every remaining step.
+              if (clientClosed) return;
               safeWrite(`data: ${JSON.stringify({ type: "command", command: cmd })}\n\n`);
-              const cmdResult = await execSSH(config, cmd);
+              const cmdResult = await execSSH(config, cmd, toolSignal);
               safeWrite(`data: ${JSON.stringify({ type: "command_result", command: cmd, ...cmdResult })}\n\n`);
               results.push({ command: cmd, ...cmdResult });
             }
@@ -879,7 +1013,7 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
           } else if (toolName === "read_remote_file") {
             const remotePath = toolArgs.path;
             safeWrite(`data: ${JSON.stringify({ type: "command", command: `[vps] cat ${remotePath}` })}\n\n`);
-            const result = await execSSH(config, `head -c 512000 ${JSON.stringify(remotePath)}`);
+            const result = await execSSH(config, `head -c 512000 ${JSON.stringify(remotePath)}`, toolSignal);
             if (result.exitCode !== 0) {
               safeWrite(`data: ${JSON.stringify({ type: "command_result", command: `[vps] cat ${remotePath}`, stdout: "", stderr: result.stderr || "File not found", exitCode: result.exitCode })}\n\n`);
               toolResult = `Error reading file: ${result.stderr}`;
@@ -891,13 +1025,13 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
           } else if (toolName === "list_remote_files") {
             const remotePath = toolArgs.path;
             safeWrite(`data: ${JSON.stringify({ type: "command", command: `[vps] ls -la ${remotePath}` })}\n\n`);
-            const result = await execSSH(config, `ls -la ${JSON.stringify(remotePath)} 2>&1`);
+            const result = await execSSH(config, `ls -la ${JSON.stringify(remotePath)} 2>&1`, toolSignal);
             safeWrite(`data: ${JSON.stringify({ type: "command_result", command: `[vps] ls -la ${remotePath}`, stdout: result.stdout || "(empty)", stderr: result.stderr, exitCode: result.exitCode })}\n\n`);
             toolResult = result.stdout || result.stderr;
           } else if (toolName === "transfer_file_to_remote") {
             const { local_path, remote_path } = toolArgs;
             safeWrite(`data: ${JSON.stringify({ type: "command", command: `[sftp] ${local_path} -> ${remote_path}` })}\n\n`);
-            const uploadResult = await sftpUpload(config, local_path, remote_path);
+            const uploadResult = await sftpUpload(config, local_path, remote_path, toolSignal);
             safeWrite(`data: ${JSON.stringify({ type: "command_result", command: `[sftp] ${local_path} -> ${remote_path}`, stdout: `Transferred ${uploadResult.size} bytes`, stderr: "", exitCode: 0 })}\n\n`);
             toolResult = JSON.stringify(uploadResult);
           } else if (toolName === "transfer_directory_to_remote") {
@@ -907,24 +1041,31 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
             const uploadResults: any[] = [];
             let successCount = 0;
             let failCount = 0;
-            await execSSH(config, `mkdir -p ${remote_dir}`);
+            await execSSH(config, `mkdir -p ${remote_dir}`, toolSignal);
             const dirs = new Set<string>();
             for (const f of allFiles) {
+              if (clientClosed) return;
               const dir = path.dirname(f);
               if (dir !== "." && !dirs.has(dir)) {
                 dirs.add(dir);
-                await execSSH(config, `mkdir -p ${remote_dir}/${dir}`);
+                await execSSH(config, `mkdir -p ${remote_dir}/${dir}`, toolSignal);
               }
             }
             for (const f of allFiles) {
+              // Skip the rest of the recursion the moment the user
+              // closes the tab — keep this check between files so
+              // an interrupted upload doesn't continue chewing through
+              // a 500-file directory.
+              if (clientClosed) return;
               const localFilePath = `${local_dir}/${f}`;
               const remoteFilePath = `${remote_dir}/${f}`;
               try {
-                const r = await sftpUpload(config, localFilePath, remoteFilePath);
+                const r = await sftpUpload(config, localFilePath, remoteFilePath, toolSignal);
                 uploadResults.push({ file: f, success: true, size: r.size });
                 successCount++;
                 safeWrite(`data: ${JSON.stringify({ type: "text", content: "" })}\n\n`);
               } catch (err: any) {
+                if (clientClosed || toolSignal.aborted) return;
                 uploadResults.push({ file: f, success: false, error: err.message });
                 failCount++;
               }
@@ -936,9 +1077,20 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
             toolResult = `Unknown tool: ${toolName}`;
           }
         } catch (err: any) {
+          // If the client disconnected while the tool was running, the
+          // helper rejects with our SSHAbortError — drop the request
+          // entirely instead of trying to emit an error event onto the
+          // closed SSE socket.
+          if (clientClosed || toolSignal.aborted || err?.name === "AbortError") {
+            return;
+          }
           const errMsg = `Error: ${err.message}`;
           safeWrite(`data: ${JSON.stringify({ type: "command_error", error: errMsg })}\n\n`);
           toolResult = errMsg;
+        } finally {
+          if (activeToolController === toolController) {
+            activeToolController = null;
+          }
         }
 
         if (useOllama) {
@@ -965,10 +1117,11 @@ IMPORTANT: Always provide thorough, comprehensive responses. Be proactive — ta
     if (!res.writableEnded) res.end();
   } finally {
     // Belt-and-suspenders: if the request finished any way other than via
-    // the close handler, make sure no heartbeat or upstream controller is
-    // left dangling.
+    // the close handler, make sure no heartbeat or upstream / tool
+    // controller is left dangling.
     clearActiveHeartbeat();
     activeUpstreamController = null;
+    activeToolController = null;
   }
 });
 
