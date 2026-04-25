@@ -427,6 +427,82 @@ router.get("/file-content", async (req, res): Promise<void> => {
   }
 });
 
+// Streams the raw file as a download attachment, bypassing the 500KB
+// preview cap that /file-content enforces. This is what the
+// "Download instead" CTA on the FILE_TOO_LARGE error card calls so
+// users can still get at large logs/bundles without dropping into the
+// shell. VPS-origin projects are not supported here yet because we
+// don't have a streaming SSH path.
+router.get("/file-download", async (req, res): Promise<void> => {
+  const filePath = req.query.path as string;
+  const projectRaw = req.query.project as string | undefined;
+  if (!filePath) {
+    res.status(400).json({ error: "path is required", code: "MISSING_PATH" });
+    return;
+  }
+  const sendStream = (absPath: string, downloadName: string) => {
+    const stat = fs.statSync(absPath);
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Length", String(stat.size));
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${downloadName.replace(/[^A-Za-z0-9._-]/g, "_")}"`,
+    );
+    fs.createReadStream(absPath).pipe(res);
+  };
+  const baseName = path.basename(filePath) || "download";
+  if (projectRaw) {
+    let project: any;
+    try {
+      project = JSON.parse(projectRaw);
+    } catch {
+      res.status(400).json({ error: "Invalid project descriptor JSON", code: "INVALID_PROJECT" });
+      return;
+    }
+    if (project?.origin === "vps" && !(req as any).user) {
+      res.status(401).json({ error: "Authentication required for VPS-origin project access", code: "AUTH_REQUIRED" });
+      return;
+    }
+    try {
+      const resolved = await projectCtx.resolveDescriptor(project);
+      if (!resolved) {
+        res.status(400).json({ error: "could not resolve project", code: "PROJECT_UNRESOLVED" });
+        return;
+      }
+      if (resolved.origin === "replit" && !resolved.localPath) {
+        res.status(409).json({
+          error: "Replit project not pulled yet — open the Replit Workbench and click 'Pull files for editing' (sign-in required).",
+          code: "PROJECT_NOT_PULLED",
+        });
+        return;
+      }
+      if (!resolved.localPath) {
+        res.status(409).json({ error: "Download is only supported for projects with a local copy.", code: "PROJECT_NOT_PULLED" });
+        return;
+      }
+      const full = path.resolve(resolved.localPath, filePath);
+      const rel = path.relative(resolved.localPath, full);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) {
+        res.status(400).json({ error: "Path traversal not allowed", code: "PATH_TRAVERSAL" });
+        return;
+      }
+      sendStream(full, baseName);
+      return;
+    } catch (err: any) {
+      const c = classifyWorkbenchError(err);
+      res.status(c.status).json({ error: c.message, code: c.code });
+      return;
+    }
+  }
+  try {
+    const fullPath = safePath(filePath);
+    sendStream(fullPath, baseName);
+  } catch (err: any) {
+    const c = classifyWorkbenchError(err);
+    res.status(c.status).json({ error: c.message, code: c.code });
+  }
+});
+
 router.get("/git-status", async (_req, res): Promise<void> => {
   try {
     let currentBranch = "";

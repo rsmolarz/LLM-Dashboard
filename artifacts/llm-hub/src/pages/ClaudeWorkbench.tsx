@@ -19,6 +19,7 @@ import { FolderPlus, Upload, Paperclip } from "lucide-react";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { useSelectedProject, projectDescriptorFromSidebar } from "@/hooks/useSelectedProject";
 import { ProjectContextHeader } from "@/components/workbench/ProjectContextHeader";
+import { WorkbenchErrorView } from "@/components/workbench/WorkbenchErrorView";
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return "0 B";
@@ -123,11 +124,17 @@ function FileExplorerPanel() {
     queryFn: async () => { const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}${projectQuery}`, { credentials: "include" }); return res.json(); },
   });
 
-  const { data: fileContent, isLoading: contentLoading } = useQuery<any>({
+  const { data: fileContent, isLoading: contentLoading, refetch: refetchContent } = useQuery<any>({
     queryKey: ["cw-file-content", selectedFile, projectKey],
     queryFn: async () => { const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}${projectQuery}`, { credentials: "include" }); return res.json(); },
     enabled: !!selectedFile,
   });
+
+  useEffect(() => {
+    if (fileContent?.code === "NOT_FOUND" && selectedFile) {
+      refetch();
+    }
+  }, [fileContent?.code, selectedFile, refetch]);
 
   const items: FileItem[] = data?.items || [];
   const breadcrumbs = currentPath === "." ? ["root"] : ["root", ...currentPath.split("/").filter(Boolean)];
@@ -163,6 +170,13 @@ function FileExplorerPanel() {
               </button>
             )}
             {isLoading ? <div className="p-2 space-y-1">{[1,2,3,4].map(i => <div key={i} className="h-5 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
+              data?.error || data?.code ? (
+                <WorkbenchErrorView
+                  payload={{ error: data.error, code: data.code, size: data.size }}
+                  context="files"
+                  onRetry={() => refetch()}
+                />
+              ) :
               items.map(item => (
                 <button key={item.path} className={cn("w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5", selectedFile === item.path && "bg-[#313244]")}
                   onClick={() => item.type === "directory" ? (setCurrentPath(item.path), setSelectedFile(null)) : setSelectedFile(item.path)}>
@@ -175,7 +189,15 @@ function FileExplorerPanel() {
         </div>
         <div className="flex-1 overflow-y-auto">
           {selectedFile ? (contentLoading ? <div className="p-4"><Loader2 className="h-4 w-4 animate-spin text-[#6c7086]" /></div> :
-            fileContent?.error ? <div className="p-4 text-sm text-[#f38ba8]">{fileContent.error}</div> :
+            fileContent?.error || fileContent?.code ? (
+              <WorkbenchErrorView
+                payload={{ error: fileContent.error, code: fileContent.code, size: fileContent.size }}
+                context="content"
+                onRetry={() => refetchContent()}
+                onClear={() => setSelectedFile(null)}
+                downloadHref={selectedFile ? `/api/workbench/file-download?path=${encodeURIComponent(selectedFile)}${projectQuery}` : undefined}
+              />
+            ) :
             <div className="relative">
               <div className="flex items-center justify-between px-3 py-1 bg-[#181825] border-b border-[#313244] sticky top-0">
                 <span className="text-xs font-mono text-[#6c7086]">{selectedFile}</span>

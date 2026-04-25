@@ -18,6 +18,7 @@ import { FolderPlus, Upload, Paperclip } from "lucide-react";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { useSelectedProject, projectDescriptorFromSidebar } from "@/hooks/useSelectedProject";
 import { ProjectContextHeader } from "@/components/workbench/ProjectContextHeader";
+import { WorkbenchErrorView } from "@/components/workbench/WorkbenchErrorView";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -160,7 +161,7 @@ function FileExplorerPanel() {
     },
   });
 
-  const { data: fileContent, isLoading: contentLoading } = useQuery<any>({
+  const { data: fileContent, isLoading: contentLoading, refetch: refetchContent } = useQuery<any>({
     queryKey: ["workbench-file-content", selectedFile, projectKey],
     queryFn: async () => {
       const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}${projectQuery}`, { credentials: "include" });
@@ -168,6 +169,12 @@ function FileExplorerPanel() {
     },
     enabled: !!selectedFile,
   });
+
+  useEffect(() => {
+    if (fileContent?.code === "NOT_FOUND" && selectedFile) {
+      refetch();
+    }
+  }, [fileContent?.code, selectedFile, refetch]);
 
   const items: FileItem[] = data?.items || [];
   const breadcrumbs = currentPath === "." ? ["root"] : ["root", ...currentPath.split("/").filter(Boolean)];
@@ -233,6 +240,12 @@ function FileExplorerPanel() {
             )}
             {isLoading ? (
               <div className="p-2 space-y-1">{[1,2,3,4].map(i => <div key={i} className="h-5 w-full bg-[#313244] rounded animate-pulse" />)}</div>
+            ) : data?.error || data?.code ? (
+              <WorkbenchErrorView
+                payload={{ error: data.error, code: data.code, size: data.size }}
+                context="files"
+                onRetry={() => refetch()}
+              />
             ) : (
               items.map(item => (
                 <button
@@ -255,8 +268,14 @@ function FileExplorerPanel() {
           {selectedFile ? (
             contentLoading ? (
               <div className="p-4 space-y-2">{[1,2,3].map(i => <div key={i} className="h-4 bg-[#313244] rounded animate-pulse" style={{ width: `${70 - i * 15}%` }} />)}</div>
-            ) : fileContent?.error ? (
-              <div className="p-4 text-sm text-red-400">{fileContent.error}</div>
+            ) : fileContent?.error || fileContent?.code ? (
+              <WorkbenchErrorView
+                payload={{ error: fileContent.error, code: fileContent.code, size: fileContent.size }}
+                context="content"
+                onRetry={() => refetchContent()}
+                onClear={() => setSelectedFile(null)}
+                downloadHref={selectedFile ? `/api/workbench/file-download?path=${encodeURIComponent(selectedFile)}${projectQuery}` : undefined}
+              />
             ) : (
               <div className="relative">
                 <div className="flex items-center justify-between px-3 py-1 bg-[#313244] border-b border-[#313244] sticky top-0">
