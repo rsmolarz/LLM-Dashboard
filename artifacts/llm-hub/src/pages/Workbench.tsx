@@ -763,8 +763,11 @@ function CodeChatPanel() {
     return out;
   }, [fileEdits]);
 
+  const [fileUndoAction, setFileUndoAction] = useState<"undo" | "revert" | null>(null);
+
   const handleUndoLastForFile = useCallback(async (filePath: string) => {
     setFileUndoPending(filePath);
+    setFileUndoAction("undo");
     setFileUndoError(null);
     let selectedProject: any = null;
     try {
@@ -795,6 +798,7 @@ function CodeChatPanel() {
       setFileUndoError({ path: filePath, message: err.message || "Undo failed" });
     } finally {
       setFileUndoPending(null);
+      setFileUndoAction(null);
     }
   }, [latestEditIdByPath]);
 
@@ -847,6 +851,40 @@ function CodeChatPanel() {
       setFileRedoPending(null);
     }
   }, [topRedoEditIdByPath]);
+
+  const handleRevertAllForFile = useCallback(async (filePath: string) => {
+    setFileUndoPending(filePath);
+    setFileUndoAction("revert");
+    setFileUndoError(null);
+    let selectedProject: any = null;
+    try {
+      const raw = localStorage.getItem("workbench-selected-project");
+      if (raw) selectedProject = JSON.parse(raw);
+    } catch {}
+    try {
+      const res = await fetch("/api/workbench/revert-all-file-edits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ filePath, project: selectedProject || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const undoneIds: string[] = Array.isArray(data.undoneEditIds) ? data.undoneEditIds : [];
+      if (undoneIds.length > 0) {
+        const undoneSet = new Set(undoneIds);
+        setFileEdits(prev => prev.map(e => (e.editId && undoneSet.has(e.editId)) ? { ...e, undone: true, undoing: false } : e));
+      } else {
+        // Fallback: mark every visible edit for this file as undone.
+        setFileEdits(prev => prev.map(e => e.path === filePath ? { ...e, undone: true, undoing: false } : e));
+      }
+    } catch (err: any) {
+      setFileUndoError({ path: filePath, message: err.message || "Revert failed" });
+    } finally {
+      setFileUndoPending(null);
+      setFileUndoAction(null);
+    }
+  }, []);
 
   const handleStop = useCallback(() => {
     if (abortController) {
@@ -1028,7 +1066,9 @@ function CodeChatPanel() {
                 edits={fileEdits}
                 onUndoLast={handleUndoLastForFile}
                 onRedoLast={handleRedoLastForFile}
+                onRevertAll={handleRevertAllForFile}
                 pendingPath={fileUndoPending}
+                pendingAction={fileUndoAction}
                 errorPath={fileUndoError?.path}
                 errorMessage={fileUndoError?.message}
                 redoPendingPath={fileRedoPending}

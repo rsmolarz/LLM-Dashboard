@@ -286,8 +286,11 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
     return out;
   }, [fileEdits]);
 
+  const [fileUndoAction, setFileUndoAction] = useState<"undo" | "revert" | null>(null);
+
   const handleUndoLastForFile = useCallback(async (filePath: string) => {
     setFileUndoPending(filePath);
+    setFileUndoAction("undo");
     setFileUndoError(null);
     try {
       const res = await fetch("/api/workbench/undo-last-file-edit", {
@@ -312,6 +315,7 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
       setFileUndoError({ path: filePath, message: err.message || "Undo failed" });
     } finally {
       setFileUndoPending(null);
+      setFileUndoAction(null);
     }
   }, [project, latestEditIdByPath]);
 
@@ -359,6 +363,34 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
       setFileRedoPending(null);
     }
   }, [project, topRedoEditIdByPath]);
+
+  const handleRevertAllForFile = useCallback(async (filePath: string) => {
+    setFileUndoPending(filePath);
+    setFileUndoAction("revert");
+    setFileUndoError(null);
+    try {
+      const res = await fetch("/api/workbench/revert-all-file-edits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ filePath, project }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const undoneIds: string[] = Array.isArray(data.undoneEditIds) ? data.undoneEditIds : [];
+      if (undoneIds.length > 0) {
+        const undoneSet = new Set(undoneIds);
+        setFileEdits(prev => prev.map(e => (e.editId && undoneSet.has(e.editId)) ? { ...e, undone: true, undoing: false } : e));
+      } else {
+        setFileEdits(prev => prev.map(e => e.path === filePath ? { ...e, undone: true, undoing: false } : e));
+      }
+    } catch (err: any) {
+      setFileUndoError({ path: filePath, message: err.message || "Revert failed" });
+    } finally {
+      setFileUndoPending(null);
+      setFileUndoAction(null);
+    }
+  }, [project]);
 
   const refreshInfo = useCallback(async () => {
     try {
@@ -808,10 +840,12 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
                   edits={fileEdits}
                   onUndoLast={handleUndoLastForFile}
                   onRedoLast={handleRedoLastForFile}
+                  onRevertAll={handleRevertAllForFile}
                   redoPendingPath={fileRedoPending}
                   redoErrorPath={fileRedoError?.path}
                   redoErrorMessage={fileRedoError?.message}
                   pendingPath={fileUndoPending}
+                  pendingAction={fileUndoAction}
                   errorPath={fileUndoError?.path}
                   errorMessage={fileUndoError?.message}
                 />

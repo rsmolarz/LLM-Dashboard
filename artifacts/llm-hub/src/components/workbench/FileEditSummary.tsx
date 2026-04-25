@@ -1,12 +1,14 @@
-import { useMemo } from "react";
-import { FilePlus, FileText, Loader2, RotateCcw, RotateCw } from "lucide-react";
+import { useMemo, useState } from "react";
+import { FilePlus, FileText, Loader2, RotateCcw, RotateCw, Trash2 } from "lucide-react";
 import type { FileEdit } from "./FileEditCard";
 
 interface Props {
   edits: FileEdit[];
   onUndoLast: (path: string) => void;
   onRedoLast: (path: string) => void;
+  onRevertAll: (path: string) => void;
   pendingPath?: string | null;
+  pendingAction?: "undo" | "revert" | null;
   errorPath?: string | null;
   errorMessage?: string | null;
   redoPendingPath?: string | null;
@@ -28,13 +30,17 @@ export function FileEditSummary({
   edits,
   onUndoLast,
   onRedoLast,
+  onRevertAll,
   pendingPath,
+  pendingAction,
   errorPath,
   errorMessage,
   redoPendingPath,
   redoErrorPath,
   redoErrorMessage,
 }: Props) {
+  const [confirmingPath, setConfirmingPath] = useState<string | null>(null);
+
   const groups = useMemo<FileGroup[]>(() => {
     const map = new Map<string, FileGroup>();
     const order: string[] = [];
@@ -82,9 +88,16 @@ export function FileEditSummary({
         {groups.map(g => {
           const isPending = pendingPath === g.path;
           const isRedoPending = redoPendingPath === g.path;
+          const isUndoPending = isPending && pendingAction === "undo";
+          const isRevertPending = isPending && pendingAction === "revert";
           const showError = errorPath === g.path && !!errorMessage;
           const showRedoError = redoErrorPath === g.path && !!redoErrorMessage;
           const fullyUndone = g.active === 0;
+          const isConfirming = confirmingPath === g.path;
+          // "Revert all" only makes sense when the per-file stack still has
+          // entries to wipe — i.e. there is at least one active (non-undone)
+          // edit. The backend will key off the same stack.
+          const canRevertAll = !fullyUndone && g.active >= 1;
           return (
             <li key={g.path} className="px-2 py-1.5">
               <div className="flex items-center gap-2">
@@ -119,27 +132,71 @@ export function FileEditSummary({
                 )}
                 {fullyUndone && !g.hasRedoableTop ? (
                   <span className="text-[10px] text-[#6c7086] italic">All undone</span>
-                ) : fullyUndone ? null : g.hasUndoableLatest ? (
-                  <button
-                    onClick={() => onUndoLast(g.path)}
-                    disabled={isPending}
-                    className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded bg-[#45475a] hover:bg-[#585b70] text-[#cdd6f4] disabled:opacity-50"
-                    title={`Undo the most recent AI edit to ${g.path}`}
-                  >
-                    {isPending ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <RotateCcw className="h-3 w-3" />
-                    )}
-                    Undo last edit
-                  </button>
+                ) : fullyUndone ? null : isConfirming ? (
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-[#f9e2af] font-mono">
+                      Revert {g.active} edit{g.active === 1 ? "" : "s"}?
+                    </span>
+                    <button
+                      onClick={() => {
+                        setConfirmingPath(null);
+                        onRevertAll(g.path);
+                      }}
+                      disabled={isPending}
+                      className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded bg-[#f38ba8] hover:bg-[#eba0ac] text-[#11111b] font-medium disabled:opacity-50"
+                      title={`Restore ${g.path} to its state before any AI edits`}
+                    >
+                      {isRevertPending ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3 w-3" />
+                      )}
+                      Confirm
+                    </button>
+                    <button
+                      onClick={() => setConfirmingPath(null)}
+                      disabled={isPending}
+                      className="px-2 py-0.5 text-[10px] rounded bg-[#313244] hover:bg-[#45475a] text-[#cdd6f4] disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 ) : (
-                  <span
-                    className="text-[10px] text-[#a6adc8] italic"
-                    title={g.latestUndoSkipReason}
-                  >
-                    Undo unavailable
-                  </span>
+                  <div className="flex items-center gap-1">
+                    {g.hasUndoableLatest ? (
+                      <button
+                        onClick={() => onUndoLast(g.path)}
+                        disabled={isPending}
+                        className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded bg-[#45475a] hover:bg-[#585b70] text-[#cdd6f4] disabled:opacity-50"
+                        title={`Undo the most recent AI edit to ${g.path}`}
+                      >
+                        {isUndoPending ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <RotateCcw className="h-3 w-3" />
+                        )}
+                        Undo last edit
+                      </button>
+                    ) : (
+                      <span
+                        className="text-[10px] text-[#a6adc8] italic"
+                        title={g.latestUndoSkipReason}
+                      >
+                        Undo unavailable
+                      </span>
+                    )}
+                    {canRevertAll && (
+                      <button
+                        onClick={() => setConfirmingPath(g.path)}
+                        disabled={isPending}
+                        className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded border border-[#f38ba8]/40 text-[#f38ba8] hover:bg-[#f38ba8]/10 disabled:opacity-50"
+                        title={`Restore ${g.path} to its state before any AI edits in this session`}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Revert all
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
               {showError && (

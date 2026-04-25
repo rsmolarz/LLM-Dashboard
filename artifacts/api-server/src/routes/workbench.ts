@@ -922,6 +922,64 @@ router.post("/undo-edit", requireAuth, async (req, res): Promise<void> => {
   }
 });
 
+// Revert every AI edit to a single file in one shot. We restore the file to
+// the `previousContent` recorded at the bottom of the per-file stack — that
+// is, the snapshot from before the AI's first touch in this session — and
+// then drop the entire stack. If the oldest entry was a file creation, the
+// file is deleted. This is the "Revert all AI edits to this file" button.
+router.post("/revert-all-file-edits", requireAuth, async (req, res): Promise<void> => {
+  const { filePath, project } = req.body || {};
+  if (!filePath || typeof filePath !== "string") {
+    res.status(400).json({ error: "filePath is required" });
+    return;
+  }
+  const userId = String((req as any).user?.id || (req as any).user?.sub || "anon");
+  let resolved: projectCtx.ResolvedProject | null = null;
+  try {
+    resolved = project ? await projectCtx.resolveDescriptor(project) : null;
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "could not resolve project" });
+    return;
+  }
+  if (!resolved) {
+    res.status(400).json({ error: "could not resolve project" });
+    return;
+  }
+  pruneUndoStore();
+  const stackKey = fileStackKey(userId, resolved, filePath);
+  const stack = fileUndoStacks.get(stackKey);
+  if (!stack || stack.length === 0) {
+    res.status(404).json({ error: "No AI edits to revert for this file" });
+    return;
+  }
+  const oldest = stack[0];
+  const undoneEditIds = stack.map(e => e.editId);
+  try {
+    if (oldest.isNew) {
+      await projectCtx.deleteFile(oldest.resolved, oldest.filePath);
+    } else {
+      await projectCtx.writeFile(oldest.resolved, oldest.filePath, oldest.previousContent);
+    }
+    // Mark every entry used and drop the whole stack only after the write
+    // succeeds, so a failure leaves the existing per-edit undos intact.
+    for (const e of stack) {
+      e.used = true;
+      editsById.delete(e.editId);
+    }
+    fileUndoStacks.delete(stackKey);
+    res.json({
+      ok: true,
+      path: oldest.filePath,
+      restoredBytes: Buffer.byteLength(oldest.previousContent, "utf-8"),
+      deleted: oldest.isNew,
+      revertedCount: undoneEditIds.length,
+      undoneEditIds,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Revert failed" });
+  }
+});
+
 // Pop the most recent unused edit for a given file. The frontend "Undo last
 // edit to this file" affordance calls this so it works even when the user
 // no longer has the latest editId in view (e.g. after a chat refresh).
