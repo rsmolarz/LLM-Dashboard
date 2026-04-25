@@ -21,6 +21,17 @@ import { useSelectedProject, projectDescriptorFromSidebar } from "@/hooks/useSel
 import { ProjectContextHeader } from "@/components/workbench/ProjectContextHeader";
 import { WorkbenchErrorView } from "@/components/workbench/WorkbenchErrorView";
 import { PanelLoadError, PanelQueryError, asPanelQueryError } from "@/components/workbench/PanelLoadError";
+import {
+  PrivacyBadge,
+  ScratchModeBanner,
+  SandboxBlockedNotice,
+  SandboxContainedNotice,
+  parseSandboxContainment,
+  type EntryPrivacy,
+  type ShellScope,
+  type FileScope,
+  type SandboxContainmentNotice,
+} from "@/components/workbench/SandboxNotices";
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return "0 B";
@@ -36,11 +47,6 @@ function formatUptime(seconds: number) {
   return `${h}h ${m}m`;
 }
 
-type SandboxContainmentNotice = {
-  reason: "readonly" | "permission";
-  path: string;
-  message: string;
-};
 type ShellEntry = {
   command: string;
   stdout: string;
@@ -48,46 +54,37 @@ type ShellEntry = {
   exitCode: number;
   timestamp: number;
   sandboxContained?: SandboxContainmentNotice;
+  // Logical sandbox refusal — surfaces when the server's per-user
+  // scratch resolver refuses a write through a host symlink or other
+  // path-containment escape, and returns a user-facing reason
+  // instead of opaque stderr.
+  sandboxBlocked?: string;
+  scope?: ShellScope;
 };
-type FileItem = { name: string; type: "file" | "directory"; path: string; size?: number };
+type FileItem = {
+  name: string;
+  type: "file" | "directory";
+  path: string;
+  size?: number;
+  // Present only when the server resolves a per-user scratch dir
+  // (authenticated, host mode). "shared" = host-workspace symlink
+  // mirrored into scratch (read-only here; writes are sandboxed).
+  // "private" = a file/dir the user created in their scratch.
+  privacy?: EntryPrivacy;
+};
 type ChatMessage = { role: "user" | "assistant"; content: string; timestamp: number; streaming?: boolean; model?: string; tokens?: number; errorCode?: string };
 
 type ShellMutationResult =
-  | { ok: true; stdout: string; stderr: string; exitCode: number; sandboxContained?: SandboxContainmentNotice }
+  | {
+      ok: true;
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      sandboxContained?: SandboxContainmentNotice;
+      sandboxBlocked?: string;
+      scope?: ShellScope;
+    }
   | { ok: false; error: { message: string; code: string } };
-
-function parseSandboxContainment(raw: unknown): SandboxContainmentNotice | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const r = raw as Record<string, unknown>;
-  const reason = r.reason === "readonly" || r.reason === "permission" ? r.reason : null;
-  const path = typeof r.path === "string" ? r.path : null;
-  const message = typeof r.message === "string" ? r.message : null;
-  if (!reason || !path || !message) return undefined;
-  return { reason, path, message };
-}
-
-/**
- * Inline notice surfaced under a shell entry whenever the API reports
- * that the OS-level sandbox refused a write that escaped the project
- * boundary. The raw stderr is still shown above this notice for users
- * who want the technical detail; the notice itself uses non-technical
- * wording so the sandbox posture is observable rather than mysterious.
- */
-function SandboxContainedNotice({ notice }: { notice: SandboxContainmentNotice }) {
-  return (
-    <div className="ml-3 mt-1 rounded border border-[#f9e2af]/30 bg-[#f9e2af]/5 px-2 py-1.5 flex items-start gap-2">
-      <Shield className="h-3 w-3 text-[#f9e2af] mt-0.5 shrink-0" />
-      <div className="min-w-0 flex-1">
-        <div className="text-[11px] text-[#f9e2af] font-medium">
-          Sandbox kept this command inside the project
-        </div>
-        <div className="text-[11px] text-[#cdd6f4] mt-0.5 leading-relaxed break-words">
-          {notice.message}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function ShellPanel() {
   const [input, setInput] = useState("");
@@ -155,6 +152,8 @@ function ShellPanel() {
         ...(parseSandboxContainment(body.sandboxContained)
           ? { sandboxContained: parseSandboxContainment(body.sandboxContained) }
           : {}),
+        sandboxBlocked: typeof body.sandboxBlocked === "string" ? body.sandboxBlocked : undefined,
+        scope: (body.scope && typeof body.scope === "object") ? (body.scope as ShellScope) : undefined,
       };
     },
     onSuccess: (data, command) => {
@@ -176,6 +175,8 @@ function ShellPanel() {
         exitCode: data.exitCode,
         timestamp: Date.now(),
         ...(data.sandboxContained ? { sandboxContained: data.sandboxContained } : {}),
+        sandboxBlocked: data.sandboxBlocked,
+        scope: data.scope,
       }]);
       setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
     },
@@ -280,7 +281,15 @@ function ShellPanel() {
             <div key={i} className="mb-2">
               <div className="flex items-center gap-1"><span className="text-green-400">$</span><span className="text-[#cdd6f4]">{entry.command}</span></div>
               {entry.stdout && <pre className="text-[#a6adc8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stdout}</pre>}
-              {entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>}
+              {entry.sandboxBlocked ? (
+                <SandboxBlockedNotice
+                  reason={entry.sandboxBlocked}
+                  scope={entry.scope}
+                  hasProject={Boolean(project)}
+                />
+              ) : (
+                entry.stderr && <pre className="text-[#f38ba8] whitespace-pre-wrap break-all ml-3 mt-0.5 select-text cursor-text">{entry.stderr}</pre>
+              )}
               {entry.sandboxContained && <SandboxContainedNotice notice={entry.sandboxContained} />}
             </div>
           ))}
@@ -357,6 +366,7 @@ function FileExplorerPanel() {
   }, [fileContent?.code, selectedFile, refetch]);
 
   const items: FileItem[] = data?.items || [];
+  const fileScope: FileScope = (data?.scope && typeof data.scope === "object") ? data.scope : {};
   const breadcrumbs = currentPath === "." ? ["root"] : ["root", ...currentPath.split("/").filter(Boolean)];
 
   const getFileIcon = (name: string) => {
@@ -383,6 +393,7 @@ function FileExplorerPanel() {
       <div className="flex flex-1 min-h-0">
         <div className="w-1/3 border-r border-[#313244] overflow-y-auto">
           <div className="p-1">
+            <ScratchModeBanner scope={fileScope} />
             {currentPath !== "." && (
               <button className="w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5"
                 onClick={() => { const parts = currentPath.split("/"); parts.pop(); setCurrentPath(parts.length ? parts.join("/") : "."); setSelectedFile(null); }}>
@@ -402,6 +413,7 @@ function FileExplorerPanel() {
                   onClick={() => item.type === "directory" ? (setCurrentPath(item.path), setSelectedFile(null)) : setSelectedFile(item.path)}>
                   {item.type === "directory" ? <Folder className="h-3.5 w-3.5 text-[#fab387]" /> : getFileIcon(item.name)}
                   <span className="truncate flex-1 text-[#cdd6f4]">{item.name}</span>
+                  <PrivacyBadge privacy={item.privacy} />
                   {item.size !== undefined && <span className="text-[10px] text-[#585b70]">{formatBytes(item.size)}</span>}
                 </button>
               ))}
@@ -420,7 +432,10 @@ function FileExplorerPanel() {
             ) :
             <div className="relative">
               <div className="flex items-center justify-between px-3 py-1 bg-[#181825] border-b border-[#313244] sticky top-0">
-                <span className="text-xs font-mono text-[#6c7086]">{selectedFile}</span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-xs font-mono text-[#6c7086] truncate">{selectedFile}</span>
+                  <PrivacyBadge privacy={fileContent?.scope?.privacy as EntryPrivacy | undefined} />
+                </div>
                 <button className="p-0.5 rounded hover:bg-[#313244]" onClick={() => navigator.clipboard.writeText(fileContent?.content || "")}>
                   <Copy className="h-3 w-3 text-[#6c7086]" />
                 </button>
