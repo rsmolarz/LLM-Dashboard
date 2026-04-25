@@ -1,6 +1,7 @@
 import app from "./app";
 import { seedModelProfiles } from "./seed-profiles";
 import { sandboxHelpers } from "./lib/command-sandbox";
+import { notifySandboxPosture } from "./routes/health-check";
 
 const rawPort = process.env["PORT"];
 
@@ -47,6 +48,12 @@ function logSandboxPosture(): void {
 app.listen(port, async () => {
   console.log(`Server listening on port ${port}`);
   logSandboxPosture();
+  // Push an alert (in production only) if the kernel-jail helper is missing.
+  // This rides the existing health-check SSE channel so the Monitor page
+  // and any other subscriber learn about the regression without having to
+  // manually re-load the sandbox endpoint. Idempotent: the function uses
+  // a once-per-process latch so it's safe to call again from health checks.
+  notifySandboxPosture();
   try {
     await seedModelProfiles();
   } catch (e) {
