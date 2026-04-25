@@ -625,6 +625,115 @@ test("POST /api/code-chat surfaces a mid-reply upstream failure as an SSE error 
   );
 });
 
+test("POST /api/code-chat surfaces a mid-reply continuation with no response body as an SSE error event under HTTP 200", async () => {
+  // Sibling of the previous mid-reply test: this time the SECOND upstream
+  // call returns ok=true but a null body, so `response.body?.getReader()`
+  // resolves to undefined and the route hits the post-stream branch of
+  // the `!reader` check (workbench.ts ~line 909). Because streamStarted
+  // is already true by that point we cannot change the HTTP status to
+  // 502; the route MUST emit a `data: {"type":"error", content: "No
+  // response body"}` SSE event and call res.end(). Without this test, a
+  // refactor that drops that emit would silently freeze the user's reply
+  // mid-sentence with no indication anything went wrong.
+  let callCount = 0;
+  await withAnthropicStub(
+    () => {
+      callCount++;
+      if (callCount === 1) {
+        // Same first-call setup as the sibling test: stream a small text
+        // chunk and end with stop_reason=max_tokens to force the agent
+        // loop into a continuation iteration once the SSE response to
+        // the client has been flushed.
+        const encoder = new TextEncoder();
+        const events = [
+          'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+          'data: {"type":"content_block_delta","index":0,"delta":{"text":"partial reply"}}\n\n',
+          'data: {"type":"content_block_stop","index":0}\n\n',
+          'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}\n\n',
+        ];
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const ev of events) controller.enqueue(encoder.encode(ev));
+            controller.close();
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      // Second upstream call: ok=true but body is null. This is the
+      // specific shape that makes `response.body?.getReader()` undefined
+      // inside the agent loop, exercising the post-stream `!reader`
+      // branch.
+      return new Response(null, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    },
+    async () => {
+      // Raw fetch so we can read the streaming body and assert the
+      // server actually called res.end() — if the route forgot to end
+      // the stream after the no-body continuation, .text() would hang
+      // until the test runner times out.
+      const res = await fetch(`${serverUrl}/api/code-chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "hello" }),
+      });
+
+      assert.equal(
+        res.status,
+        200,
+        `expected HTTP 200 (SSE already flushed), got ${res.status}`,
+      );
+      assert.match(
+        res.headers.get("content-type") || "",
+        /text\/event-stream/,
+        "expected SSE content-type once the stream has started",
+      );
+
+      const body = await res.text();
+
+      // The first upstream call's text delta should have made it through
+      // before the no-body continuation — sanity check that we really
+      // exercised the "stream already started" branch.
+      assert.match(
+        body,
+        /"type":"chunk"[^\n]*partial reply/,
+        `expected the pre-failure chunk to be in the body, got:\n${body}`,
+      );
+
+      // The no-body continuation MUST surface as a `data: {"type":"error",
+      // content: "No response body"}` SSE event. A regression that drops
+      // it would leave the user staring at a half-finished reply with
+      // no indication.
+      const errLine = body
+        .split("\n")
+        .find((l) => l.startsWith("data: ") && /"type":"error"/.test(l));
+      assert.ok(
+        errLine,
+        `expected an SSE error event in the body, got:\n${body}`,
+      );
+      assert.match(
+        errLine!,
+        /"content":"No response body"/,
+        `expected the SSE error event to carry "No response body", got: ${errLine}`,
+      );
+
+      // Two upstream calls total: the initial stream + the no-body
+      // continuation. If this drops to 1 the test no longer exercises
+      // the post-stream `!reader` branch and the assertions above are
+      // meaningless.
+      assert.equal(
+        callCount,
+        2,
+        `expected exactly 2 upstream calls (initial + continuation), got ${callCount}`,
+      );
+    },
+  );
+});
+
 test("/api/code-chat keeps three AI_REQUEST_FAILED emit sites with the documented response shape", () => {
   // The agent-loop fallthrough at line ~1129 is defensive: in the current
   // structure the loop always either returns early (branches above) or
