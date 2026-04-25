@@ -102,6 +102,19 @@ router.post("/chat", async (req, res): Promise<void> => {
     return;
   }
 
+  // Abort upstream fetches when the client disconnects.
+  let clientClosed = false;
+  let activeUpstreamReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  const upstreamController = new AbortController();
+  res.on("close", () => {
+    if (res.writableEnded) return;
+    clientClosed = true;
+    try { upstreamController.abort(); } catch { /* may already be aborted */ }
+    if (activeUpstreamReader) {
+      try { activeUpstreamReader.cancel().catch(() => {}); } catch { /* released */ }
+    }
+  });
+
   if (isOpenRouterModel(model)) {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -117,18 +130,30 @@ router.post("/chat", async (req, res): Promise<void> => {
           "HTTP-Referer": "https://llm-hub.replit.app",
         },
         body: JSON.stringify({ model, messages, temperature, max_tokens, stream: true }),
-        signal: AbortSignal.timeout(300000),
+        signal: AbortSignal.any([
+          upstreamController.signal,
+          AbortSignal.timeout(300000),
+        ]),
       });
 
       if (!orRes.ok) {
         const errText = await orRes.text();
-        res.write(`data: ${JSON.stringify({ error: errText })}\n\n`);
-        res.end();
+        if (!clientClosed) res.write(`data: ${JSON.stringify({ error: errText })}\n\n`);
+        if (!res.writableEnded) res.end();
         return;
       }
 
       const reader = orRes.body?.getReader();
-      if (!reader) { res.end(); return; }
+      if (!reader) { if (!res.writableEnded) res.end(); return; }
+      // Track the active reader so the close handler can cancel it the
+      // moment the client disconnects, instead of waiting for the
+      // upstream body to finish on its own.
+      activeUpstreamReader = reader;
+      if (clientClosed) {
+        try { reader.cancel().catch(() => {}); } catch {}
+        if (!res.writableEnded) res.end();
+        return;
+      }
 
       const decoder = new TextDecoder();
       let buffer = "";
@@ -136,6 +161,7 @@ router.post("/chat", async (req, res): Promise<void> => {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (clientClosed) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
@@ -143,15 +169,15 @@ router.post("/chat", async (req, res): Promise<void> => {
           if (line.startsWith("data: ")) {
             const payload = line.slice(6).trim();
             if (payload === "[DONE]") {
-              res.write("data: [DONE]\n\n");
+              if (!clientClosed) res.write("data: [DONE]\n\n");
             } else {
               try {
                 const chunk = JSON.parse(payload);
                 const content = chunk.choices?.[0]?.delta?.content;
-                if (content) {
+                if (content && !clientClosed) {
                   res.write(`data: ${JSON.stringify({ content })}\n\n`);
                 }
-                if (chunk.choices?.[0]?.finish_reason === "stop") {
+                if (chunk.choices?.[0]?.finish_reason === "stop" && !clientClosed) {
                   res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
                 }
               } catch {}
@@ -159,11 +185,26 @@ router.post("/chat", async (req, res): Promise<void> => {
           }
         }
       }
-      res.write("data: [DONE]\n\n");
-      res.end();
+      activeUpstreamReader = null;
+      if (!clientClosed && !res.writableEnded) {
+        res.write("data: [DONE]\n\n");
+        res.end();
+      } else if (!res.writableEnded) {
+        try { res.end(); } catch {}
+      }
     } catch (err: any) {
-      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-      res.end();
+      activeUpstreamReader = null;
+      if (clientClosed) {
+        // Expected post-disconnect AbortError — the upstream fetch
+        // rejecting because we aborted its controller in the close
+        // handler is the success case here, not something to surface.
+        if (!res.writableEnded) { try { res.end(); } catch {} }
+        return;
+      }
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+        res.end();
+      }
     }
     return;
   }
@@ -188,20 +229,32 @@ router.post("/chat", async (req, res): Promise<void> => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model, messages, stream: true, options }),
-        signal: AbortSignal.timeout(300000),
+        // Combine our disconnect-aware controller with the existing 5-
+        // minute timeout so either firing tears down the upstream HTTP
+        // request immediately.
+        signal: AbortSignal.any([
+          upstreamController.signal,
+          AbortSignal.timeout(300000),
+        ]),
         // @ts-ignore
         dispatcher: ollamaAgent,
       });
 
       if (!ollamaRes.ok) {
         const errText = await ollamaRes.text();
-        res.write(`data: ${JSON.stringify({ error: errText })}\n\n`);
-        res.end();
+        if (!clientClosed) res.write(`data: ${JSON.stringify({ error: errText })}\n\n`);
+        if (!res.writableEnded) res.end();
         return;
       }
 
       const reader = ollamaRes.body?.getReader();
-      if (!reader) { res.end(); return; }
+      if (!reader) { if (!res.writableEnded) res.end(); return; }
+      activeUpstreamReader = reader;
+      if (clientClosed) {
+        try { reader.cancel().catch(() => {}); } catch {}
+        if (!res.writableEnded) res.end();
+        return;
+      }
 
       const decoder = new TextDecoder();
       let buffer = "";
@@ -209,6 +262,7 @@ router.post("/chat", async (req, res): Promise<void> => {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (clientClosed) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
@@ -216,20 +270,32 @@ router.post("/chat", async (req, res): Promise<void> => {
           if (!line.trim()) continue;
           try {
             const chunk = JSON.parse(line);
-            if (chunk.message?.content) {
+            if (chunk.message?.content && !clientClosed) {
               res.write(`data: ${JSON.stringify({ content: chunk.message.content })}\n\n`);
             }
-            if (chunk.done) {
+            if (chunk.done && !clientClosed) {
               res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
             }
           } catch {}
         }
       }
-      res.write("data: [DONE]\n\n");
-      res.end();
+      activeUpstreamReader = null;
+      if (!clientClosed && !res.writableEnded) {
+        res.write("data: [DONE]\n\n");
+        res.end();
+      } else if (!res.writableEnded) {
+        try { res.end(); } catch {}
+      }
     } catch (err: any) {
-      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-      res.end();
+      activeUpstreamReader = null;
+      if (clientClosed) {
+        if (!res.writableEnded) { try { res.end(); } catch {} }
+        return;
+      }
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+        res.end();
+      }
     }
     return;
   }
@@ -242,10 +308,18 @@ router.post("/chat", async (req, res): Promise<void> => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, messages, stream: false, options }),
-      signal: AbortSignal.timeout(120000),
+      // Combine our disconnect-aware controller with the existing 2-
+      // minute timeout so either firing tears down the upstream HTTP
+      // request immediately.
+      signal: AbortSignal.any([
+        upstreamController.signal,
+        AbortSignal.timeout(120000),
+      ]),
       // @ts-ignore
       dispatcher: ollamaAgent,
     });
+
+    if (clientClosed) { if (!res.writableEnded) { try { res.end(); } catch {} } return; }
 
     if (!ollamaRes.ok) {
       const errText = await ollamaRes.text();
@@ -254,8 +328,13 @@ router.post("/chat", async (req, res): Promise<void> => {
     }
 
     const data: any = await ollamaRes.json();
+    if (clientClosed) { if (!res.writableEnded) { try { res.end(); } catch {} } return; }
     res.json({ content: data.message?.content || "", model: data.model });
   } catch (err: any) {
+    if (clientClosed) {
+      if (!res.writableEnded) { try { res.end(); } catch {} }
+      return;
+    }
     res.status(502).json({ error: err.message });
   }
 });

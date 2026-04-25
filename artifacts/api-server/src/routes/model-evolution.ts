@@ -105,7 +105,17 @@ router.post("/model-evolution/benchmark", async (req, res): Promise<void> => {
     averageResponseTime: 0,
   };
 
+  // Abort upstream fetches when the client disconnects.
+  let clientClosed = false;
+  const upstreamController = new AbortController();
+  res.on("close", () => {
+    if (res.writableEnded) return;
+    clientClosed = true;
+    try { upstreamController.abort(); } catch { /* may already be aborted */ }
+  });
+
   for (const q of questions) {
+    if (clientClosed) break;
     try {
       const start = Date.now();
       const ollamaRes = await fetch(`${ollamaUrl}/api/chat`, {
@@ -117,7 +127,10 @@ router.post("/model-evolution/benchmark", async (req, res): Promise<void> => {
           stream: false,
           options: { temperature: 0.3 },
         }),
-        signal: AbortSignal.timeout(120000),
+        signal: AbortSignal.any([
+          upstreamController.signal,
+          AbortSignal.timeout(120000),
+        ]),
       });
 
       if (!ollamaRes.ok) {
@@ -132,8 +145,16 @@ router.post("/model-evolution/benchmark", async (req, res): Promise<void> => {
 
       result.scores.push({ category: q.category, question: q.question, score, responseTime, response: response.slice(0, 500) });
     } catch (err: any) {
+      // The expected post-disconnect AbortError surfaces here — break out
+      // instead of recording it as a per-question failure.
+      if (clientClosed) break;
       result.scores.push({ category: q.category, question: q.question, score: 0, responseTime: 0, response: `Error: ${err?.message}` });
     }
+  }
+
+  if (clientClosed) {
+    if (!res.writableEnded) { try { res.end(); } catch {} }
+    return;
   }
 
   result.averageScore = Math.round(result.scores.reduce((s, r) => s + r.score, 0) / result.scores.length);
@@ -270,6 +291,15 @@ router.post("/model-evolution/generate-synthetic", async (req, res): Promise<voi
   const categoryTopics = topics[category] || topics.general;
   const pairs: Array<{ instruction: string; response: string; category: string; quality: number }> = [];
 
+  // Abort upstream fetches when the client disconnects.
+  let clientClosed = false;
+  const upstreamController = new AbortController();
+  res.on("close", () => {
+    if (res.writableEnded) return;
+    clientClosed = true;
+    try { upstreamController.abort(); } catch { /* may already be aborted */ }
+  });
+
   try {
     let baseUrl: string;
     let apiKey: string;
@@ -291,6 +321,7 @@ router.post("/model-evolution/generate-synthetic", async (req, res): Promise<voi
     }
 
     for (let i = 0; i < Math.min(count, 20); i++) {
+      if (clientClosed) break;
       const topic = categoryTopics[i % categoryTopics.length];
       const prompt = `Generate a high-quality training example for a ${category} AI assistant. 
 Topic area: ${topic}
@@ -311,7 +342,10 @@ Return ONLY valid JSON with this exact format:
               max_tokens: 2000,
               messages: [{ role: "user", content: prompt }],
             }),
-            signal: AbortSignal.timeout(60000),
+            signal: AbortSignal.any([
+              upstreamController.signal,
+              AbortSignal.timeout(60000),
+            ]),
           });
 
           if (!anthropicRes.ok) continue;
@@ -330,7 +364,10 @@ Return ONLY valid JSON with this exact format:
               messages: [{ role: "user", content: prompt }],
               max_completion_tokens: 2000,
             }),
-            signal: AbortSignal.timeout(60000),
+            signal: AbortSignal.any([
+              upstreamController.signal,
+              AbortSignal.timeout(60000),
+            ]),
           });
 
           if (!openaiRes.ok) continue;
@@ -341,7 +378,17 @@ Return ONLY valid JSON with this exact format:
           const parsed = JSON.parse(jsonMatch[0]);
           pairs.push({ instruction: parsed.instruction, response: parsed.response, category, quality: 5 });
         }
-      } catch {}
+      } catch {
+        // The expected post-disconnect AbortError surfaces here — break
+        // out instead of silently retrying the next iteration against a
+        // closed socket.
+        if (clientClosed) break;
+      }
+    }
+
+    if (clientClosed) {
+      if (!res.writableEnded) { try { res.end(); } catch {} }
+      return;
     }
 
     let vpsClient: any = null;
@@ -374,8 +421,20 @@ Return ONLY valid JSON with this exact format:
     syntheticDataLog.unshift({ timestamp: new Date().toISOString(), model: targetModel || "all", category, pairsGenerated: pairs.length, provider });
     if (syntheticDataLog.length > 50) syntheticDataLog = syntheticDataLog.slice(0, 50);
 
+    if (clientClosed) {
+      if (!res.writableEnded) { try { res.end(); } catch {} }
+      return;
+    }
     res.json({ success: true, pairsGenerated: pairs.length, category, provider, pairs });
   } catch (err: any) {
+    if (clientClosed) {
+      // Expected post-disconnect AbortError — the upstream fetch
+      // rejecting because we aborted its controller in the close
+      // handler is the success case here, not something to log or
+      // surface as a 500.
+      if (!res.writableEnded) { try { res.end(); } catch {} }
+      return;
+    }
     res.status(500).json({ error: err?.message || "Synthetic data generation failed" });
   }
 });
@@ -568,13 +627,26 @@ router.post("/model-evolution/start-scheduler", async (req, res): Promise<void> 
   const intervalHours = (!rawHours || rawHours < 1 || rawHours > 168) ? 6 : rawHours;
   evolutionSchedulerRunning = true;
 
-  async function runEvolutionCycle() {
+  // Abort the kickoff cycle if the client disconnects before res.json().
+  // Recurring setInterval cycles run independently and use only their
+  // per-call timeout.
+  const kickoffController = new AbortController();
+  res.on("close", () => {
+    if (res.writableEnded) return;
+    try { kickoffController.abort(); } catch { /* may already be aborted */ }
+  });
+
+  async function runEvolutionCycle(disconnectSignal?: AbortSignal) {
     lastEvolutionRun = new Date().toISOString();
     console.log("[model-evolution] Starting evolution cycle");
 
     try {
       const ollamaUrl = await getOllamaUrl();
-      const tagsRes = await fetch(`${ollamaUrl}/api/tags`, { signal: AbortSignal.timeout(10000) });
+      const tagsRes = await fetch(`${ollamaUrl}/api/tags`, {
+        signal: disconnectSignal
+          ? AbortSignal.any([disconnectSignal, AbortSignal.timeout(10000)])
+          : AbortSignal.timeout(10000),
+      });
       if (tagsRes.ok) {
         const tags = await tagsRes.json() as { models?: Array<{ name: string }> };
         const models = (tags.models || []).map(m => m.name);
@@ -594,20 +666,25 @@ router.post("/model-evolution/start-scheduler", async (req, res): Promise<void> 
 
           const sampleQuestions = BENCHMARK_QUESTIONS.slice(0, 4);
           for (const q of sampleQuestions) {
+            if (disconnectSignal?.aborted) break;
             try {
               const start = Date.now();
               const ollamaRes = await fetch(`${ollamaUrl}/api/chat`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ model: testModel, messages: [{ role: "user", content: q.question }], stream: false, options: { temperature: 0.3 } }),
-                signal: AbortSignal.timeout(120000),
+                signal: disconnectSignal
+                  ? AbortSignal.any([disconnectSignal, AbortSignal.timeout(120000)])
+                  : AbortSignal.timeout(120000),
               });
               if (!ollamaRes.ok) continue;
               const data = await ollamaRes.json() as { message?: { content?: string } };
               const response = data.message?.content ?? "";
               const score = await scoreResponse(response, q.expectedTopics);
               benchResult.scores.push({ category: q.category, question: q.question, score, responseTime: Date.now() - start, response: response.slice(0, 300) });
-            } catch {}
+            } catch {
+              if (disconnectSignal?.aborted) break;
+            }
           }
 
           if (benchResult.scores.length > 0) {
@@ -632,6 +709,9 @@ router.post("/model-evolution/start-scheduler", async (req, res): Promise<void> 
         }
       }
     } catch (err) {
+      // The expected post-disconnect AbortError on the kick-off cycle
+      // shouldn't spam logs the way a real upstream failure should.
+      if (disconnectSignal?.aborted) return;
       console.error("[model-evolution] Evolution cycle error:", err);
     }
 
@@ -639,11 +719,16 @@ router.post("/model-evolution/start-scheduler", async (req, res): Promise<void> 
   }
 
   if (evolutionInterval) clearInterval(evolutionInterval);
+  // Recurring cycles run independently of any request — no disconnect
+  // signal to attach.
   evolutionInterval = setInterval(() => {
     runEvolutionCycle().catch(console.error);
   }, intervalHours * 60 * 60 * 1000);
 
-  runEvolutionCycle().catch(console.error);
+  // Only the kick-off cycle is tied to the request; if the client
+  // disconnects before res.json() commits, kickoffController fires and
+  // the in-flight upstream call tears down immediately.
+  runEvolutionCycle(kickoffController.signal).catch(console.error);
 
   res.json({ success: true, message: `Evolution scheduler started. Running every ${intervalHours} hours.`, intervalHours });
 });
