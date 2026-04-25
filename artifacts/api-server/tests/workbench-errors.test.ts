@@ -512,6 +512,119 @@ test("POST /api/code-chat (writeMode + authenticated) returns 502 + AI_REQUEST_F
   );
 });
 
+test("POST /api/code-chat surfaces a mid-reply upstream failure as an SSE error event under HTTP 200", async () => {
+  // Once the SSE stream has been flushed (the user is already seeing their
+  // reply start arriving) we can no longer change the HTTP status. A
+  // continuation/tool-use iteration that fails upstream is therefore
+  // surfaced as `data: {"type":"error", content: ...}` under HTTP 200 and
+  // the stream is ended cleanly. If a refactor swallows or mis-formats
+  // that event the user's reply would just stop mid-sentence with no
+  // indication anything went wrong — this test pins the contract.
+  //
+  // Reuses withAnthropicStub() — the helper invokes its `stub` callback
+  // once per upstream call, so a closure-based counter lets us return a
+  // different Response for the initial vs. continuation call without
+  // re-implementing the env-var/fetch-restore scaffolding.
+  let callCount = 0;
+  await withAnthropicStub(
+    () => {
+      callCount++;
+      if (callCount === 1) {
+        // First upstream call: stream a small text chunk and end with
+        // stop_reason=max_tokens to force the agent loop into a
+        // continuation iteration. startStream() runs after the headers
+        // come back ok, so by the time the second call happens the SSE
+        // response to the client has already been flushed.
+        const encoder = new TextEncoder();
+        const events = [
+          'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+          'data: {"type":"content_block_delta","index":0,"delta":{"text":"partial reply"}}\n\n',
+          'data: {"type":"content_block_stop","index":0}\n\n',
+          'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}\n\n',
+        ];
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const ev of events) controller.enqueue(encoder.encode(ev));
+            controller.close();
+          },
+        });
+        return new Response(stream, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }
+      // Second upstream call (continuation) fails. Because streamStarted
+      // is now true the route MUST emit an SSE error event and end the
+      // stream — it cannot change the status to 502 anymore.
+      return new Response(
+        "stubbed mid-stream upstream failure",
+        { status: 503, headers: { "Content-Type": "text/plain" } },
+      );
+    },
+    async () => {
+      // Use raw fetch so we can read the streaming body and assert the
+      // server actually called res.end() (i.e. the response terminates
+      // instead of hanging the user's tab forever).
+      const res = await fetch(`${serverUrl}/api/code-chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "hello" }),
+      });
+
+      assert.equal(
+        res.status,
+        200,
+        `expected HTTP 200 (SSE already flushed), got ${res.status}`,
+      );
+      assert.match(
+        res.headers.get("content-type") || "",
+        /text\/event-stream/,
+        "expected SSE content-type once the stream has started",
+      );
+
+      // .text() resolves only when the server ends the stream. If the route
+      // forgot to call res.end() after the mid-stream failure this would
+      // hang until the test runner times out.
+      const body = await res.text();
+
+      // The first upstream call's text delta should have made it through
+      // before the failure — sanity check that we really exercised the
+      // "stream already started" branch.
+      assert.match(
+        body,
+        /"type":"chunk"[^\n]*partial reply/,
+        `expected the pre-failure chunk to be in the body, got:\n${body}`,
+      );
+
+      // The mid-stream failure MUST surface as a `data: {"type":"error", ...}`
+      // SSE event carrying the upstream error text. A regression that
+      // swallows it (or formats it as a different SSE type) would leave
+      // the user staring at a half-finished reply with no indication.
+      const errLine = body
+        .split("\n")
+        .find((l) => l.startsWith("data: ") && /"type":"error"/.test(l));
+      assert.ok(
+        errLine,
+        `expected an SSE error event in the body, got:\n${body}`,
+      );
+      assert.match(
+        errLine!,
+        /stubbed mid-stream upstream failure/,
+        `expected the SSE error event to carry the upstream error text, got: ${errLine}`,
+      );
+
+      // Two upstream calls total: the initial stream + the failed
+      // continuation. If this drops to 1 the test no longer exercises the
+      // post-stream branch and the assertions above are meaningless.
+      assert.equal(
+        callCount,
+        2,
+        `expected exactly 2 upstream calls (initial + continuation), got ${callCount}`,
+      );
+    },
+  );
+});
+
 test("/api/code-chat keeps three AI_REQUEST_FAILED emit sites with the documented response shape", () => {
   // The agent-loop fallthrough at line ~1129 is defensive: in the current
   // structure the loop always either returns early (branches above) or
