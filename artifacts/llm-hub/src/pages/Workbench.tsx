@@ -766,6 +766,11 @@ type ChatMessage = {
   content: string;
   timestamp: number;
   streaming?: boolean;
+  // Set when the assistant message represents a structured error response.
+  // The render layer keys off this to show actionable UI (e.g. an
+  // "Open Env Vars panel" button for AI_NOT_CONFIGURED) instead of just
+  // a plain text bubble.
+  errorCode?: string;
 };
 
 function CodeChatPanel() {
@@ -1010,6 +1015,13 @@ function CodeChatPanel() {
           throw new Error("Sign in required to use file/shell tools on the selected project.");
         }
         const err = await res.json().catch(() => ({ error: "Request failed" }));
+        if (err?.code === "AI_NOT_CONFIGURED") {
+          const aiErr: any = new Error(
+            "AI chat isn't configured. Add the AI_INTEGRATIONS_ANTHROPIC_API_KEY and AI_INTEGRATIONS_ANTHROPIC_BASE_URL secrets in the Env Vars panel, then try again.",
+          );
+          aiErr.code = "AI_NOT_CONFIGURED";
+          throw aiErr;
+        }
         throw new Error(err.error || `HTTP ${res.status}`);
       }
 
@@ -1074,7 +1086,8 @@ function CodeChatPanel() {
       }
     } catch (err: any) {
       if (err.name === "AbortError") return;
-      setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: `Error: ${err.message}` } : m));
+      const errorCode: string | undefined = err?.code;
+      setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: `Error: ${err.message}`, errorCode } : m));
     } finally {
       setIsStreaming(false);
       setAbortController(null);
@@ -1179,6 +1192,21 @@ function CodeChatPanel() {
                 <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed select-text cursor-text">{msg.content}</pre>
                 {msg.streaming && (
                   <span className="inline-block w-1.5 h-3.5 bg-violet-400 animate-pulse ml-0.5 align-middle" />
+                )}
+                {msg.errorCode === "AI_NOT_CONFIGURED" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.dispatchEvent(
+                        new CustomEvent("workbench:open-panel", {
+                          detail: { side: "right", panel: "env" },
+                        }),
+                      );
+                    }}
+                    className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-[#f9e2af]/15 text-[#f9e2af] hover:bg-[#f9e2af]/25 border border-[#f9e2af]/25"
+                  >
+                    Open Env Vars panel
+                  </button>
                 )}
               </div>
               {msg.role === "user" && (
@@ -2207,6 +2235,25 @@ export default function Workbench() {
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("wb-sidebar-collapsed", false);
   const { project: sharedProject, setProject: setSharedProject } = useSelectedProject();
   const selectedProjectPath = sharedProject?.path || null;
+
+  // Cross-panel deep-link: nested panels (e.g. the chat's "AI not
+  // configured" error) dispatch a `workbench:open-panel` event to ask
+  // the layout to switch one of its panel slots — the chat shouldn't
+  // need to know which slot the env panel currently occupies.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ side?: string; panel?: string }>).detail || {};
+      const panel = detail.panel as PanelId | undefined;
+      if (!panel) return;
+      const side = detail.side;
+      if (side === "left") setLeftPanel(panel);
+      else if (side === "bottom") setBottomPanel(panel);
+      else if (side === "bottom-right") setBottomRightPanel(panel);
+      else setRightPanel(panel);
+    };
+    window.addEventListener("workbench:open-panel", handler);
+    return () => window.removeEventListener("workbench:open-panel", handler);
+  }, [setLeftPanel, setRightPanel, setBottomPanel, setBottomRightPanel]);
 
   const handleSelectProject = (project: any) => {
     setSharedProject(projectDescriptorFromSidebar(project));

@@ -227,6 +227,7 @@ type WorkbenchErrorCode =
   | "GIT_ERROR"
   | "DB_QUERY_FAILED"
   | "AI_REQUEST_FAILED"
+  | "AI_NOT_CONFIGURED"
   | "INTERNAL_ERROR";
 
 function classifyWorkbenchError(err: unknown): { status: number; code: WorkbenchErrorCode; message: string } {
@@ -735,7 +736,10 @@ router.post("/code-chat", async (req, res): Promise<void> => {
   const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
   if (!apiKey || !baseUrl) {
-    res.status(503).json({ error: "Anthropic AI integration not configured" });
+    res.status(503).json({
+      error: "Anthropic AI integration not configured",
+      code: "AI_NOT_CONFIGURED" satisfies WorkbenchErrorCode,
+    });
     return;
   }
 
@@ -1761,7 +1765,15 @@ router.post("/code-review", async (req, res): Promise<void> => {
   const { projectSlug } = req.body || {};
   const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
-  if (!apiKey || !baseUrl) { res.status(503).json({ error: "Anthropic not configured" }); return; }
+  if (!apiKey || !baseUrl) {
+    res.status(503).json({
+      error: "Anthropic AI integration not configured",
+      code: "AI_NOT_CONFIGURED" satisfies WorkbenchErrorCode,
+      review: null,
+      meta: null,
+    });
+    return;
+  }
 
   try {
     let filesContent = "";

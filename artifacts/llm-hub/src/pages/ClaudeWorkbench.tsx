@@ -38,7 +38,7 @@ function formatUptime(seconds: number) {
 
 type ShellEntry = { command: string; stdout: string; stderr: string; exitCode: number; timestamp: number };
 type FileItem = { name: string; type: "file" | "directory"; path: string; size?: number };
-type ChatMessage = { role: "user" | "assistant"; content: string; timestamp: number; streaming?: boolean; model?: string; tokens?: number };
+type ChatMessage = { role: "user" | "assistant"; content: string; timestamp: number; streaming?: boolean; model?: string; tokens?: number; errorCode?: string };
 
 function ShellPanel() {
   const [input, setInput] = useState("");
@@ -871,7 +871,15 @@ function ClaudeCodePanel() {
       });
       if (!res.ok) {
         if (res.status === 401) { throw new Error("Sign in required to use file/shell tools on the selected project."); }
-        const err = await res.json().catch(() => ({ error: "Failed" })); throw new Error(err.error || `HTTP ${res.status}`);
+        const err = await res.json().catch(() => ({ error: "Failed" }));
+        if (err?.code === "AI_NOT_CONFIGURED") {
+          const aiErr: any = new Error(
+            "AI chat isn't configured. Add the AI_INTEGRATIONS_ANTHROPIC_API_KEY and AI_INTEGRATIONS_ANTHROPIC_BASE_URL secrets in the Env Vars panel, then try again.",
+          );
+          aiErr.code = "AI_NOT_CONFIGURED";
+          throw aiErr;
+        }
+        throw new Error(err.error || `HTTP ${res.status}`);
       }
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
@@ -924,7 +932,8 @@ function ClaudeCodePanel() {
       }
     } catch (err: any) {
       if (err.name === "AbortError") return;
-      setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: `Error: ${err.message}` } : m));
+      const errorCode: string | undefined = err?.code;
+      setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false, content: `Error: ${err.message}`, errorCode } : m));
     } finally { setIsStreaming(false); setAbortController(null); setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m)); scrollToBottom(); }
   }, [input, isStreaming, messages, scrollToBottom]);
 
@@ -1002,6 +1011,21 @@ function ClaudeCodePanel() {
               )}>
                 <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed select-text cursor-text">{msg.content}</pre>
                 {msg.streaming && <span className="inline-block w-1.5 h-3.5 bg-[#fab387] animate-pulse ml-0.5 align-middle" />}
+                {msg.errorCode === "AI_NOT_CONFIGURED" && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.dispatchEvent(
+                        new CustomEvent("workbench:open-panel", {
+                          detail: { side: "right", panel: "env" },
+                        }),
+                      );
+                    }}
+                    className="mt-2 inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] bg-[#f9e2af]/15 text-[#f9e2af] hover:bg-[#f9e2af]/25 border border-[#f9e2af]/25"
+                  >
+                    Open Env Vars panel
+                  </button>
+                )}
               </div>
               {msg.role === "user" && <div className="h-5 w-5 rounded-full bg-[#89b4fa]/20 flex items-center justify-center shrink-0 mt-0.5"><User className="h-3 w-3 text-[#89b4fa]" /></div>}
             </div>
@@ -1174,7 +1198,16 @@ function CodeReviewPanel() {
     mutationFn: async () => {
       const res = await fetch(`/api/workbench/code-review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectSlug: "llm-hub" }), credentials: "include" });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error || `Code review failed (HTTP ${res.status})`);
+      if (!res.ok) {
+        if (body?.code === "AI_NOT_CONFIGURED") {
+          const aiErr: any = new Error(
+            "AI code review isn't configured. Add the AI_INTEGRATIONS_ANTHROPIC_API_KEY and AI_INTEGRATIONS_ANTHROPIC_BASE_URL secrets in the Env Vars panel, then retry.",
+          );
+          aiErr.code = "AI_NOT_CONFIGURED";
+          throw aiErr;
+        }
+        throw new Error(body?.error || `Code review failed (HTTP ${res.status})`);
+      }
       return body;
     },
   });
@@ -1203,11 +1236,28 @@ function CodeReviewPanel() {
   }
 
   if (!review) {
-    const errMsg = (reviewMutation.error as Error | null)?.message || "Review failed";
+    const errObj = reviewMutation.error as (Error & { code?: string }) | null;
+    const errMsg = errObj?.message || "Review failed";
+    const isMisconfigured = errObj?.code === "AI_NOT_CONFIGURED";
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 p-6">
         <XCircle className="h-6 w-6 text-[#f38ba8]" />
         <p className="text-sm text-[#f38ba8] text-center">{errMsg}</p>
+        {isMisconfigured && (
+          <button
+            type="button"
+            className="px-3 py-1 text-xs rounded bg-[#f9e2af]/15 text-[#f9e2af] hover:bg-[#f9e2af]/25 border border-[#f9e2af]/25"
+            onClick={() =>
+              window.dispatchEvent(
+                new CustomEvent("workbench:open-panel", {
+                  detail: { side: "right", panel: "env" },
+                }),
+              )
+            }
+          >
+            Open Env Vars panel
+          </button>
+        )}
         <button className="px-3 py-1 text-xs rounded bg-[#313244] text-[#cdd6f4] hover:bg-[#45475a]" onClick={() => reviewMutation.mutate()}>Retry</button>
       </div>
     );
@@ -2095,6 +2145,25 @@ export default function ClaudeWorkbench() {
   const { project: sharedProject, setProject: setSharedProject } = useSelectedProject();
   const selectedProjectPath = sharedProject?.path || null;
   const [cloneStatus, setCloneStatus] = useState<{ state: "idle" | "pending" | "cloned" | "error" | "auth"; localPath?: string; error?: string }>({ state: "idle" });
+
+  // Cross-panel deep-link: nested panels (e.g. the chat's "AI not
+  // configured" error) ask the layout to switch a panel slot via this
+  // event so the chat doesn't need to know which slot the env panel
+  // currently occupies.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ side?: string; panel?: string }>).detail || {};
+      const panel = detail.panel as PanelId | undefined;
+      if (!panel) return;
+      const side = detail.side;
+      if (side === "left") setLeftPanel(panel);
+      else if (side === "bottom") setBottomPanel(panel);
+      else if (side === "bottom-right") setBottomRightPanel(panel);
+      else setRightPanel(panel);
+    };
+    window.addEventListener("workbench:open-panel", handler);
+    return () => window.removeEventListener("workbench:open-panel", handler);
+  }, [setLeftPanel, setRightPanel, setBottomPanel, setBottomRightPanel]);
 
   useEffect(() => {
     if (!sharedProject || sharedProject.origin !== "replit") { setCloneStatus({ state: "idle" }); return; }

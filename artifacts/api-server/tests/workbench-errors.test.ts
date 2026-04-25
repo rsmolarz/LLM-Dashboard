@@ -302,6 +302,65 @@ test("POST /api/code-review returns 502 + AI_REQUEST_FAILED when the upstream An
 });
 
 // -----------------------------------------------------------------------------
+// AI_NOT_CONFIGURED: when the AI_INTEGRATIONS_ANTHROPIC_* env vars are missing
+// the routes are supposed to short-circuit with HTTP 503 + a structured
+// `{ error, code: "AI_NOT_CONFIGURED" }` body so the workbench UI can render
+// a one-click "configure Anthropic" prompt instead of a generic toast.
+// Both /code-chat and /code-review must use the same code so the UI can
+// branch on it from a single switch.
+// -----------------------------------------------------------------------------
+
+async function withAnthropicEnvCleared(fn: () => Promise<void>): Promise<void> {
+  const prevApiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const prevBaseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  delete process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  delete process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  try {
+    await fn();
+  } finally {
+    if (prevApiKey === undefined) delete process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+    else process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY = prevApiKey;
+    if (prevBaseUrl === undefined) delete process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+    else process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL = prevBaseUrl;
+  }
+}
+
+test("POST /api/code-chat returns 503 + AI_NOT_CONFIGURED when the Anthropic env vars are missing", async () => {
+  await withAnthropicEnvCleared(async () => {
+    const r = await postJson<{ error?: string; code?: string }>(
+      "/api/code-chat",
+      { prompt: "hello" },
+    );
+    assert.equal(r.status, 503, `expected HTTP 503, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.code, "AI_NOT_CONFIGURED");
+    assert.ok(
+      r.body.error && /not configured|anthropic/i.test(r.body.error),
+      `expected an Anthropic-not-configured error, got ${JSON.stringify(r.body)}`,
+    );
+  });
+});
+
+test("POST /api/code-review returns 503 + AI_NOT_CONFIGURED when the Anthropic env vars are missing", async () => {
+  await withAnthropicEnvCleared(async () => {
+    const r = await postJson<{
+      error?: string;
+      code?: string;
+      review?: unknown;
+      meta?: unknown;
+    }>("/api/code-review", { projectSlug: "test-slug" });
+    assert.equal(r.status, 503, `expected HTTP 503, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.code, "AI_NOT_CONFIGURED");
+    assert.ok(
+      r.body.error && /not configured|anthropic/i.test(r.body.error),
+      `expected an Anthropic-not-configured error, got ${JSON.stringify(r.body)}`,
+    );
+    // Shape preserved so the UI can read data?.review / data?.meta without crashing.
+    assert.equal(r.body.review, null);
+    assert.equal(r.body.meta, null);
+  });
+});
+
+// -----------------------------------------------------------------------------
 // /api/code-chat has THREE distinct sites that emit AI_REQUEST_FAILED:
 //   1. line ~886 — initial Anthropic upstream call returned a non-ok status,
 //                  before SSE headers are flushed.

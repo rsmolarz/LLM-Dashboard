@@ -549,7 +549,15 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
         body: JSON.stringify({ prompt, messages: conversationHistory, project }),
         signal: ac.signal,
       });
-      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.error || `HTTP ${res.status}`); }
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        if (d?.code === "AI_NOT_CONFIGURED") {
+          throw new Error(
+            "AI chat isn't configured. Add the AI_INTEGRATIONS_ANTHROPIC_API_KEY and AI_INTEGRATIONS_ANTHROPIC_BASE_URL secrets in the Env Vars panel, then try again.",
+          );
+        }
+        throw new Error(d.error || `HTTP ${res.status}`);
+      }
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       if (reader) {
