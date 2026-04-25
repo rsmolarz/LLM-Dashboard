@@ -590,10 +590,17 @@ function ClaudeCodePanel() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [toolEvents, setToolEvents] = useState<{ name: string; summary: string; error?: boolean }[]>([]);
-  const [fileEdits, setFileEdits] = useState<FileEdit[]>([]);
+  const [fileEdits, setFileEdits] = usePersistedState<FileEdit[]>("cw-claude-file-edits", []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { project: selectedProject } = useSelectedProject();
+
+  useEffect(() => {
+    setFileEdits(prev => {
+      if (!prev.some(e => e.undoing || e.undoError)) return prev;
+      return prev.map(e => ({ ...e, undoing: false, undoError: null }));
+    });
+  }, []);
 
   const handleUndo = useCallback(async (editId: string) => {
     setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: true, undoError: null } : e));
@@ -848,7 +855,7 @@ function ClaudeCodePanel() {
           <span className="text-xs text-[#cdd6f4] font-mono">Claude Code</span>
           <span className="text-[9px] px-1.5 py-0.5 rounded border border-[#fab387]/30 text-[#fab387]">Sonnet</span>
         </div>
-        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => setMessages([])}><Trash2 className="h-3 w-3" /></button>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => { setMessages([]); setFileEdits([]); }}><Trash2 className="h-3 w-3" /></button>
       </div>
       {selectedProject && (
         <div className="px-3 py-1 bg-[#11111b] border-b border-[#313244] text-[10px] text-[#6c7086] font-mono flex items-center gap-2">

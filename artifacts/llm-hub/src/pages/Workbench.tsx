@@ -705,9 +705,16 @@ function CodeChatPanel() {
   const [messages, setMessages] = usePersistedState<ChatMessage[]>("wb-chat-messages", []);
   const [isStreaming, setIsStreaming] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
-  const [fileEdits, setFileEdits] = useState<FileEdit[]>([]);
+  const [fileEdits, setFileEdits] = usePersistedState<FileEdit[]>("wb-chat-file-edits", []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setFileEdits(prev => {
+      if (!prev.some(e => e.undoing || e.undoError)) return prev;
+      return prev.map(e => ({ ...e, undoing: false, undoError: null }));
+    });
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
@@ -1023,7 +1030,7 @@ function CodeChatPanel() {
           <span className="text-xs text-[#cdd6f4] font-mono">Code Assistant</span>
           <span className="text-[9px] px-1.5 py-0.5 rounded border border-violet-500/30 text-violet-400">Claude</span>
         </div>
-        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#cdd6f4]" onClick={() => setMessages([])}>
+        <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086] hover:text-[#cdd6f4]" onClick={() => { setMessages([]); setFileEdits([]); }}>
           <Trash2 className="h-3 w-3" />
         </button>
       </div>

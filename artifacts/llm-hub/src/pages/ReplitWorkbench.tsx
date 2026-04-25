@@ -234,9 +234,16 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [toolEvents, setToolEvents] = useState<{ name: string; summary: string; error?: boolean }[]>([]);
-  const [fileEdits, setFileEdits] = useState<FileEdit[]>([]);
+  const [fileEdits, setFileEdits] = usePersistedState<FileEdit[]>(`replit-wb-file-edits-${project.path}`, []);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    setFileEdits(prev => {
+      if (!prev.some(e => e.undoing || e.undoError)) return prev;
+      return prev.map(e => ({ ...e, undoing: false, undoError: null }));
+    });
+  }, [project.path]);
 
   const handleUndo = useCallback(async (editId: string) => {
     setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: true, undoError: null } : e));

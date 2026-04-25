@@ -3,8 +3,8 @@ import { execSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
-import { db } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { db, workbenchUndoEntriesTable, type PersistedProjectDescriptor } from "@workspace/db";
+import { sql, and, eq, lt } from "drizzle-orm";
 import multer from "multer";
 import AdmZip from "adm-zip";
 import * as projectCtx from "../lib/project-context";
@@ -14,65 +14,108 @@ import { randomBytes } from "crypto";
 
 const router: IRouter = Router();
 
-interface UndoEntry {
+// In-memory redo stack. Undo is persisted in the DB
+// (workbench_undo_entries) so it survives page reloads / API restarts;
+// redo is intentionally ephemeral — once an entry has been undone the
+// chance the user wants to re-apply the AI's content is highest while
+// the same browser session is still open. Persisting redo across server
+// restarts would require additional schema and a story for stale
+// "newContent" replays after the file moved on disk; out of scope for
+// this rebase.
+interface RedoEntry {
   editId: string;
   resolved: projectCtx.ResolvedProject;
+  descriptor: PersistedProjectDescriptor;
   filePath: string;
   previousContent: string;
   newContent: string;
   isNew: boolean;
   createdAt: number;
-  used: boolean;
   userId: string;
   stackKey: string;
 }
 
-// Per-file edit stacks, keyed by `userId|projectKey|filePath`. Each push
-// records one AI write_file; undoing always pops from the top so multiple
-// edits to the same file rewind one step at a time in reverse order.
-const fileUndoStacks = new Map<string, UndoEntry[]>();
-// Reverse index for fast per-edit lookup by editId (entries currently
-// sitting on an undo stack — i.e. undoable).
-const editsById = new Map<string, UndoEntry>();
-// Per-file redo stacks. When an entry is undone we move it from the undo
-// stack onto the redo stack so the user can re-apply the AI's content.
-// A fresh AI write_file to the same file clears the redo stack (so we
-// never silently overwrite work the agent just did).
-const fileRedoStacks = new Map<string, UndoEntry[]>();
+// Per-file redo stacks, keyed by `userId|projectKey|filePath`. When an
+// entry is undone we move it onto the redo stack so the user can re-
+// apply the AI's content; a fresh AI write_file to the same file clears
+// the redo stack (so we never silently overwrite work the agent just
+// did).
+const fileRedoStacks = new Map<string, RedoEntry[]>();
 // Reverse index for entries currently sitting on a redo stack (redoable).
-const redoEditsById = new Map<string, UndoEntry>();
+const redoEditsById = new Map<string, RedoEntry>();
+
 const UNDO_TTL_MS = 60 * 60 * 1000;
-// Hard cap per file so a runaway agent can't grow memory unbounded between
-// TTL prunes. Older entries are dropped (and their per-edit undo will 404).
+const UNDO_CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
+// Hard cap per file so a runaway agent can't grow redo memory unbounded.
 const MAX_STACK_PER_FILE = 50;
 
-function projectKeyFor(resolved: projectCtx.ResolvedProject): string {
-  if (resolved.origin === "vps") return `vps:${resolved.remotePath || ""}`;
-  return `${resolved.origin}:${resolved.localPath || ""}`;
+function projectKeyFor(descriptor: PersistedProjectDescriptor): string {
+  return `${descriptor.origin}:${descriptor.path || ""}`;
 }
 
-function fileStackKey(userId: string, resolved: projectCtx.ResolvedProject, filePath: string): string {
-  return `${userId}|${projectKeyFor(resolved)}|${filePath}`;
-}
-
-function pruneEditStores() {
-  const cutoff = Date.now() - UNDO_TTL_MS;
-  for (const [key, stack] of fileUndoStacks) {
-    const kept: UndoEntry[] = [];
-    for (const e of stack) {
-      if (e.used || e.createdAt < cutoff) {
-        editsById.delete(e.editId);
-      } else {
-        kept.push(e);
-      }
-    }
-    if (kept.length === 0) fileUndoStacks.delete(key);
-    else fileUndoStacks.set(key, kept);
+function toPersistedDescriptor(descriptor: projectCtx.ProjectDescriptor): PersistedProjectDescriptor {
+  const out: PersistedProjectDescriptor = {
+    origin: descriptor.origin,
+    path: typeof descriptor.path === "string" ? descriptor.path : "",
+  };
+  if (typeof descriptor.name === "string") out.name = descriptor.name;
+  if (typeof descriptor.url === "string") out.url = descriptor.url;
+  const ssh = descriptor.ssh;
+  if (ssh && typeof ssh === "object") {
+    const sshOut: PersistedProjectDescriptor["ssh"] = {};
+    if (typeof ssh.host === "string") sshOut.host = ssh.host;
+    if (typeof ssh.port === "number") sshOut.port = ssh.port;
+    if (typeof ssh.username === "string") sshOut.username = ssh.username;
+    if (typeof ssh.password === "string") sshOut.password = ssh.password;
+    if (typeof ssh.privateKey === "string") sshOut.privateKey = ssh.privateKey;
+    if (Object.keys(sshOut).length > 0) out.ssh = sshOut;
   }
-  // Redo entries share the same TTL relative to original edit time, so an
-  // hour after the AI wrote a file the redo affordance disappears too.
+  return out;
+}
+
+function parsePersistedDescriptor(raw: unknown): PersistedProjectDescriptor | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (r.origin !== "local" && r.origin !== "vps" && r.origin !== "replit") return null;
+  if (typeof r.path !== "string") return null;
+  const out: PersistedProjectDescriptor = { origin: r.origin, path: r.path };
+  if (typeof r.name === "string") out.name = r.name;
+  if (typeof r.url === "string") out.url = r.url;
+  if (r.ssh && typeof r.ssh === "object") {
+    const s = r.ssh as Record<string, unknown>;
+    const sshOut: PersistedProjectDescriptor["ssh"] = {};
+    if (typeof s.host === "string") sshOut.host = s.host;
+    if (typeof s.port === "number") sshOut.port = s.port;
+    if (typeof s.username === "string") sshOut.username = s.username;
+    if (typeof s.password === "string") sshOut.password = s.password;
+    if (typeof s.privateKey === "string") sshOut.privateKey = s.privateKey;
+    if (Object.keys(sshOut).length > 0) out.ssh = sshOut;
+  }
+  return out;
+}
+
+function fileStackKey(
+  userId: string,
+  descriptor: PersistedProjectDescriptor,
+  filePath: string,
+): string {
+  return `${userId}|${projectKeyFor(descriptor)}|${filePath}`;
+}
+
+async function pruneUndoStore(): Promise<void> {
+  try {
+    await db
+      .delete(workbenchUndoEntriesTable)
+      .where(lt(workbenchUndoEntriesTable.expiresAt, new Date()));
+  } catch (err: any) {
+    console.error("[workbench-undo] prune failed:", err?.message || err);
+  }
+  // In-memory redo entries share the same TTL relative to original edit
+  // time, so an hour after the AI wrote a file the redo affordance
+  // disappears too.
+  const cutoff = Date.now() - UNDO_TTL_MS;
   for (const [key, stack] of fileRedoStacks) {
-    const kept: UndoEntry[] = [];
+    const kept: RedoEntry[] = [];
     for (const e of stack) {
       if (e.createdAt < cutoff) {
         redoEditsById.delete(e.editId);
@@ -85,35 +128,10 @@ function pruneEditStores() {
   }
 }
 
-// Back-compat alias — older code paths still call this name.
-const pruneUndoStore = pruneEditStores;
-
-function pushUndoEntry(entry: UndoEntry) {
-  const stack = fileUndoStacks.get(entry.stackKey) || [];
-  stack.push(entry);
-  // Enforce per-file cap by dropping oldest entries.
-  while (stack.length > MAX_STACK_PER_FILE) {
-    const dropped = stack.shift();
-    if (dropped) editsById.delete(dropped.editId);
-  }
-  fileUndoStacks.set(entry.stackKey, stack);
-  editsById.set(entry.editId, entry);
-}
-
-function removeUndoEntry(entry: UndoEntry) {
-  const stack = fileUndoStacks.get(entry.stackKey);
-  if (stack) {
-    const filtered = stack.filter(e => e.editId !== entry.editId);
-    if (filtered.length === 0) fileUndoStacks.delete(entry.stackKey);
-    else fileUndoStacks.set(entry.stackKey, filtered);
-  }
-  editsById.delete(entry.editId);
-}
-
-function pushRedoEntry(entry: UndoEntry) {
+function pushRedoEntry(entry: RedoEntry) {
   const stack = fileRedoStacks.get(entry.stackKey) || [];
   stack.push(entry);
-  // Same per-file cap as undo so a chain of undos can't grow memory.
+  // Per-file cap so a chain of undos can't grow memory unbounded.
   while (stack.length > MAX_STACK_PER_FILE) {
     const dropped = stack.shift();
     if (dropped) redoEditsById.delete(dropped.editId);
@@ -122,7 +140,7 @@ function pushRedoEntry(entry: UndoEntry) {
   redoEditsById.set(entry.editId, entry);
 }
 
-function popTopRedoEntry(stackKey: string): UndoEntry | undefined {
+function popTopRedoEntry(stackKey: string): RedoEntry | undefined {
   const stack = fileRedoStacks.get(stackKey);
   if (!stack || stack.length === 0) return undefined;
   const top = stack.pop()!;
@@ -143,6 +161,36 @@ function clearRedoStackForFile(stackKey: string): string[] {
   fileRedoStacks.delete(stackKey);
   return ids;
 }
+
+// Stack semantics: returns active (unused, unexpired) undo entries for a
+// given file in a given project, ordered oldest -> newest. The last entry
+// is the "top of stack" that may be safely undone without clobbering newer
+// edits the user hasn't agreed to discard.
+async function getActiveStackForFile(
+  userId: string,
+  descriptor: PersistedProjectDescriptor,
+  filePath: string,
+) {
+  return await db
+    .select()
+    .from(workbenchUndoEntriesTable)
+    .where(
+      and(
+        eq(workbenchUndoEntriesTable.userId, userId),
+        eq(workbenchUndoEntriesTable.filePath, filePath),
+        sql`${workbenchUndoEntriesTable.usedAt} IS NULL`,
+        sql`${workbenchUndoEntriesTable.expiresAt} > NOW()`,
+        sql`(${workbenchUndoEntriesTable.projectDescriptor}->>'origin') = ${descriptor.origin}`,
+        sql`(${workbenchUndoEntriesTable.projectDescriptor}->>'path') = ${descriptor.path || ""}`,
+      ),
+    )
+    .orderBy(workbenchUndoEntriesTable.createdAt);
+}
+
+const undoCleanupTimer = setInterval(() => {
+  void pruneUndoStore();
+}, UNDO_CLEANUP_INTERVAL_MS);
+if (typeof undoCleanupTimer.unref === "function") undoCleanupTimer.unref();
 const PROJECT_ROOT = process.env.NODE_ENV === "production"
   ? process.cwd()
   : path.resolve(process.cwd(), "../..");
@@ -763,30 +811,46 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
               }
               const r = await projectCtx.writeFile(resolved, targetPath, newContent);
               const diff = unifiedDiff(previousContent, newContent, targetPath);
-              pruneEditStores();
               const userId = String((req as any).user?.id || (req as any).user?.sub || "anon");
               let editId: string | undefined;
               let stackDepth: number | undefined;
               let invalidatedRedoIds: string[] = [];
-              if (undoSafe) {
+              if (undoSafe && isAuthed) {
                 editId = randomBytes(12).toString("hex");
-                const stackKey = fileStackKey(userId, resolved, targetPath);
-                // A new AI write to this file invalidates any redo entries —
-                // replaying them would silently overwrite this fresh edit.
-                invalidatedRedoIds = clearRedoStackForFile(stackKey);
-                pushUndoEntry({
-                  editId,
-                  resolved,
-                  filePath: targetPath,
-                  previousContent,
-                  newContent,
-                  isNew,
-                  createdAt: Date.now(),
-                  used: false,
-                  userId,
-                  stackKey,
-                });
-                stackDepth = fileUndoStacks.get(stackKey)?.length;
+                const now = new Date();
+                const persistedDescriptor = toPersistedDescriptor(resolved.descriptor);
+                try {
+                  await db.insert(workbenchUndoEntriesTable).values({
+                    id: editId,
+                    userId,
+                    filePath: targetPath,
+                    previousContent,
+                    newContent,
+                    isNew,
+                    projectDescriptor: persistedDescriptor,
+                    createdAt: now,
+                    expiresAt: new Date(now.getTime() + UNDO_TTL_MS),
+                  });
+                  const stack = await getActiveStackForFile(userId, persistedDescriptor, targetPath);
+                  stackDepth = stack.length;
+                  // A new AI write to this file invalidates any in-memory
+                  // redo entries — replaying them would silently overwrite
+                  // this fresh edit. The DB-backed undo stack already
+                  // implicitly supersedes older entries (newer createdAt
+                  // becomes the new top), but we explicitly clear redo so
+                  // stale Redo affordances disappear in the UI.
+                  invalidatedRedoIds = clearRedoStackForFile(
+                    fileStackKey(userId, persistedDescriptor, targetPath),
+                  );
+                } catch (e: any) {
+                  console.error("[workbench-undo] insert failed:", e?.message || e);
+                  editId = undefined;
+                  undoSafe = false;
+                  undoSkipReason = "could not persist undo entry";
+                }
+              } else if (undoSafe && !isAuthed) {
+                undoSafe = false;
+                undoSkipReason = "sign in to enable undo";
               }
               const summary = `wrote ${targetPath} (${r.bytes}B${isNew ? ", new" : `, +${diff.stats.added}/-${diff.stats.removed}`})`;
               resultText = JSON.stringify({ ok: true, bytes: r.bytes, path: targetPath, isNew, added: diff.stats.added, removed: diff.stats.removed });
@@ -805,8 +869,8 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
                 summary,
                 undoDisabled: !undoSafe,
                 undoSkipReason,
-                stackDepth,
-                invalidatedRedoIds,
+                ...(stackDepth !== undefined ? { stackDepth } : {}),
+                ...(invalidatedRedoIds.length > 0 ? { invalidatedRedoIds } : {}),
               })}\n\n`);
             } else if (tu.name === "run_shell") {
               const r = await projectCtx.execCommand(resolved, tu.input.command);
@@ -851,25 +915,21 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
   }
 });
 
-async function applyUndo(entry: UndoEntry): Promise<void> {
-  if (entry.isNew) {
-    await projectCtx.deleteFile(entry.resolved, entry.filePath);
-  } else {
-    await projectCtx.writeFile(entry.resolved, entry.filePath, entry.previousContent);
-  }
-  // Move the entry from the undo stack to the redo stack so the user can
-  // bring the AI's content back if they undid too far.
-  removeUndoEntry(entry);
-  pushRedoEntry(entry);
-}
-
-async function applyRedo(entry: UndoEntry): Promise<void> {
-  // Re-apply the AI's content. For "new file" edits this also re-creates the
-  // file from scratch — projectCtx.writeFile will create it if missing.
+// Re-apply a previously-undone AI edit. Caller has already popped the
+// entry from the in-memory redo stack; on success the corresponding DB
+// undo row is reactivated (usedAt cleared, expiresAt bumped) so the
+// user can undo again. On failure we re-push so the user can retry.
+async function applyRedo(entry: RedoEntry): Promise<void> {
+  // Re-apply the AI's content. For "new file" edits this also re-creates
+  // the file from scratch — projectCtx.writeFile will create it if missing.
   await projectCtx.writeFile(entry.resolved, entry.filePath, entry.newContent);
-  // Entry is already removed from redo by the caller (popTopRedoEntry).
-  // Put it back on the undo stack so it can be undone again later.
-  pushUndoEntry(entry);
+  // Reactivate the persisted undo row so the user can undo this edit
+  // again. Bump expiresAt off "now" so they get the full TTL window.
+  const now = new Date();
+  await db
+    .update(workbenchUndoEntriesTable)
+    .set({ usedAt: null, expiresAt: new Date(now.getTime() + UNDO_TTL_MS) })
+    .where(eq(workbenchUndoEntriesTable.id, entry.editId));
 }
 
 router.post("/undo-edit", requireAuth, async (req, res): Promise<void> => {
@@ -878,13 +938,23 @@ router.post("/undo-edit", requireAuth, async (req, res): Promise<void> => {
     res.status(400).json({ error: "editId is required" });
     return;
   }
-  pruneUndoStore();
-  const entry = editsById.get(editId);
+  await pruneUndoStore();
+  const rows = await db
+    .select()
+    .from(workbenchUndoEntriesTable)
+    .where(eq(workbenchUndoEntriesTable.id, editId))
+    .limit(1);
+  const entry = rows[0];
   if (!entry) {
     res.status(404).json({ error: "Edit not found or expired" });
     return;
   }
-  if (entry.used) {
+  if (entry.expiresAt.getTime() <= Date.now()) {
+    await db.delete(workbenchUndoEntriesTable).where(eq(workbenchUndoEntriesTable.id, editId));
+    res.status(404).json({ error: "Edit not found or expired" });
+    return;
+  }
+  if (entry.usedAt) {
     res.status(409).json({ error: "Edit was already undone" });
     return;
   }
@@ -893,13 +963,19 @@ router.post("/undo-edit", requireAuth, async (req, res): Promise<void> => {
     res.status(403).json({ error: "You did not author this edit" });
     return;
   }
+  const descriptor = parsePersistedDescriptor(entry.projectDescriptor);
+  if (!descriptor) {
+    res.status(500).json({ error: "Stored project context is invalid" });
+    return;
+  }
   // Enforce stack semantics: only the most recent edit to this file can be
   // undone individually, otherwise restoring an older "previousContent" would
   // wipe out newer changes that the user hasn't agreed to discard.
-  const stack = fileUndoStacks.get(entry.stackKey) || [];
+  const stack = await getActiveStackForFile(userId, descriptor, entry.filePath);
   const top = stack[stack.length - 1];
-  if (!top || top.editId !== entry.editId) {
-    const newerCount = stack.length - 1 - stack.findIndex(e => e.editId === editId);
+  if (!top || top.id !== entry.id) {
+    const idx = stack.findIndex(e => e.id === entry.id);
+    const newerCount = idx >= 0 ? stack.length - 1 - idx : stack.length;
     res.status(409).json({
       error: `There ${newerCount === 1 ? "is" : "are"} ${newerCount} newer edit${newerCount === 1 ? "" : "s"} to this file. Undo the latest first, or use "Undo last edit to this file".`,
       code: "not_top_of_stack",
@@ -907,9 +983,49 @@ router.post("/undo-edit", requireAuth, async (req, res): Promise<void> => {
     });
     return;
   }
+  let resolved: projectCtx.ResolvedProject | null;
   try {
-    await applyUndo(entry);
-    const remaining = fileUndoStacks.get(entry.stackKey)?.length ?? 0;
+    resolved = await projectCtx.resolveAndEnsureCloned(descriptor);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Could not access project to undo edit" });
+    return;
+  }
+  if (!resolved) {
+    res.status(500).json({ error: "Could not access project to undo edit" });
+    return;
+  }
+  try {
+    if (entry.isNew) {
+      await projectCtx.deleteFile(resolved, entry.filePath);
+    } else {
+      await projectCtx.writeFile(resolved, entry.filePath, entry.previousContent);
+    }
+    const usedAt = new Date();
+    const updated = await db
+      .update(workbenchUndoEntriesTable)
+      .set({ usedAt })
+      .where(and(eq(workbenchUndoEntriesTable.id, editId), sql`${workbenchUndoEntriesTable.usedAt} IS NULL`))
+      .returning({ id: workbenchUndoEntriesTable.id });
+    if (updated.length === 0) {
+      res.status(409).json({ error: "Edit was already undone" });
+      return;
+    }
+    // Push to in-memory redo stack so the user can re-apply the AI's
+    // content. Redo state lives only in memory (server restart clears it),
+    // matching the original Task #16 behavior.
+    pushRedoEntry({
+      editId: entry.id,
+      resolved,
+      descriptor,
+      filePath: entry.filePath,
+      previousContent: entry.previousContent,
+      newContent: entry.newContent,
+      isNew: entry.isNew,
+      createdAt: entry.createdAt.getTime(),
+      userId,
+      stackKey: fileStackKey(userId, descriptor, entry.filePath),
+    });
+    const remaining = (await getActiveStackForFile(userId, descriptor, entry.filePath)).length;
     res.json({
       ok: true,
       path: entry.filePath,
@@ -992,7 +1108,7 @@ router.post("/undo-last-file-edit", requireAuth, async (req, res): Promise<void>
   const userId = String((req as any).user?.id || (req as any).user?.sub || "anon");
   let resolved: projectCtx.ResolvedProject | null = null;
   try {
-    resolved = project ? await projectCtx.resolveDescriptor(project) : null;
+    resolved = project ? await projectCtx.resolveAndEnsureCloned(project) : null;
   } catch (err: any) {
     res.status(400).json({ error: err.message || "could not resolve project" });
     return;
@@ -1001,20 +1117,45 @@ router.post("/undo-last-file-edit", requireAuth, async (req, res): Promise<void>
     res.status(400).json({ error: "could not resolve project" });
     return;
   }
-  pruneUndoStore();
-  const stackKey = fileStackKey(userId, resolved, filePath);
-  const stack = fileUndoStacks.get(stackKey);
-  if (!stack || stack.length === 0) {
+  const descriptor = toPersistedDescriptor(resolved.descriptor);
+  await pruneUndoStore();
+  const stack = await getActiveStackForFile(userId, descriptor, filePath);
+  if (stack.length === 0) {
     res.status(404).json({ error: "No undoable edits for this file" });
     return;
   }
   const top = stack[stack.length - 1];
   try {
-    await applyUndo(top);
-    const remaining = fileUndoStacks.get(stackKey)?.length ?? 0;
+    if (top.isNew) {
+      await projectCtx.deleteFile(resolved, top.filePath);
+    } else {
+      await projectCtx.writeFile(resolved, top.filePath, top.previousContent);
+    }
+    const updated = await db
+      .update(workbenchUndoEntriesTable)
+      .set({ usedAt: new Date() })
+      .where(and(eq(workbenchUndoEntriesTable.id, top.id), sql`${workbenchUndoEntriesTable.usedAt} IS NULL`))
+      .returning({ id: workbenchUndoEntriesTable.id });
+    if (updated.length === 0) {
+      res.status(409).json({ error: "Edit was already undone" });
+      return;
+    }
+    pushRedoEntry({
+      editId: top.id,
+      resolved,
+      descriptor,
+      filePath: top.filePath,
+      previousContent: top.previousContent,
+      newContent: top.newContent,
+      isNew: top.isNew,
+      createdAt: top.createdAt.getTime(),
+      userId,
+      stackKey: fileStackKey(userId, descriptor, top.filePath),
+    });
+    const remaining = (await getActiveStackForFile(userId, descriptor, filePath)).length;
     res.json({
       ok: true,
-      editId: top.editId,
+      editId: top.id,
       path: top.filePath,
       restoredBytes: Buffer.byteLength(top.previousContent, "utf-8"),
       deleted: top.isNew,
@@ -1029,13 +1170,15 @@ router.post("/undo-last-file-edit", requireAuth, async (req, res): Promise<void>
 // be at the top of its file's redo stack (otherwise restoring an older
 // "newContent" would silently overwrite a newer undo the user wants kept),
 // the requester must have authored it, and a 409/404 is returned otherwise.
+// Redo state is in-memory only (does not survive server restart) — undo
+// state, by contrast, is persisted in workbench_undo_entries.
 router.post("/redo-edit", requireAuth, async (req, res): Promise<void> => {
   const { editId } = req.body || {};
   if (!editId || typeof editId !== "string") {
     res.status(400).json({ error: "editId is required" });
     return;
   }
-  pruneEditStores();
+  await pruneUndoStore();
   const entry = redoEditsById.get(editId);
   if (!entry) {
     res.status(404).json({
@@ -1062,6 +1205,7 @@ router.post("/redo-edit", requireAuth, async (req, res): Promise<void> => {
   const popped = popTopRedoEntry(entry.stackKey)!;
   try {
     await applyRedo(popped);
+    const undoStackDepth = (await getActiveStackForFile(userId, popped.descriptor, popped.filePath)).length;
     res.json({
       ok: true,
       editId: popped.editId,
@@ -1069,7 +1213,7 @@ router.post("/redo-edit", requireAuth, async (req, res): Promise<void> => {
       reappliedBytes: Buffer.byteLength(popped.newContent, "utf-8"),
       isNew: popped.isNew,
       remainingRedoForFile: fileRedoStacks.get(entry.stackKey)?.length ?? 0,
-      undoStackDepth: fileUndoStacks.get(entry.stackKey)?.length ?? 0,
+      undoStackDepth,
     });
   } catch (err: any) {
     // Re-push so the user can retry — a transient write error
@@ -1091,7 +1235,7 @@ router.post("/redo-last-file-edit", requireAuth, async (req, res): Promise<void>
   const userId = String((req as any).user?.id || (req as any).user?.sub || "anon");
   let resolved: projectCtx.ResolvedProject | null = null;
   try {
-    resolved = project ? await projectCtx.resolveDescriptor(project) : null;
+    resolved = project ? await projectCtx.resolveAndEnsureCloned(project) : null;
   } catch (err: any) {
     res.status(400).json({ error: err.message || "could not resolve project" });
     return;
@@ -1100,8 +1244,9 @@ router.post("/redo-last-file-edit", requireAuth, async (req, res): Promise<void>
     res.status(400).json({ error: "could not resolve project" });
     return;
   }
-  pruneEditStores();
-  const stackKey = fileStackKey(userId, resolved, filePath);
+  await pruneUndoStore();
+  const descriptor = toPersistedDescriptor(resolved.descriptor);
+  const stackKey = fileStackKey(userId, descriptor, filePath);
   const stack = fileRedoStacks.get(stackKey);
   if (!stack || stack.length === 0) {
     res.status(404).json({ error: "Nothing to redo for this file" });
@@ -1110,6 +1255,7 @@ router.post("/redo-last-file-edit", requireAuth, async (req, res): Promise<void>
   const popped = popTopRedoEntry(stackKey)!;
   try {
     await applyRedo(popped);
+    const undoStackDepth = (await getActiveStackForFile(userId, descriptor, filePath)).length;
     res.json({
       ok: true,
       editId: popped.editId,
@@ -1117,13 +1263,43 @@ router.post("/redo-last-file-edit", requireAuth, async (req, res): Promise<void>
       reappliedBytes: Buffer.byteLength(popped.newContent, "utf-8"),
       isNew: popped.isNew,
       remainingRedoForFile: fileRedoStacks.get(stackKey)?.length ?? 0,
-      undoStackDepth: fileUndoStacks.get(stackKey)?.length ?? 0,
+      undoStackDepth,
     });
   } catch (err: any) {
     // Re-push so the user can retry — a transient write error
     // shouldn't silently lose their redo entry.
     pushRedoEntry(popped);
     res.status(500).json({ error: err.message || "Redo failed" });
+  }
+});
+
+router.get("/undo-entries", requireAuth, async (req, res): Promise<void> => {
+  await pruneUndoStore();
+  const userId = String((req as any).user?.id || (req as any).user?.sub || "anon");
+  try {
+    const rows = await db
+      .select({
+        id: workbenchUndoEntriesTable.id,
+        filePath: workbenchUndoEntriesTable.filePath,
+        isNew: workbenchUndoEntriesTable.isNew,
+        usedAt: workbenchUndoEntriesTable.usedAt,
+        createdAt: workbenchUndoEntriesTable.createdAt,
+        expiresAt: workbenchUndoEntriesTable.expiresAt,
+      })
+      .from(workbenchUndoEntriesTable)
+      .where(eq(workbenchUndoEntriesTable.userId, userId));
+    res.json({
+      entries: rows.map(r => ({
+        editId: r.id,
+        path: r.filePath,
+        isNew: r.isNew,
+        undone: !!r.usedAt,
+        createdAt: r.createdAt.toISOString(),
+        expiresAt: r.expiresAt.toISOString(),
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to load undo entries", entries: [] });
   }
 });
 
