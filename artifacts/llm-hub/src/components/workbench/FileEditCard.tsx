@@ -16,15 +16,17 @@ export interface FileEdit {
   undoError?: string | null;
   undoDisabled?: boolean;
   undoSkipReason?: string;
+  stackDepth?: number;
 }
 
 interface Props {
   edit: FileEdit;
   onUndo: (editId: string) => void;
   defaultOpen?: boolean;
+  isLatestForFile?: boolean;
 }
 
-export function FileEditCard({ edit, onUndo, defaultOpen = false }: Props) {
+export function FileEditCard({ edit, onUndo, defaultOpen = false, isLatestForFile = true }: Props) {
   const [open, setOpen] = useState(defaultOpen);
   const lines = edit.diff.split("\n");
 
@@ -63,6 +65,13 @@ export function FileEditCard({ edit, onUndo, defaultOpen = false }: Props) {
               title={edit.undoSkipReason || "Undo unavailable for this edit"}
             >
               Undo unavailable
+            </span>
+          ) : !isLatestForFile ? (
+            <span
+              className="text-[10px] text-[#6c7086] italic"
+              title="A newer edit was made to this file. Undo the most recent edit first."
+            >
+              Older edit
             </span>
           ) : (
             <button

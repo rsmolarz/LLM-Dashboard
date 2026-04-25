@@ -15,6 +15,7 @@ import { randomBytes } from "crypto";
 const router: IRouter = Router();
 
 interface UndoEntry {
+  editId: string;
   resolved: projectCtx.ResolvedProject;
   filePath: string;
   previousContent: string;
@@ -23,16 +24,65 @@ interface UndoEntry {
   createdAt: number;
   used: boolean;
   userId: string;
+  stackKey: string;
 }
 
-const undoStore = new Map<string, UndoEntry>();
+// Per-file edit stacks, keyed by `userId|projectKey|filePath`. Each push
+// records one AI write_file; undoing always pops from the top so multiple
+// edits to the same file rewind one step at a time in reverse order.
+const fileUndoStacks = new Map<string, UndoEntry[]>();
+// Reverse index for fast per-edit lookup by editId.
+const editsById = new Map<string, UndoEntry>();
 const UNDO_TTL_MS = 60 * 60 * 1000;
+// Hard cap per file so a runaway agent can't grow memory unbounded between
+// TTL prunes. Older entries are dropped (and their per-edit undo will 404).
+const MAX_STACK_PER_FILE = 50;
+
+function projectKeyFor(resolved: projectCtx.ResolvedProject): string {
+  if (resolved.origin === "vps") return `vps:${resolved.remotePath || ""}`;
+  return `${resolved.origin}:${resolved.localPath || ""}`;
+}
+
+function fileStackKey(userId: string, resolved: projectCtx.ResolvedProject, filePath: string): string {
+  return `${userId}|${projectKeyFor(resolved)}|${filePath}`;
+}
 
 function pruneUndoStore() {
   const cutoff = Date.now() - UNDO_TTL_MS;
-  for (const [k, v] of undoStore) {
-    if (v.createdAt < cutoff) undoStore.delete(k);
+  for (const [key, stack] of fileUndoStacks) {
+    const kept: UndoEntry[] = [];
+    for (const e of stack) {
+      if (e.used || e.createdAt < cutoff) {
+        editsById.delete(e.editId);
+      } else {
+        kept.push(e);
+      }
+    }
+    if (kept.length === 0) fileUndoStacks.delete(key);
+    else fileUndoStacks.set(key, kept);
   }
+}
+
+function pushUndoEntry(entry: UndoEntry) {
+  const stack = fileUndoStacks.get(entry.stackKey) || [];
+  stack.push(entry);
+  // Enforce per-file cap by dropping oldest entries.
+  while (stack.length > MAX_STACK_PER_FILE) {
+    const dropped = stack.shift();
+    if (dropped) editsById.delete(dropped.editId);
+  }
+  fileUndoStacks.set(entry.stackKey, stack);
+  editsById.set(entry.editId, entry);
+}
+
+function removeUndoEntry(entry: UndoEntry) {
+  const stack = fileUndoStacks.get(entry.stackKey);
+  if (stack) {
+    const filtered = stack.filter(e => e.editId !== entry.editId);
+    if (filtered.length === 0) fileUndoStacks.delete(entry.stackKey);
+    else fileUndoStacks.set(entry.stackKey, filtered);
+  }
+  editsById.delete(entry.editId);
 }
 const PROJECT_ROOT = process.env.NODE_ENV === "production"
   ? process.cwd()
@@ -655,11 +705,14 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
               const r = await projectCtx.writeFile(resolved, targetPath, newContent);
               const diff = unifiedDiff(previousContent, newContent, targetPath);
               pruneUndoStore();
-              const userId = (req as any).user?.id || (req as any).user?.sub || "anon";
+              const userId = String((req as any).user?.id || (req as any).user?.sub || "anon");
               let editId: string | undefined;
+              let stackDepth: number | undefined;
               if (undoSafe) {
                 editId = randomBytes(12).toString("hex");
-                undoStore.set(editId, {
+                const stackKey = fileStackKey(userId, resolved, targetPath);
+                pushUndoEntry({
+                  editId,
                   resolved,
                   filePath: targetPath,
                   previousContent,
@@ -667,8 +720,10 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
                   isNew,
                   createdAt: Date.now(),
                   used: false,
-                  userId: String(userId),
+                  userId,
+                  stackKey,
                 });
+                stackDepth = fileUndoStacks.get(stackKey)?.length;
               }
               const summary = `wrote ${targetPath} (${r.bytes}B${isNew ? ", new" : `, +${diff.stats.added}/-${diff.stats.removed}`})`;
               resultText = JSON.stringify({ ok: true, bytes: r.bytes, path: targetPath, isNew, added: diff.stats.added, removed: diff.stats.removed });
@@ -687,6 +742,7 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
                 summary,
                 undoDisabled: !undoSafe,
                 undoSkipReason,
+                stackDepth,
               })}\n\n`);
             } else if (tu.name === "run_shell") {
               const r = await projectCtx.execCommand(resolved, tu.input.command);
@@ -731,6 +787,16 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
   }
 });
 
+async function applyUndo(entry: UndoEntry): Promise<void> {
+  if (entry.isNew) {
+    await projectCtx.deleteFile(entry.resolved, entry.filePath);
+  } else {
+    await projectCtx.writeFile(entry.resolved, entry.filePath, entry.previousContent);
+  }
+  entry.used = true;
+  removeUndoEntry(entry);
+}
+
 router.post("/undo-edit", requireAuth, async (req, res): Promise<void> => {
   const { editId } = req.body || {};
   if (!editId || typeof editId !== "string") {
@@ -738,7 +804,7 @@ router.post("/undo-edit", requireAuth, async (req, res): Promise<void> => {
     return;
   }
   pruneUndoStore();
-  const entry = undoStore.get(editId);
+  const entry = editsById.get(editId);
   if (!entry) {
     res.status(404).json({ error: "Edit not found or expired" });
     return;
@@ -752,14 +818,75 @@ router.post("/undo-edit", requireAuth, async (req, res): Promise<void> => {
     res.status(403).json({ error: "You did not author this edit" });
     return;
   }
+  // Enforce stack semantics: only the most recent edit to this file can be
+  // undone individually, otherwise restoring an older "previousContent" would
+  // wipe out newer changes that the user hasn't agreed to discard.
+  const stack = fileUndoStacks.get(entry.stackKey) || [];
+  const top = stack[stack.length - 1];
+  if (!top || top.editId !== entry.editId) {
+    const newerCount = stack.length - 1 - stack.findIndex(e => e.editId === editId);
+    res.status(409).json({
+      error: `There ${newerCount === 1 ? "is" : "are"} ${newerCount} newer edit${newerCount === 1 ? "" : "s"} to this file. Undo the latest first, or use "Undo last edit to this file".`,
+      code: "not_top_of_stack",
+      newerCount,
+    });
+    return;
+  }
   try {
-    if (entry.isNew) {
-      await projectCtx.deleteFile(entry.resolved, entry.filePath);
-    } else {
-      await projectCtx.writeFile(entry.resolved, entry.filePath, entry.previousContent);
-    }
-    entry.used = true;
-    res.json({ ok: true, path: entry.filePath, restoredBytes: Buffer.byteLength(entry.previousContent, "utf-8"), deleted: entry.isNew });
+    await applyUndo(entry);
+    const remaining = fileUndoStacks.get(entry.stackKey)?.length ?? 0;
+    res.json({
+      ok: true,
+      path: entry.filePath,
+      restoredBytes: Buffer.byteLength(entry.previousContent, "utf-8"),
+      deleted: entry.isNew,
+      remainingForFile: remaining,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Undo failed" });
+  }
+});
+
+// Pop the most recent unused edit for a given file. The frontend "Undo last
+// edit to this file" affordance calls this so it works even when the user
+// no longer has the latest editId in view (e.g. after a chat refresh).
+router.post("/undo-last-file-edit", requireAuth, async (req, res): Promise<void> => {
+  const { filePath, project } = req.body || {};
+  if (!filePath || typeof filePath !== "string") {
+    res.status(400).json({ error: "filePath is required" });
+    return;
+  }
+  const userId = String((req as any).user?.id || (req as any).user?.sub || "anon");
+  let resolved: projectCtx.ResolvedProject | null = null;
+  try {
+    resolved = project ? await projectCtx.resolveDescriptor(project) : null;
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || "could not resolve project" });
+    return;
+  }
+  if (!resolved) {
+    res.status(400).json({ error: "could not resolve project" });
+    return;
+  }
+  pruneUndoStore();
+  const stackKey = fileStackKey(userId, resolved, filePath);
+  const stack = fileUndoStacks.get(stackKey);
+  if (!stack || stack.length === 0) {
+    res.status(404).json({ error: "No undoable edits for this file" });
+    return;
+  }
+  const top = stack[stack.length - 1];
+  try {
+    await applyUndo(top);
+    const remaining = fileUndoStacks.get(stackKey)?.length ?? 0;
+    res.json({
+      ok: true,
+      editId: top.editId,
+      path: top.filePath,
+      restoredBytes: Buffer.byteLength(top.previousContent, "utf-8"),
+      deleted: top.isNew,
+      remainingForFile: remaining,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Undo failed" });
   }

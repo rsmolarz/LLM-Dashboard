@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   Terminal, FolderTree, Eye, GitBranch, Database, Shield,
@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
 import ProjectSidebar from "@/components/workbench/ProjectSidebar";
 import { FileEditCard, type FileEdit } from "@/components/workbench/FileEditCard";
+import { FileEditSummary } from "@/components/workbench/FileEditSummary";
 import { FolderPlus, Upload, Paperclip } from "lucide-react";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { useSelectedProject, projectDescriptorFromSidebar } from "@/hooks/useSelectedProject";
@@ -729,6 +730,54 @@ function CodeChatPanel() {
     }
   }, []);
 
+  const [fileUndoPending, setFileUndoPending] = useState<string | null>(null);
+  const [fileUndoError, setFileUndoError] = useState<{ path: string; message: string } | null>(null);
+
+  const latestEditIdByPath = useMemo(() => {
+    const map = new Map<string, string>();
+    for (let i = fileEdits.length - 1; i >= 0; i--) {
+      const e = fileEdits[i];
+      if (!e.undone && e.editId && !map.has(e.path)) {
+        map.set(e.path, e.editId);
+      }
+    }
+    return map;
+  }, [fileEdits]);
+
+  const handleUndoLastForFile = useCallback(async (filePath: string) => {
+    setFileUndoPending(filePath);
+    setFileUndoError(null);
+    let selectedProject: any = null;
+    try {
+      const raw = localStorage.getItem("workbench-selected-project");
+      if (raw) selectedProject = JSON.parse(raw);
+    } catch {}
+    try {
+      const res = await fetch("/api/workbench/undo-last-file-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ filePath, project: selectedProject || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const undoneId: string | undefined = data.editId;
+      if (undoneId) {
+        setFileEdits(prev => prev.map(e => e.editId === undoneId ? { ...e, undone: true, undoing: false } : e));
+      } else {
+        // Fallback: mark the latest visible edit for this file as undone.
+        const latestId = latestEditIdByPath.get(filePath);
+        if (latestId) {
+          setFileEdits(prev => prev.map(e => e.editId === latestId ? { ...e, undone: true, undoing: false } : e));
+        }
+      }
+    } catch (err: any) {
+      setFileUndoError({ path: filePath, message: err.message || "Undo failed" });
+    } finally {
+      setFileUndoPending(null);
+    }
+  }, [latestEditIdByPath]);
+
   const handleStop = useCallback(() => {
     if (abortController) {
       abortController.abort();
@@ -895,8 +944,20 @@ function CodeChatPanel() {
 
           {fileEdits.length > 0 && (
             <div className="space-y-1">
+              <FileEditSummary
+                edits={fileEdits}
+                onUndoLast={handleUndoLastForFile}
+                pendingPath={fileUndoPending}
+                errorPath={fileUndoError?.path}
+                errorMessage={fileUndoError?.message}
+              />
               {fileEdits.map((e, i) => (
-                <FileEditCard key={e.editId ?? `no-undo-${i}`} edit={e} onUndo={handleUndo} />
+                <FileEditCard
+                  key={e.editId ?? `no-undo-${i}`}
+                  edit={e}
+                  onUndo={handleUndo}
+                  isLatestForFile={!!e.editId && latestEditIdByPath.get(e.path) === e.editId}
+                />
               ))}
             </div>
           )}
