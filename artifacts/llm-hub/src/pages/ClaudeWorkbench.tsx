@@ -20,6 +20,7 @@ import { usePersistedState } from "@/hooks/usePersistedState";
 import { useSelectedProject, projectDescriptorFromSidebar } from "@/hooks/useSelectedProject";
 import { ProjectContextHeader } from "@/components/workbench/ProjectContextHeader";
 import { WorkbenchErrorView } from "@/components/workbench/WorkbenchErrorView";
+import { PanelLoadError, PanelQueryError, asPanelQueryError } from "@/components/workbench/PanelLoadError";
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return "0 B";
@@ -235,16 +236,32 @@ function PreviewPanel() {
 }
 
 function GitPanel() {
-  const { data, isLoading, error, refetch } = useQuery<any>({
+  const { data, isLoading, error, refetch } = useQuery<any, PanelQueryError>({
     queryKey: ["wb-git-status"],
     queryFn: async () => {
-      const res = await fetch(`/api/workbench/git-status`, { credentials: "include" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error || `Failed to load git status (HTTP ${res.status})`);
+      let res: Response;
+      try {
+        res = await fetch(`/api/workbench/git-status`, { credentials: "include" });
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : "Network error";
+        throw new PanelQueryError(reason, "NETWORK_ERROR");
+      }
+      const body = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const reason = typeof body?.error === "string"
+          ? body.error
+          : `Failed to load git status (HTTP ${res.status})`;
+        const code = typeof body?.code === "string" ? body.code : `HTTP_${res.status}`;
+        throw new PanelQueryError(reason, code);
+      }
       return body;
     },
+    retry: false,
   });
-  const errorMessage = (error as Error | null)?.message || (data as any)?.error || null;
+  const queryError = asPanelQueryError(error);
+  const dataError = (data as { error?: string; code?: string } | undefined) ?? undefined;
+  const errorMessage = queryError?.message ?? dataError?.error ?? null;
+  const errorCode = queryError?.code ?? dataError?.code ?? null;
 
   const gitMutation = useMutation({
     mutationFn: async (command: string) => { const res = await fetch(`/api/workbench/git`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command }), credentials: "include" }); return res.json(); },
@@ -268,10 +285,7 @@ function GitPanel() {
       <div className="flex-1 overflow-y-auto">
         {isLoading ? <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-6 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
         errorMessage ? (
-          <div className="p-4 space-y-2">
-            <div className="text-sm text-red-400">Could not load git status: {errorMessage}</div>
-            <button onClick={() => refetch()} className="text-[10px] px-2 py-1 rounded border border-[#313244] hover:bg-[#313244] text-[#a6adc8]">Retry</button>
-          </div>
+          <PanelLoadError what="git status" message={errorMessage} code={errorCode} onRetry={() => refetch()} />
         ) :
         <div className="p-2 space-y-3">
           {data?.changes?.length > 0 && (
@@ -314,16 +328,32 @@ function GitPanel() {
 
 function AgentActivityPanel() {
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
-  const { data, isLoading, error, refetch } = useQuery<any>({
+  const { data, isLoading, error, refetch } = useQuery<any, PanelQueryError>({
     queryKey: ["wb-agent-activity"],
     queryFn: async () => {
-      const res = await fetch(`/api/workbench/agent-activity`, { credentials: "include" });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.error || `Failed to load agent activity (HTTP ${res.status})`);
+      let res: Response;
+      try {
+        res = await fetch(`/api/workbench/agent-activity`, { credentials: "include" });
+      } catch (err: unknown) {
+        const reason = err instanceof Error ? err.message : "Network error";
+        throw new PanelQueryError(reason, "NETWORK_ERROR");
+      }
+      const body = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        const reason = typeof body?.error === "string"
+          ? body.error
+          : `Failed to load agent activity (HTTP ${res.status})`;
+        const code = typeof body?.code === "string" ? body.code : `HTTP_${res.status}`;
+        throw new PanelQueryError(reason, code);
+      }
       return body;
     },
+    retry: false,
   });
-  const errorMessage = (error as Error | null)?.message || (data as any)?.error || null;
+  const queryError = asPanelQueryError(error);
+  const dataError = (data as { error?: string; code?: string } | undefined) ?? undefined;
+  const errorMessage = queryError?.message ?? dataError?.error ?? null;
+  const errorCode = queryError?.code ?? dataError?.code ?? null;
 
   const entries = data?.entries || [];
 
@@ -340,10 +370,7 @@ function AgentActivityPanel() {
       <div className="flex-1 overflow-y-auto">
         {isLoading ? <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-10 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
         errorMessage ? (
-          <div className="p-4 space-y-2">
-            <div className="text-sm text-red-400">Could not load agent activity: {errorMessage}</div>
-            <button onClick={() => refetch()} className="text-[10px] px-2 py-1 rounded border border-[#313244] hover:bg-[#313244] text-[#a6adc8]">Retry</button>
-          </div>
+          <PanelLoadError what="agent activity" message={errorMessage} code={errorCode} onRetry={() => refetch()} />
         ) :
         entries.length === 0 ? <div className="p-4 text-sm text-center text-[#585b70]">No activity found</div> :
         <div className="p-1">{entries.map((entry: any) => {
