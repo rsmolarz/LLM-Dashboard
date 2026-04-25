@@ -227,12 +227,19 @@ export interface PullResult {
   changedFiles: string[];
   preservedDirty: boolean;
   discardedDirty: boolean;
+  stashed: boolean;
+  stashedFiles: string[];
+  reappliedFiles: string[];
+  conflicts: string[];
+  stashKept: boolean;
+  stashRef: string | null;
+  reapplyError: string | null;
   info: CloneInfo;
 }
 
 export async function pullLatest(
   descriptor: ProjectDescriptor,
-  opts: { discardLocal?: boolean } = {}
+  opts: { discardLocal?: boolean; stashAndReapply?: boolean } = {}
 ): Promise<PullResult> {
   if (descriptor.origin !== "replit") {
     throw new Error("pullLatest only valid for replit projects");
@@ -243,13 +250,37 @@ export async function pullLatest(
   }
 
   const before = await getCloneInfo(descriptor);
-  if (before.dirty && !opts.discardLocal) {
+  if (before.dirty && !opts.discardLocal && !opts.stashAndReapply) {
     const err: any = new Error(
-      `Local changes would be overwritten in ${before.dirtyFiles.length} file(s). Commit, save, or pass discardLocal=true to discard.`
+      `Local changes would be overwritten in ${before.dirtyFiles.length} file(s). Commit, save, stash, or pass discardLocal=true to discard.`
     );
     err.code = "DIRTY_WORKING_TREE";
     err.dirtyFiles = before.dirtyFiles;
     throw err;
+  }
+
+  let stashed = false;
+  let stashedFiles: string[] = [];
+  let stashMessage = "";
+  if (before.dirty && opts.stashAndReapply) {
+    stashMessage = `workbench-stash-${Date.now()}`;
+    stashedFiles = before.dirtyFiles.slice();
+    try {
+      // -c flags so stash works even when user.email/name aren't configured in
+      // the clone. Stash creates internal commits which may otherwise fail.
+      await runGit(
+        dest,
+        [
+          "-c", "user.email=workbench@replit.local",
+          "-c", "user.name=Workbench",
+          "stash", "push", "-u", "-m", stashMessage,
+        ],
+        30000
+      );
+      stashed = true;
+    } catch (e: any) {
+      throw new Error(`Failed to stash local changes: ${e.message}`);
+    }
   }
 
   let fromRev: string | null = null;
@@ -258,7 +289,48 @@ export async function pullLatest(
     fromRev = stdout.trim() || null;
   } catch {}
 
-  await runGit(dest, ["fetch", "--depth", "1", "origin", "HEAD"], 120000);
+  // Helper that, if we're holding a stash, attaches recovery metadata to any
+  // error thrown from the fetch/reset phase so the caller can surface it.
+  const annotatePullError = async (err: Error): Promise<never> => {
+    if (!stashed) throw err;
+    // Try to recover automatically: if fetch/reset failed before pop, the
+    // working tree is empty. Pop the stash to put the user back where they
+    // started. If pop also fails, leave the stash in place and surface its ref.
+    let restored = false;
+    try {
+      await runGit(dest, ["stash", "pop"], 30000);
+      restored = true;
+    } catch {}
+    let ref: string | null = null;
+    if (!restored) {
+      try {
+        const { stdout } = await runGit(dest, ["stash", "list"], 10000);
+        for (const line of stdout.split("\n")) {
+          if (line.includes(stashMessage)) {
+            const m = line.match(/^(stash@\{\d+\})/);
+            if (m) ref = m[1];
+            break;
+          }
+        }
+      } catch {}
+    }
+    const wrapped: any = new Error(
+      restored
+        ? `${err.message} (local edits were stashed and restored)`
+        : `${err.message} (local edits remain stashed${ref ? ` as ${ref}; recover with 'git stash pop ${ref}'` : ""})`
+    );
+    wrapped.code = "PULL_FAILED_AFTER_STASH";
+    wrapped.stashKept = !restored;
+    wrapped.stashRef = ref;
+    wrapped.stashedFiles = stashedFiles;
+    throw wrapped;
+  };
+
+  try {
+    await runGit(dest, ["fetch", "--depth", "1", "origin", "HEAD"], 120000);
+  } catch (e: any) {
+    await annotatePullError(e);
+  }
 
   if (before.dirty && opts.discardLocal) {
     try {
@@ -267,7 +339,11 @@ export async function pullLatest(
     } catch {}
   }
 
-  await runGit(dest, ["reset", "--hard", "FETCH_HEAD"], 30000);
+  try {
+    await runGit(dest, ["reset", "--hard", "FETCH_HEAD"], 30000);
+  } catch (e: any) {
+    await annotatePullError(e);
+  }
 
   let toRev: string | null = null;
   try {
@@ -283,6 +359,51 @@ export async function pullLatest(
     } catch {}
   }
 
+  let reappliedFiles: string[] = [];
+  let conflicts: string[] = [];
+  let stashKept = false;
+  let stashRef: string | null = null;
+  let reapplyError: string | null = null;
+
+  if (stashed) {
+    try {
+      await runGit(dest, ["stash", "pop"], 30000);
+      // Pop succeeded with no conflicts; stash entry was auto-dropped.
+      reappliedFiles = stashedFiles;
+    } catch (e: any) {
+      // Pop returned non-zero. Most commonly this is a merge conflict; the
+      // stash entry is preserved by git so users can recover manually.
+      reapplyError = (e?.message || "git stash pop failed").trim();
+      try {
+        const { stdout } = await runGit(dest, ["status", "--porcelain"], 15000);
+        for (const raw of stdout.split("\n")) {
+          if (!raw) continue;
+          const code = raw.slice(0, 2);
+          const name = raw.slice(3).trim();
+          if (!name) continue;
+          // Unmerged entries: any combination containing 'U', plus AA / DD.
+          if (code.includes("U") || code === "AA" || code === "DD") {
+            if (!conflicts.includes(name)) conflicts.push(name);
+          }
+        }
+      } catch {}
+      try {
+        const { stdout } = await runGit(dest, ["stash", "list"], 10000);
+        for (const line of stdout.split("\n")) {
+          if (line.includes(stashMessage)) {
+            const m = line.match(/^(stash@\{\d+\})/);
+            if (m) {
+              stashRef = m[1];
+              stashKept = true;
+            }
+            break;
+          }
+        }
+      } catch {}
+      reappliedFiles = stashedFiles.filter(f => !conflicts.includes(f));
+    }
+  }
+
   const info = await getCloneInfo(descriptor);
   return {
     localPath: dest,
@@ -292,6 +413,13 @@ export async function pullLatest(
     changedFiles,
     preservedDirty: !before.dirty,
     discardedDirty: before.dirty && !!opts.discardLocal,
+    stashed,
+    stashedFiles,
+    reappliedFiles,
+    conflicts,
+    stashKept,
+    stashRef,
+    reapplyError,
     info,
   };
 }

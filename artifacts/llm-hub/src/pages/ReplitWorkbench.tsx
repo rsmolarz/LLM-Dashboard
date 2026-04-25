@@ -27,6 +27,14 @@ interface CloneInfo {
   branch: string | null;
 }
 
+interface ReapplyResult {
+  reappliedFiles: string[];
+  conflicts: string[];
+  stashKept: boolean;
+  stashRef: string | null;
+  reapplyError: string | null;
+}
+
 interface CloneStatus {
   localPath: string | null;
   cloned: boolean;
@@ -35,6 +43,7 @@ interface CloneStatus {
   info: CloneInfo | null;
   lastPullSummary: string | null;
   pullPending: boolean;
+  lastReapply: ReapplyResult | null;
 }
 
 function formatAge(ms: number | null): string {
@@ -209,7 +218,7 @@ function FileTree({ project, status }: { project: SelectedProject; status: Clone
 
 function CloneAndChat({ project }: { project: SelectedProject }) {
   const { user } = useAuth();
-  const [status, setStatus] = useState<CloneStatus>({ localPath: null, cloned: false, loading: false, error: null, info: null, lastPullSummary: null, pullPending: false });
+  const [status, setStatus] = useState<CloneStatus>({ localPath: null, cloned: false, loading: false, error: null, info: null, lastPullSummary: null, pullPending: false, lastReapply: null });
   const [dirtyPrompt, setDirtyPrompt] = useState<{ files: string[]; message: string } | null>(null);
   const [messages, setMessages] = usePersistedState<ChatMessage[]>(`replit-wb-chat-${project.path}`, []);
   const [input, setInput] = useState("");
@@ -312,15 +321,16 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
     }
   }, [project]);
 
-  const pullLatest = useCallback(async (discardLocal = false) => {
-    setStatus(s => ({ ...s, pullPending: true, error: null }));
+  const pullLatest = useCallback(async (opts: { discardLocal?: boolean; stashAndReapply?: boolean } = {}) => {
+    const { discardLocal = false, stashAndReapply = false } = opts;
+    setStatus(s => ({ ...s, pullPending: true, error: null, lastReapply: null }));
     setDirtyPrompt(null);
     try {
       const res = await fetch("/api/project-context/pull", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ project, discardLocal }),
+        body: JSON.stringify({ project, discardLocal, stashAndReapply }),
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 409 && data.code === "DIRTY_WORKING_TREE") {
@@ -328,16 +338,53 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
         setStatus(s => ({ ...s, pullPending: false }));
         return;
       }
+      if (data.code === "PULL_FAILED_AFTER_STASH") {
+        setStatus(s => ({
+          ...s,
+          pullPending: false,
+          error: data.error || "Pull failed after stashing local changes.",
+          lastReapply: {
+            reappliedFiles: data.stashKept ? [] : (data.stashedFiles || []),
+            conflicts: [],
+            stashKept: !!data.stashKept,
+            stashRef: data.stashRef || null,
+            reapplyError: data.error || null,
+          },
+        }));
+        return;
+      }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      const summary = data.pulled
-        ? `Pulled ${data.changedFiles?.length || 0} changed file(s)${data.discardedDirty ? " (discarded local edits)" : ""}.`
-        : "Already up to date.";
+      let summary: string;
+      if (data.stashed) {
+        const reCount = data.reappliedFiles?.length || 0;
+        const cfCount = data.conflicts?.length || 0;
+        const parts: string[] = [];
+        parts.push(data.pulled ? `Pulled ${data.changedFiles?.length || 0} changed file(s)` : "Already up to date");
+        parts.push(`re-applied ${reCount} stashed file(s)`);
+        if (cfCount > 0) parts.push(`${cfCount} conflict(s)`);
+        if (data.stashKept) parts.push(`stash kept as ${data.stashRef}`);
+        summary = parts.join(" · ") + ".";
+      } else {
+        summary = data.pulled
+          ? `Pulled ${data.changedFiles?.length || 0} changed file(s)${data.discardedDirty ? " (discarded local edits)" : ""}.`
+          : "Already up to date.";
+      }
+      const lastReapply: ReapplyResult | null = data.stashed
+        ? {
+            reappliedFiles: data.reappliedFiles || [],
+            conflicts: data.conflicts || [],
+            stashKept: !!data.stashKept,
+            stashRef: data.stashRef || null,
+            reapplyError: data.reapplyError || null,
+          }
+        : null;
       setStatus(s => ({
         ...s,
         pullPending: false,
         info: data.info || s.info,
         localPath: data.localPath || s.localPath,
         lastPullSummary: summary,
+        lastReapply,
       }));
     } catch (e: any) {
       setStatus(s => ({ ...s, pullPending: false, error: e.message }));
@@ -345,7 +392,7 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
   }, [project]);
 
   useEffect(() => {
-    setStatus({ localPath: null, cloned: false, loading: false, error: null, info: null, lastPullSummary: null, pullPending: false });
+    setStatus({ localPath: null, cloned: false, loading: false, error: null, info: null, lastPullSummary: null, pullPending: false, lastReapply: null });
     setDirtyPrompt(null);
     setMessages([]);
     setToolEvents([]);
@@ -473,7 +520,7 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
           {cloned ? (
             <>
               <button
-                onClick={() => pullLatest(false)}
+                onClick={() => pullLatest()}
                 disabled={busy || !user}
                 className="px-2 py-1 rounded text-[11px] bg-[#89b4fa] text-[#1e1e2e] hover:bg-[#89b4fa]/80 flex items-center gap-1 disabled:opacity-50"
                 title={!user ? "Sign in required" : "git fetch && reset --hard FETCH_HEAD"}
@@ -508,7 +555,7 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
           <Clock className="h-3.5 w-3.5 shrink-0" />
           <span>Local clone hasn't been refreshed in {formatAge(info.ageMs)}. It may be out of date with the upstream Repl.</span>
           <button
-            onClick={() => pullLatest(false)}
+            onClick={() => pullLatest()}
             disabled={busy || !user}
             className="ml-auto px-2 py-0.5 rounded bg-[#fab387] text-[#1e1e2e] hover:bg-[#fab387]/80 disabled:opacity-50"
           >
@@ -531,9 +578,17 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2 mt-1">
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
             <button
-              onClick={() => pullLatest(true)}
+              onClick={() => pullLatest({ stashAndReapply: true })}
+              disabled={status.pullPending}
+              className="px-2 py-0.5 rounded bg-[#a6e3a1] text-[#1e1e2e] hover:bg-[#a6e3a1]/80 text-[11px] disabled:opacity-50"
+              title="git stash, pull latest, then re-apply your edits (with conflict markers if needed)"
+            >
+              Stash, pull, then re-apply
+            </button>
+            <button
+              onClick={() => pullLatest({ discardLocal: true })}
               disabled={status.pullPending}
               className="px-2 py-0.5 rounded bg-[#f38ba8] text-[#1e1e2e] hover:bg-[#f38ba8]/80 text-[11px] disabled:opacity-50"
             >
@@ -544,6 +599,74 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
               className="px-2 py-0.5 rounded bg-[#313244] text-[#cdd6f4] hover:bg-[#313244]/70 text-[11px]"
             >
               Keep local edits
+            </button>
+          </div>
+        </div>
+      )}
+      {status.lastReapply && !dirtyPrompt && (
+        <div
+          className={cn(
+            "px-3 py-2 border-b text-[11px] flex flex-col gap-1.5",
+            status.lastReapply.conflicts.length > 0 || status.lastReapply.stashKept
+              ? "bg-[#f9e2af]/10 border-[#f9e2af]/30 text-[#f9e2af]"
+              : "bg-[#a6e3a1]/10 border-[#a6e3a1]/30 text-[#a6e3a1]"
+          )}
+        >
+          <div className="flex items-start gap-2">
+            {status.lastReapply.conflicts.length > 0 || status.lastReapply.stashKept ? (
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            ) : (
+              <GitBranch className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="font-medium">
+                {status.lastReapply.conflicts.length > 0
+                  ? `Re-applied with ${status.lastReapply.conflicts.length} conflict(s)`
+                  : status.lastReapply.stashKept
+                  ? "Pull failed — local edits kept in stash"
+                  : "Local edits re-applied successfully"}
+              </div>
+              {status.lastReapply.reapplyError && (
+                <div className="text-[10px] mt-0.5 opacity-80 font-mono break-all">
+                  {status.lastReapply.reapplyError}
+                </div>
+              )}
+              {status.lastReapply.reappliedFiles.length > 0 && (
+                <div className="mt-1">
+                  <div className="text-[10px] opacity-80">Re-applied files ({status.lastReapply.reappliedFiles.length}):</div>
+                  <ul className="ml-3 list-disc text-[10px] font-mono text-[#cdd6f4] max-h-20 overflow-y-auto">
+                    {status.lastReapply.reappliedFiles.slice(0, 12).map(f => <li key={`r-${f}`}>{f}</li>)}
+                    {status.lastReapply.reappliedFiles.length > 12 && (
+                      <li className="list-none italic">…and {status.lastReapply.reappliedFiles.length - 12} more</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+              {status.lastReapply.conflicts.length > 0 && (
+                <div className="mt-1">
+                  <div className="text-[10px] opacity-80">Conflicts (resolve <code>{`<<<<<<<`}</code> markers in these files):</div>
+                  <ul className="ml-3 list-disc text-[10px] font-mono text-[#f38ba8] max-h-20 overflow-y-auto">
+                    {status.lastReapply.conflicts.slice(0, 12).map(f => <li key={`c-${f}`}>{f}</li>)}
+                    {status.lastReapply.conflicts.length > 12 && (
+                      <li className="list-none italic">…and {status.lastReapply.conflicts.length - 12} more</li>
+                    )}
+                  </ul>
+                </div>
+              )}
+              {status.lastReapply.stashKept && status.lastReapply.stashRef && (
+                <div className="mt-1 text-[10px] opacity-90">
+                  Stash kept as <code className="font-mono">{status.lastReapply.stashRef}</code>. Recover from the workbench shell with{" "}
+                  <code className="font-mono">git stash show -p {status.lastReapply.stashRef}</code> or{" "}
+                  <code className="font-mono">git stash pop {status.lastReapply.stashRef}</code>.
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setStatus(s => ({ ...s, lastReapply: null }))}
+              className="p-1 rounded hover:bg-[#313244]/50 shrink-0"
+              title="Dismiss"
+            >
+              <Trash2 className="h-3 w-3" />
             </button>
           </div>
         </div>

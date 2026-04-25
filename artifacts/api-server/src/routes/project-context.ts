@@ -152,12 +152,23 @@ router.post("/pull", requireAuth, async (req, res): Promise<void> => {
   if (!desc) { res.status(400).json({ error: "project descriptor required" }); return; }
   if (desc.origin !== "replit") { res.status(400).json({ error: "pull only valid for replit projects" }); return; }
   const discardLocal = req.body?.discardLocal === true;
+  const stashAndReapply = req.body?.stashAndReapply === true;
   try {
-    const r = await pullLatest(desc, { discardLocal });
+    const r = await pullLatest(desc, { discardLocal, stashAndReapply });
     res.json(r);
   } catch (err: any) {
     if (err?.code === "DIRTY_WORKING_TREE") {
       res.status(409).json({ error: err.message, code: "DIRTY_WORKING_TREE", dirtyFiles: err.dirtyFiles || [] });
+      return;
+    }
+    if (err?.code === "PULL_FAILED_AFTER_STASH") {
+      res.status(500).json({
+        error: err.message,
+        code: "PULL_FAILED_AFTER_STASH",
+        stashKept: !!err.stashKept,
+        stashRef: err.stashRef || null,
+        stashedFiles: err.stashedFiles || [],
+      });
       return;
     }
     res.status(500).json({ error: err.message });
