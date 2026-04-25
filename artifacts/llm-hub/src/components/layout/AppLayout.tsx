@@ -253,6 +253,7 @@ const navSections: NavSection[] = [
       },
       { href: "/compliance", label: "HIPAA", icon: Shield, adminOnly: false },
       { href: "/admin", label: "Admin", icon: Shield, adminOnly: false },
+      { href: "/admin/workbench-quotas", label: "Workbench Disk", icon: HardDrive, adminOnly: true },
     ],
   },
 ];

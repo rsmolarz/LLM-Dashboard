@@ -45,6 +45,7 @@ import CreateLlm from "@/pages/CreateLlm";
 import Workbench from "@/pages/Workbench";
 import ClaudeWorkbench from "@/pages/ClaudeWorkbench";
 import ReplitWorkbench from "@/pages/ReplitWorkbench";
+import WorkbenchQuotas from "@/pages/admin/WorkbenchQuotas";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -100,6 +101,7 @@ function Router() {
         <Route path="/workbench" component={Workbench} />
         <Route path="/claude-workbench" component={ClaudeWorkbench} />
         <Route path="/replit-workbench" component={ReplitWorkbench} />
+        <Route path="/admin/workbench-quotas" component={WorkbenchQuotas} />
         <Route component={NotFound} />
       </Switch>
     </AppLayout>

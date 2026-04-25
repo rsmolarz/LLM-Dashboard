@@ -283,6 +283,139 @@ export function getUserQuotaInfo(userId: string): UserQuotaInfo {
   };
 }
 
+/**
+ * Read the current per-user disk cap (bytes). Reflects any runtime
+ * override applied via `setUserQuotaBytes`.
+ */
+export function getUserQuotaBytes(): number {
+  return SCRATCH_USER_QUOTA_BYTES;
+}
+
+/**
+ * Read the current host-wide eviction threshold (bytes). Reflects any
+ * runtime override applied via `setHostQuotaBytes`.
+ */
+export function getHostQuotaBytes(): number {
+  return SCRATCH_HOST_QUOTA_BYTES;
+}
+
+/**
+ * The compile-time defaults for both caps. Surfaced so the admin UI
+ * can show "default 1 GiB / 10 GiB" alongside the live values.
+ */
+export function getQuotaDefaults(): { userQuotaBytes: number; hostQuotaBytes: number } {
+  return {
+    userQuotaBytes: DEFAULT_USER_QUOTA_BYTES,
+    hostQuotaBytes: DEFAULT_HOST_QUOTA_BYTES,
+  };
+}
+
+/**
+ * Override the per-user disk cap at runtime. Pass `null` to restore
+ * the env-var-or-default value. Throws on a non-positive / non-finite
+ * input so an admin endpoint can surface a clear error to the caller.
+ */
+export function setUserQuotaBytes(n: number | null): void {
+  if (n === null) {
+    SCRATCH_USER_QUOTA_BYTES = parsePositiveBytes(
+      process.env.WORKBENCH_USER_QUOTA_BYTES,
+      DEFAULT_USER_QUOTA_BYTES,
+    );
+    return;
+  }
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    throw new Error("user quota must be a positive integer number of bytes");
+  }
+  SCRATCH_USER_QUOTA_BYTES = n;
+}
+
+/**
+ * Override the host-wide eviction threshold at runtime. Pass `null`
+ * to restore the env-var-or-default value. Throws on a non-positive /
+ * non-finite input.
+ */
+export function setHostQuotaBytes(n: number | null): void {
+  if (n === null) {
+    SCRATCH_HOST_QUOTA_BYTES = parsePositiveBytes(
+      process.env.WORKBENCH_HOST_QUOTA_BYTES,
+      DEFAULT_HOST_QUOTA_BYTES,
+    );
+    return;
+  }
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+    throw new Error("host quota must be a positive integer number of bytes");
+  }
+  SCRATCH_HOST_QUOTA_BYTES = n;
+}
+
+/**
+ * Per-entry usage info for a single user's scratch dir, used by the
+ * admin usage summary. `overThreshold` is true once `usedBytes` is at
+ * or above `OVER_THRESHOLD_PCT` of the per-user cap (default 80%) —
+ * intended as a "watch list" for operators.
+ */
+export interface ScratchUsageEntry {
+  userIdHash: string;
+  usedBytes: number;
+  mtimeMs: number;
+  overThreshold: boolean;
+}
+
+export interface HostUsageInfo {
+  totalBytes: number;
+  hostCapBytes: number;
+  userCapBytes: number;
+  overThresholdPct: number;
+  users: ScratchUsageEntry[];
+}
+
+const OVER_THRESHOLD_PCT = 0.8;
+
+/**
+ * Walk the scratch root and return a per-user usage breakdown plus
+ * the host total. Symlinks are excluded (same accounting rule as
+ * `computeUserScratchUsage`). Fail-soft on unreadable entries — an
+ * admin endpoint should still render a useful summary even if a
+ * single user dir is in a weird state.
+ */
+export function getHostUsageInfo(): HostUsageInfo {
+  const userCapBytes = SCRATCH_USER_QUOTA_BYTES;
+  const hostCapBytes = SCRATCH_HOST_QUOTA_BYTES;
+  const users: ScratchUsageEntry[] = [];
+  let totalBytes = 0;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(SCRATCH_ROOT, { withFileTypes: true });
+  } catch {
+    return { totalBytes: 0, hostCapBytes, userCapBytes, overThresholdPct: OVER_THRESHOLD_PCT, users };
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const userDir = path.join(SCRATCH_ROOT, entry.name);
+    const usedBytes = walkRealFileBytes(userDir);
+    let mtimeMs = 0;
+    try {
+      const st = fs.statSync(userDir);
+      mtimeMs = Math.max(mtimeMs, st.mtimeMs);
+    } catch {}
+    try {
+      const stHost = fs.statSync(path.join(userDir, "host"));
+      mtimeMs = Math.max(mtimeMs, stHost.mtimeMs);
+    } catch {}
+    users.push({
+      userIdHash: entry.name,
+      usedBytes,
+      mtimeMs,
+      overThreshold: userCapBytes > 0 && usedBytes >= userCapBytes * OVER_THRESHOLD_PCT,
+    });
+    totalBytes += usedBytes;
+  }
+  // Largest first — operators reading an incident report care about
+  // who's burning the most disk, not lexicographic ordering.
+  users.sort((a, b) => b.usedBytes - a.usedBytes);
+  return { totalBytes, hostCapBytes, userCapBytes, overThresholdPct: OVER_THRESHOLD_PCT, users };
+}
+
 function formatBytes(n: number): string {
   if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
   if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
@@ -1028,7 +1161,11 @@ if (process.env.NODE_ENV !== "test") {
   startScratchCleanupSchedule();
 }
 
-/** Exposed for tests / debugging. */
+/**
+ * Exposed for tests / debugging. The quota getters/setters here
+ * delegate to the public exports above so existing test call sites
+ * (`__testing__.setUserQuotaBytes(...)`) keep working unchanged.
+ */
 export const __testing__ = {
   PROJECT_ROOT,
   SCRATCH_ROOT,
@@ -1037,27 +1174,8 @@ export const __testing__ = {
   SKIP_SYMLINK_TOP_LEVEL,
   userIdHash,
   syncSymlinkView,
-  /** Read the current per-user quota cap (env or default). */
-  getUserQuotaBytes: () => SCRATCH_USER_QUOTA_BYTES,
-  /** Read the current host-wide eviction threshold (env or default). */
-  getHostQuotaBytes: () => SCRATCH_HOST_QUOTA_BYTES,
-  /**
-   * Override the per-user quota cap at runtime. Tests use this to
-   * exercise the quota path without writing 1 GiB of fixture data.
-   * Pass `null` to restore the default (env var or 1 GiB).
-   */
-  setUserQuotaBytes: (n: number | null) => {
-    SCRATCH_USER_QUOTA_BYTES = n === null
-      ? parsePositiveBytes(process.env.WORKBENCH_USER_QUOTA_BYTES, DEFAULT_USER_QUOTA_BYTES)
-      : n;
-  },
-  /**
-   * Override the host-wide eviction threshold. Pass `null` to restore
-   * the default (env var or 10 GiB).
-   */
-  setHostQuotaBytes: (n: number | null) => {
-    SCRATCH_HOST_QUOTA_BYTES = n === null
-      ? parsePositiveBytes(process.env.WORKBENCH_HOST_QUOTA_BYTES, DEFAULT_HOST_QUOTA_BYTES)
-      : n;
-  },
+  getUserQuotaBytes,
+  getHostQuotaBytes,
+  setUserQuotaBytes,
+  setHostQuotaBytes,
 };
