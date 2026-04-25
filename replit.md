@@ -52,6 +52,11 @@ The project is a pnpm monorepo with separate artifacts for the frontend, backend
 -   **Platform API Gateway**: OpenAI-compatible API gateway (`/platform-api`) with key management, rate limiting, and usage tracking, supporting 12 Ollama VPS models and 350+ OpenRouter models.
     -   **Browser Extension Integration**: Dedicated page for connecting browser extensions to the platform's models, including API key generation and configuration instructions.
 
+## Deploy & Post-Merge Gates
+-   **Workbench OS-sandbox gate**: A smoke test (`artifacts/api-server/scripts/sandbox-smoke-test.ts`, runnable via `pnpm --filter @workspace/api-server smoke:sandbox`) verifies the kernel-enforced filesystem jail (`bwrap` / `firejail` / `nsjail`) actually contains writes from the Workbench shell. It runs in two places so a regression cannot silently degrade production to the path-validation-only fallback:
+    -   **Production (pre-deploy)**: Wired into the `[services.production]` `build` step in `artifacts/api-server/.replit-artifact/artifact.toml`. A failure aborts the deploy with a `[deploy-gate] FAIL` log line pointing at the smoke test.
+    -   **Staging (post-merge)**: Wired into `scripts/post-merge.sh`. A failure aborts the post-merge with a `[post-merge] FAIL` log line pointing at the smoke test, catching regressions one environment before production. Post-merge timeout bumped to 120s to accommodate the gate.
+
 ## External Dependencies
 -   **Ollama**: Self-hosted LLM server (v0.18.0) for local models and embeddings.
 -   **PostgreSQL**: Database hosted on Replit.
