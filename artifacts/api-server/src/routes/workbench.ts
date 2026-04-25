@@ -2204,6 +2204,51 @@ router.delete("/shell-history", requireAuth, async (req, res): Promise<void> => 
   }
 });
 
+// Delete a single shell-history entry by id, scoped to the calling
+// user. Used by the workbench shell "History" sidebar so a user can
+// prune individual stale commands without nuking the whole transcript.
+// We compose the WHERE on both `id` AND `userId` so a malicious client
+// can't target another user's row even if they guess an id; a missing
+// row (already-deleted, never-existed, or another user's) returns 404
+// so the UI can refresh its list rather than silently believing the
+// delete worked.
+router.delete("/shell-history/:id", requireAuth, async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required (missing user id)" });
+    return;
+  }
+  const rawId = String(req.params.id || "");
+  // bigserial fits in a JS number for any plausible row count, but we
+  // still validate the shape so we don't pass NaN / Infinity / "; DROP"
+  // into the query layer.
+  if (!/^\d+$/.test(rawId)) {
+    res.status(400).json({ error: "Invalid history entry id" });
+    return;
+  }
+  const id = Number(rawId);
+  if (!Number.isFinite(id) || id <= 0 || !Number.isSafeInteger(id)) {
+    res.status(400).json({ error: "Invalid history entry id" });
+    return;
+  }
+  try {
+    const deleted = await db
+      .delete(workbenchShellHistoryTable)
+      .where(and(
+        eq(workbenchShellHistoryTable.id, id),
+        eq(workbenchShellHistoryTable.userId, userId),
+      ))
+      .returning({ id: workbenchShellHistoryTable.id });
+    if (deleted.length === 0) {
+      res.status(404).json({ error: "History entry not found" });
+      return;
+    }
+    res.json({ ok: true, id });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Failed to delete shell history entry" });
+  }
+});
+
 router.get("/undo-entries", requireAuth, async (req, res): Promise<void> => {
   await pruneUndoStore();
   const userId = String((req as any).user?.id || (req as any).user?.sub || "anon");

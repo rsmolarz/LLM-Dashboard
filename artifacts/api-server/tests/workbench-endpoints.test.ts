@@ -764,6 +764,92 @@ test("GET /api/shell-history honours the `limit` query parameter (clamped to per
   assert.ok(huge.body.history.length <= 500);
 });
 
+test("DELETE /api/shell-history/:id requires authentication (401 anonymous)", async () => {
+  // The :id endpoint must require auth too — otherwise an anonymous
+  // attacker could delete arbitrary rows by guessing bigserial ids.
+  const r = await deleteReq("/api/shell-history/1");
+  assert.equal(r.status, 401);
+});
+
+test("DELETE /api/shell-history/:id rejects non-numeric ids (400)", async () => {
+  const userId = `hist-badid-${randomBytes(6).toString("hex")}`;
+  const r = await deleteReq<{ error: string }>(
+    "/api/shell-history/not-a-number",
+    { "x-test-user": userId },
+  );
+  assert.equal(r.status, 400);
+  assert.match(r.body.error || "", /invalid/i);
+});
+
+test("DELETE /api/shell-history/:id removes a single entry and leaves the rest", async () => {
+  const userId = `hist-one-${randomBytes(6).toString("hex")}`;
+  for (const cmd of ["echo keep-1", "echo delete-me", "echo keep-2"]) {
+    await postJson("/api/shell", { command: cmd }, { "x-test-user": userId });
+  }
+  const before = await getJson<{ history: Array<{ id: number; command: string }> }>(
+    "/api/shell-history",
+    { "x-test-user": userId },
+  );
+  assert.equal(before.body.history.length, 3);
+  const target = before.body.history.find(h => h.command === "echo delete-me");
+  assert.ok(target, "expected to find the row we just inserted");
+
+  const del = await deleteReq<{ ok: boolean; id: number }>(
+    `/api/shell-history/${target!.id}`,
+    { "x-test-user": userId },
+  );
+  assert.equal(del.status, 200);
+  assert.equal(del.body.ok, true);
+  assert.equal(del.body.id, target!.id);
+
+  const after = await getJson<{ history: Array<{ command: string }> }>(
+    "/api/shell-history",
+    { "x-test-user": userId },
+  );
+  // Only the targeted row is gone; the other two remain in newest-first order.
+  assert.deepEqual(after.body.history.map(h => h.command), ["echo keep-2", "echo keep-1"]);
+});
+
+test("DELETE /api/shell-history/:id refuses to delete another user's row (404, no leak)", async () => {
+  // Cross-user scoping: alice owns the row, bob tries to delete it via
+  // its id. The server must reject (404, not 200) and the row must
+  // still be there afterwards.
+  const alice = `hist-cross-alice-${randomBytes(6).toString("hex")}`;
+  const bob = `hist-cross-bob-${randomBytes(6).toString("hex")}`;
+  await postJson("/api/shell", { command: "echo alice-secret" }, { "x-test-user": alice });
+  const aliceView = await getJson<{ history: Array<{ id: number; command: string }> }>(
+    "/api/shell-history",
+    { "x-test-user": alice },
+  );
+  assert.equal(aliceView.body.history.length, 1);
+  const target = aliceView.body.history[0];
+
+  const del = await deleteReq<{ error: string }>(
+    `/api/shell-history/${target.id}`,
+    { "x-test-user": bob },
+  );
+  assert.equal(del.status, 404);
+
+  const stillThere = await getJson<{ history: Array<{ command: string }> }>(
+    "/api/shell-history",
+    { "x-test-user": alice },
+  );
+  assert.deepEqual(stillThere.body.history.map(h => h.command), ["echo alice-secret"]);
+});
+
+test("DELETE /api/shell-history/:id returns 404 for a row that doesn't exist", async () => {
+  const userId = `hist-missing-${randomBytes(6).toString("hex")}`;
+  // 1 is almost certainly not the user's row (bigserial starts at 1
+  // for the whole table, and this user has nothing inserted), but the
+  // server's WHERE clauses on userId means even if it WERE row 1 of
+  // the table, this user wouldn't own it.
+  const r = await deleteReq<{ error: string }>(
+    "/api/shell-history/999999999",
+    { "x-test-user": userId },
+  );
+  assert.equal(r.status, 404);
+});
+
 test("DELETE /api/shell-history wipes only the calling user's rows", async () => {
   const userId = `hist-del-${randomBytes(6).toString("hex")}`;
   const otherId = `hist-keep-${randomBytes(6).toString("hex")}`;

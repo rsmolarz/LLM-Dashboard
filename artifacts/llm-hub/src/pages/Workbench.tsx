@@ -7,7 +7,7 @@ import {
   Clock, HardDrive, Cpu, AlertTriangle,
   CheckCircle2, XCircle, FileCode, GitCommit, Trash2,
   Sparkles, Send, Square, User, Bot, Code2,
-  ChevronUp, ChevronLeft, FilePlus2,
+  ChevronUp, ChevronLeft, FilePlus2, History, X, Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
@@ -92,6 +92,195 @@ type ShellMutationResult =
     }
   | { ok: false; error: { message: string; code: string }; quota?: ScratchQuota };
 
+// One row in the persisted shell history list, as returned by
+// GET /api/workbench/shell-history. The History sidebar renders these
+// directly and uses `id` to call the per-entry DELETE endpoint.
+type ShellHistoryEntry = { id: number; command: string; createdAt: string };
+
+// Compact "5m ago" / "2d ago" label so the sidebar list stays narrow.
+// Falls through to a date for anything older than a week.
+function formatRelativeTimestamp(iso: string): string {
+  if (!iso) return "";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const deltaMs = Date.now() - t;
+  if (deltaMs < 0) return "just now";
+  const sec = Math.floor(deltaMs / 1000);
+  if (sec < 45) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  try {
+    return new Date(t).toLocaleDateString();
+  } catch {
+    return "";
+  }
+}
+
+type ShellHistorySidebarProps = {
+  entries: ShellHistoryEntry[];
+  totalCount: number;
+  loading: boolean;
+  error: string | null;
+  filter: string;
+  onFilterChange: (v: string) => void;
+  onRefresh: () => void;
+  onClose: () => void;
+  onRun: (cmd: string) => void;
+  onCopy: (entry: ShellHistoryEntry) => void;
+  onDelete: (entry: ShellHistoryEntry) => void;
+  copiedId: number | null;
+};
+
+// Persistent shell history browser. Renders inside the shell panel as
+// a left-side sidebar so the user can keep an eye on the live
+// transcript while picking a past command to re-run. The component is
+// purely presentational — all data + state lives in `ShellPanel`.
+function ShellHistorySidebar({
+  entries,
+  totalCount,
+  loading,
+  error,
+  filter,
+  onFilterChange,
+  onRefresh,
+  onClose,
+  onRun,
+  onCopy,
+  onDelete,
+  copiedId,
+}: ShellHistorySidebarProps) {
+  return (
+    <div
+      className="w-72 shrink-0 flex flex-col border-r border-[#313244] bg-[#11111b]"
+      data-testid="shell-history-sidebar"
+    >
+      <div className="flex items-center justify-between px-2 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-1.5 text-[11px] text-[#cdd6f4]">
+          <History className="h-3 w-3 text-[#89b4fa]" />
+          <span className="font-mono">History</span>
+          <span className="text-[#6c7086]">({totalCount})</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            className="p-1 rounded hover:bg-[#313244] text-[#6c7086]"
+            onClick={onRefresh}
+            title="Refresh history"
+            data-testid="shell-history-refresh"
+          >
+            <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
+          </button>
+          <button
+            className="p-1 rounded hover:bg-[#313244] text-[#6c7086]"
+            onClick={onClose}
+            title="Close history"
+            data-testid="shell-history-close"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      </div>
+      <div className="px-2 py-1.5 border-b border-[#313244]">
+        <div className="flex items-center gap-1.5 px-1.5 py-1 rounded bg-[#1e1e2e] border border-[#313244]">
+          <Search className="h-3 w-3 text-[#6c7086]" />
+          <input
+            value={filter}
+            onChange={e => onFilterChange(e.target.value)}
+            placeholder="Filter commands..."
+            className="flex-1 bg-transparent text-[11px] text-[#cdd6f4] font-mono outline-none placeholder:text-[#585b70]"
+            data-testid="shell-history-filter"
+          />
+          {filter && (
+            <button
+              onClick={() => onFilterChange("")}
+              className="text-[#6c7086] hover:text-[#cdd6f4]"
+              title="Clear filter"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto" data-testid="shell-history-list">
+        {error && (
+          <div className="m-2 p-2 rounded text-[11px] bg-[#1e1e2e] border border-[#f38ba8]/40 text-[#f38ba8]">
+            {error}
+          </div>
+        )}
+        {loading && totalCount === 0 && !error && (
+          <div className="flex items-center justify-center gap-2 py-6 text-[11px] text-[#6c7086]">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span>Loading...</span>
+          </div>
+        )}
+        {!loading && totalCount === 0 && !error && (
+          <div className="px-3 py-6 text-center text-[11px] text-[#6c7086]">
+            No saved commands yet. Run something in the shell and it will appear here.
+          </div>
+        )}
+        {totalCount > 0 && entries.length === 0 && (
+          <div className="px-3 py-6 text-center text-[11px] text-[#6c7086]">
+            No commands match &quot;{filter}&quot;.
+          </div>
+        )}
+        {entries.map(entry => (
+          <div
+            key={entry.id}
+            className="group px-2 py-1.5 border-b border-[#313244]/50 hover:bg-[#1e1e2e]"
+            data-testid="shell-history-entry"
+          >
+            <div className="flex items-start justify-between gap-1">
+              <button
+                className="flex-1 min-w-0 text-left font-mono text-[11px] text-[#cdd6f4] hover:text-[#a6e3a1] truncate"
+                onClick={() => onRun(entry.command)}
+                title={`Re-run: ${entry.command}`}
+                data-testid="shell-history-rerun"
+              >
+                {entry.command}
+              </button>
+              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                <button
+                  className="p-0.5 rounded hover:bg-[#313244] text-[#a6e3a1]"
+                  onClick={() => onRun(entry.command)}
+                  title="Re-run this command"
+                >
+                  <Play className="h-3 w-3" />
+                </button>
+                <button
+                  className="p-0.5 rounded hover:bg-[#313244] text-[#89b4fa]"
+                  onClick={() => onCopy(entry)}
+                  title="Copy to clipboard"
+                  data-testid="shell-history-copy"
+                >
+                  {copiedId === entry.id ? (
+                    <Check className="h-3 w-3 text-[#a6e3a1]" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                </button>
+                <button
+                  className="p-0.5 rounded hover:bg-[#313244] text-[#f38ba8]"
+                  onClick={() => onDelete(entry)}
+                  title="Delete this entry"
+                  data-testid="shell-history-delete"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+            <div className="text-[10px] text-[#6c7086] font-mono mt-0.5">
+              {formatRelativeTimestamp(entry.createdAt)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ShellPanel() {
   const [input, setInput] = useState("");
   const [history, setHistory] = usePersistedState<ShellEntry[]>("wb-shell-history", []);
@@ -106,33 +295,76 @@ function ShellPanel() {
   // older as the user keeps pressing Ctrl-R.
   const [search, setSearch] = useState<{ query: string; matchIndex: number } | null>(null);
   const [quota, setQuota] = useState<ScratchQuota | null>(null);
+  // Persisted history sidebar state. We hold the full server-returned
+  // entries (with id + timestamp) so the sidebar can show "5m ago" and
+  // call the per-entry DELETE endpoint. `historyEntries === null` means
+  // we haven't tried to load yet; `[]` means the user really has no
+  // saved history.
+  const [showHistorySidebar, setShowHistorySidebar] = useState(false);
+  const [historyEntries, setHistoryEntries] = useState<ShellHistoryEntry[] | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
+  const [historyFilter, setHistoryFilter] = useState("");
+  const [copiedHistoryId, setCopiedHistoryId] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { project } = useSelectedProject();
 
+  // Loads (or reloads) the persisted shell history. Used both on mount
+  // (to hydrate up-arrow / Ctrl-R) and whenever the user opens the
+  // History sidebar — the latter ensures a freshly-signed-in user, or
+  // a user who ran commands in another tab, gets a fresh list.
+  const loadHistory = useCallback(async (opts: { silent?: boolean } = {}) => {
+    if (!opts.silent) {
+      setHistoryLoading(true);
+      setHistoryLoadError(null);
+    }
+    try {
+      const res = await fetch(`/api/workbench/shell-history?limit=500`, { credentials: "include" });
+      if (!res.ok) {
+        if (!opts.silent) {
+          setHistoryLoadError(
+            res.status === 401
+              ? "Sign in to view your saved shell history."
+              : `Couldn't load history (HTTP ${res.status}).`,
+          );
+        }
+        return;
+      }
+      const body = await res.json().catch(() => null);
+      if (!body || !Array.isArray(body.history)) {
+        if (!opts.silent) setHistoryLoadError("Couldn't load history (unexpected response).");
+        return;
+      }
+      const entries: ShellHistoryEntry[] = body.history
+        .map((h: any) => ({
+          id: typeof h?.id === "number" ? h.id : NaN,
+          command: typeof h?.command === "string" ? h.command : "",
+          createdAt: typeof h?.createdAt === "string" ? h.createdAt : "",
+        }))
+        .filter((e: ShellHistoryEntry) => Number.isFinite(e.id) && e.command.length > 0);
+      setHistoryEntries(entries);
+      const cmds = entries.map(e => e.command);
+      // Mirror the existing hydrate behaviour: only overwrite the local
+      // cache when we actually have entries, so an unauthenticated user
+      // (or transient empty response) doesn't wipe the fallback.
+      if (cmds.length > 0) setCmdHistory(cmds);
+    } catch (err: any) {
+      if (!opts.silent) {
+        setHistoryLoadError(err?.message || "Couldn't load history.");
+      }
+    } finally {
+      if (!opts.silent) setHistoryLoading(false);
+    }
+  }, [setCmdHistory]);
+
   // Hydrate shell history from the server on mount so a freshly
   // refreshed tab still gets the user's prior up-arrow / Ctrl-R
-  // history. We only overwrite the localStorage cache when the server
-  // returns a non-empty list — an unauthenticated user (or transient
-  // 5xx) shouldn't wipe out the local fallback.
+  // history.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/workbench/shell-history?limit=500`, { credentials: "include" });
-        if (!res.ok) return;
-        const body = await res.json().catch(() => null);
-        if (cancelled || !body || !Array.isArray(body.history)) return;
-        const cmds: string[] = body.history
-          .map((h: any) => (typeof h?.command === "string" ? h.command : ""))
-          .filter((c: string) => c.length > 0);
-        if (cmds.length > 0) setCmdHistory(cmds);
-      } catch {}
-    })();
-    return () => { cancelled = true; };
+    void loadHistory({ silent: true });
   // We intentionally only run once per mount — if the user signs in
-  // mid-session they can refresh the panel by clicking the trash icon
-  // and re-running a command.
+  // mid-session they can refresh the panel from the History sidebar.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -182,6 +414,11 @@ function ShellPanel() {
       // even on failure responses (the over-quota rejection itself
       // carries `quota` so users see exactly *why* they're blocked).
       if (data.quota) setQuota(data.quota);
+      // Refresh the History sidebar's list in the background so newly
+      // run commands appear there without forcing the user to click
+      // refresh. We swallow errors — the sidebar will fall back to its
+      // existing list and the user can refresh manually.
+      void loadHistory({ silent: true });
       if (!data.ok) {
         setShellError({ command, message: data.error.message, code: data.error.code || null });
         setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
@@ -299,12 +536,72 @@ function ShellPanel() {
   const clearAll = async () => {
     setHistory([]);
     setCmdHistory([]);
+    setHistoryEntries([]);
     setHistoryIndex(-1);
     setSearch(null);
     try {
       await fetch(`/api/workbench/shell-history`, { method: "DELETE", credentials: "include" });
     } catch {}
   };
+
+  // Re-runs a command from the History sidebar. Closes the sidebar so
+  // the user can immediately see the transcript output.
+  const runFromHistory = (cmd: string) => {
+    setShowHistorySidebar(false);
+    setInput("");
+    setSearch(null);
+    runCommand(cmd);
+  };
+
+  // Copies a command to the user's clipboard with a brief "copied!"
+  // confirmation. Falls back to a no-op if clipboard isn't available
+  // (e.g. insecure context) — the user can still copy manually.
+  const copyHistoryCommand = async (entry: ShellHistoryEntry) => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(entry.command);
+        setCopiedHistoryId(entry.id);
+        setTimeout(() => setCopiedHistoryId(curr => (curr === entry.id ? null : curr)), 1200);
+      }
+    } catch {}
+  };
+
+  // Removes one row from the persisted history. We optimistically pull
+  // it out of the local list so the sidebar feels snappy, then on
+  // failure we re-add it and surface the error inline.
+  const deleteHistoryEntry = async (entry: ShellHistoryEntry) => {
+    setHistoryEntries(prev => (prev ? prev.filter(e => e.id !== entry.id) : prev));
+    setCmdHistory(prev => {
+      // Remove the first matching command from the up-arrow cache so
+      // the user doesn't get a "ghost" deleted command in cycling.
+      const idx = prev.indexOf(entry.command);
+      if (idx === -1) return prev;
+      return [...prev.slice(0, idx), ...prev.slice(idx + 1)];
+    });
+    try {
+      const res = await fetch(`/api/workbench/shell-history/${entry.id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok && res.status !== 404) {
+        // 404 is fine — the row was already gone (e.g. concurrent
+        // delete from another tab) and our optimistic update already
+        // matches reality. Anything else, surface and reload.
+        setHistoryLoadError(`Couldn't delete entry (HTTP ${res.status}).`);
+        void loadHistory({ silent: true });
+      }
+    } catch (err: any) {
+      setHistoryLoadError(err?.message || "Couldn't delete entry.");
+      void loadHistory({ silent: true });
+    }
+  };
+
+  const visibleHistoryEntries = useMemo(() => {
+    if (!historyEntries) return [];
+    const q = historyFilter.trim().toLowerCase();
+    if (!q) return historyEntries;
+    return historyEntries.filter(e => e.command.toLowerCase().includes(q));
+  }, [historyEntries, historyFilter]);
 
   return (
     <div className="flex flex-col h-full bg-[#1e1e2e] rounded-lg overflow-hidden">
@@ -313,15 +610,56 @@ function ShellPanel() {
           <Terminal className="h-3.5 w-3.5 text-green-400" />
           <span className="text-xs text-[#cdd6f4] font-mono">Shell</span>
         </div>
-        <button
-          className="p-1 rounded hover:bg-[#313244] text-[#6c7086]"
-          onClick={clearAll}
-          title="Clear transcript and saved command history"
-        >
-          <Trash2 className="h-3 w-3" />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            className={cn(
+              "p-1 rounded hover:bg-[#313244]",
+              showHistorySidebar ? "text-[#89b4fa] bg-[#313244]" : "text-[#6c7086]",
+            )}
+            onClick={() => {
+              setShowHistorySidebar(s => {
+                const next = !s;
+                if (next) {
+                  // Always refresh on open so the user sees the latest
+                  // saved commands (including ones from other tabs or
+                  // sessions where they signed in).
+                  void loadHistory();
+                }
+                return next;
+              });
+            }}
+            title="Browse and re-run saved shell commands"
+            data-testid="shell-history-toggle"
+          >
+            <History className="h-3 w-3" />
+          </button>
+          <button
+            className="p-1 rounded hover:bg-[#313244] text-[#6c7086]"
+            onClick={clearAll}
+            title="Clear transcript and saved command history"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-2" ref={scrollRef}>
+      <div className="flex flex-1 min-h-0">
+        {showHistorySidebar && (
+          <ShellHistorySidebar
+            entries={visibleHistoryEntries}
+            totalCount={historyEntries?.length ?? 0}
+            loading={historyLoading}
+            error={historyLoadError}
+            filter={historyFilter}
+            onFilterChange={setHistoryFilter}
+            onRefresh={() => loadHistory()}
+            onClose={() => setShowHistorySidebar(false)}
+            onRun={runFromHistory}
+            onCopy={copyHistoryCommand}
+            onDelete={deleteHistoryEntry}
+            copiedId={copiedHistoryId}
+          />
+        )}
+        <div className="flex-1 min-w-0 overflow-y-auto p-2" ref={scrollRef}>
         <div className="font-mono text-xs space-y-1">
           {history.length === 0 && (
             <div className="text-[#585b70] py-4 text-center">Type a command to get started. Use arrow keys for history, Ctrl+R to search.</div>
@@ -367,6 +705,7 @@ function ShellPanel() {
               />
             </div>
           )}
+        </div>
         </div>
       </div>
       {search && (
