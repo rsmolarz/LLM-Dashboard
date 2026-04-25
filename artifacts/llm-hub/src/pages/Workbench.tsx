@@ -33,6 +33,7 @@ import {
 } from "@/components/workbench/SandboxNotices";
 import { ScratchPanel } from "@/components/workbench/ScratchPanel";
 import { ScratchQuotaBar, parseScratchQuota, type ScratchQuota } from "@/components/workbench/ScratchQuotaBar";
+import { useAuth } from "@workspace/replit-auth-web";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -315,6 +316,11 @@ function ShellPanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { project } = useSelectedProject();
+  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  // Track the previous auth state so we can distinguish a real
+  // anonymous -> authenticated flip (re-fetch) from the initial settle
+  // (still re-fetch, but only once) and from sign-out (clear).
+  const prevAuthRef = useRef<boolean | null>(null);
 
   // Loads (or reloads) the persisted shell history. Used both on mount
   // (to hydrate up-arrow / Ctrl-R) and whenever the user opens the
@@ -364,15 +370,37 @@ function ShellPanel() {
     }
   }, [setCmdHistory]);
 
-  // Hydrate shell history from the server on mount so a freshly
-  // refreshed tab still gets the user's prior up-arrow / Ctrl-R
-  // history.
+  // Hydrate shell history from the server on mount AND whenever auth
+  // flips so a user who signs in mid-session sees their saved up-arrow
+  // / Ctrl-R history (and the History sidebar) without a page refresh.
+  // We delegate to `loadHistory` so the sidebar entries and the local
+  // cmd cache stay in sync.
   useEffect(() => {
+    if (authLoading) return;
+    const prev = prevAuthRef.current;
+    prevAuthRef.current = isAuthenticated;
+
+    // Sign-out: clear the in-memory + localStorage view, plus the
+    // History sidebar entries, so the next signed-in user on this
+    // browser doesn't accidentally see the previous user's commands or
+    // transcript.
+    if (prev === true && !isAuthenticated) {
+      setCmdHistory([]);
+      setHistory([]);
+      setHistoryIndex(-1);
+      setSearch(null);
+      setShellError(null);
+      setHistoryEntries(null);
+      setHistoryLoadError(null);
+      return;
+    }
+
     void loadHistory({ silent: true });
-  // We intentionally only run once per mount — if the user signs in
-  // mid-session they can refresh the panel from the History sidebar.
+  // setCmdHistory/setHistory are stable setters from usePersistedState
+  // (and React's setState contract); excluding them keeps this effect
+  // tied to the auth transition, not state churn.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isAuthenticated, authLoading, loadHistory]);
 
   const shellMutation = useMutation<ShellMutationResult, Error, string>({
     mutationFn: async (command: string): Promise<ShellMutationResult> => {
