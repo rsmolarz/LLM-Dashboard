@@ -411,6 +411,77 @@ router.get("/auth/users", async (req: Request, res: Response) => {
   res.json(users);
 });
 
+// Dev-only fixture-user login for end-to-end browser tests. Mints a real
+// session row + cookie for a deterministic fake user so a Playwright run
+// can exercise the workbench shell (which requires `requireAuth`) without
+// driving the real MedInvest OAuth flow.
+//
+// Hard-gated on:
+//   * `NODE_ENV !== "production"` — never reachable on the deployed API.
+//   * `WORKBENCH_E2E_AUTH === "1"` — opt-in even in dev so a stray
+//     local request can't anonymously upsert a user / mint a session.
+//
+// The endpoint upserts a `e2e_*` user and returns its id alongside the
+// new session cookie. It's intentionally idempotent so a test that
+// re-runs without cleanup gets the same user back.
+router.post("/__test__/login", async (req: Request, res: Response) => {
+  if (process.env.NODE_ENV === "production" || process.env.WORKBENCH_E2E_AUTH !== "1") {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  const rawId = typeof req.body?.userId === "string" ? req.body.userId.trim() : "";
+  const userId = rawId || `e2e_${crypto.randomBytes(8).toString("hex")}`;
+  if (!/^[a-zA-Z0-9_\-]{3,64}$/.test(userId)) {
+    res.status(400).json({ error: "userId must match /^[a-zA-Z0-9_-]{3,64}$/" });
+    return;
+  }
+  const email = typeof req.body?.email === "string" && req.body.email.includes("@")
+    ? req.body.email
+    : `${userId}@e2e.local`;
+  try {
+    const [user] = await db
+      .insert(usersTable)
+      .values({
+        id: userId,
+        email,
+        firstName: "E2E",
+        lastName: "Fixture",
+        profileImageUrl: null,
+      })
+      .onConflictDoUpdate({
+        target: usersTable.id,
+        set: { email, updatedAt: new Date() },
+      })
+      .returning();
+    const sessionData: SessionData = {
+      user: {
+        id: user.id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        profileImageUrl: user.profileImageUrl,
+        role: (user as any).role || "user",
+      },
+      // The shell endpoint never touches access_token (we only use the
+      // OIDC tokens during the OAuth callback to fetch userinfo); a
+      // synthetic placeholder is fine for the test session.
+      access_token: `e2e-${crypto.randomBytes(8).toString("hex")}`,
+    };
+    const sid = await createSession(sessionData);
+    res.cookie(SESSION_COOKIE, sid, {
+      httpOnly: true,
+      secure: false,
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_TTL,
+    });
+    res.json({ ok: true, user: sessionData.user });
+  } catch (err: any) {
+    console.error("[__test__/login] failed:", err?.message || err);
+    res.status(500).json({ error: err?.message || "Test login failed" });
+  }
+});
+
 router.put("/auth/users/:userId/role", async (req: Request, res: Response) => {
   if (!req.user || (req.user as any).role !== "admin") {
     res.status(403).json({ error: "Admin access required" });

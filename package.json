@@ -7,7 +7,8 @@
     "build": "pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "test": "pnpm -r --if-present run test"
+    "test": "pnpm -r --if-present run test",
+    "test:e2e": "pnpm --filter @workspace/tests-e2e test:e2e"
   },
   "private": true,
   "devDependencies": {

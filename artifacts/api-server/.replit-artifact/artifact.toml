@@ -10,7 +10,7 @@ name = "API Server"
 paths = ["/api", "/"]
 
 [services.development]
-run = "pnpm --filter @workspace/api-server run dev"
+run = "WORKBENCH_E2E_AUTH=1 pnpm --filter @workspace/api-server run dev"
 
 [services.production]
 # The first step is a deploy gate: it verifies the Workbench OS-level
