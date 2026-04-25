@@ -10,6 +10,22 @@
  * the sandbox.
  *
  * What we contain:
+ *   - **OS-level filesystem isolation (when available)**: at module load
+ *     we probe for `bwrap` / `firejail` / `nsjail` (in that order). If any
+ *     of them works on this host we transparently prepend it to the spawn
+ *     argv with a read-only bind of the host root, a writable bind of the
+ *     per-project cwd, a private (`tmpfs`) `/tmp`, and `$HOME` pinned
+ *     inside the cwd. This is a real kernel-enforced jail: even if a
+ *     command uses a write primitive the argv parser missed
+ *     (`./compiled-binary`, a script that calls `cp`, etc.) the write
+ *     to anywhere outside the cwd / private `/tmp` either lands in the
+ *     private mount namespace or fails with `EROFS`/`EACCES`. We do NOT
+ *     accept bare `unshare --user --mount` as a real-isolation helper —
+ *     it cannot enforce a system-wide read-only bind without a custom
+ *     bootstrap script, so accepting it would create a false security
+ *     posture. When no helper is available (e.g. the legacy Replit
+ *     container blocks unprivileged user namespaces via seccomp) we
+ *     fall back to the path-validation layer alone.
  *   - **Working directory**: the cwd is pinned to an absolute path the
  *     caller pre-validated (a per-project local clone, the host workspace
  *     for the host-shell case, or a remote SSH path).
@@ -53,17 +69,21 @@
  *     unforeseen escalation primitives.
  *
  * What we cannot contain (yet):
- *   - True filesystem isolation (chroot, mount namespaces, bwrap,
- *     firejail, nsjail) — the Replit container blocks unprivileged user
- *     namespaces via seccomp, so we cannot construct a real sandbox at
- *     the syscall level. The redirect-target validator + working-dir
- *     pinning + sanitized env + dropped privs are our compensating
- *     controls. Once a host with userns/bwrap is available the sandbox
- *     can be upgraded transparently behind this same `runSandboxed`
- *     interface.
+ *   - True filesystem isolation on hosts WITHOUT a working sandbox
+ *     helper. The legacy Replit container blocks unprivileged user
+ *     namespaces via seccomp, so `bwrap` / `firejail` / `nsjail` all
+ *     fail at startup and the OS-level wrapper above is omitted. On
+ *     those hosts the redirect-target validator + argv-level write
+ *     check + cwd pinning + sanitized env + dropped privs + resource
+ *     caps remain our compensating controls. The detection runs once
+ *     at module load, and the wrapper is applied transparently behind
+ *     the same `runSandboxed` interface, so deploying onto a host that
+ *     DOES support one of these helpers automatically promotes the
+ *     sandbox to a real kernel-enforced jail without any caller
+ *     changes.
  */
 
-import { execFile } from "child_process";
+import { execFile, spawnSync } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -151,6 +171,193 @@ function binaryExists(p: string): boolean {
 
 const PRLIMIT_BIN = ["/usr/bin/prlimit", "/sbin/prlimit", "/bin/prlimit"].find(binaryExists) || null;
 const SETPRIV_BIN = ["/usr/bin/setpriv", "/sbin/setpriv", "/bin/setpriv"].find(binaryExists) || null;
+
+// ----------------------------------------------------------------------
+// OS-level filesystem isolation detection.
+//
+// We probe (in priority order) for `bwrap`, `firejail`, then `nsjail`.
+// Each helper has a different way of constructing a private mount
+// namespace; what matters is that ONE of them works on the host, so
+// `runSandboxed` can prepend a real kernel-enforced jail to the spawn
+// argv that enforces our containment contract: read-only host root +
+// writable per-project cwd + private (tmpfs) /tmp + $HOME pinned in
+// the cwd.
+//
+// The probe runs the helper with a no-op inner command (e.g. `true`)
+// using the same isolation *primitives* the real wrapper relies on
+// (read-only bind of `/`, private tmpfs `/tmp`, dev/proc setup,
+// die-with-parent). The cwd-specific bind/chdir flags are omitted
+// from the probe because the cwd doesn't exist yet at module-load
+// time, but the kernel-level capabilities they exercise are a strict
+// subset of what the probe already exercised. If the probe exits 0
+// within a couple of seconds we trust the helper; otherwise we move
+// to the next candidate. On hosts where unprivileged user namespaces
+// are blocked by seccomp (the legacy Replit container) all probes
+// fail and we fall back to the path-validation-only behaviour.
+//
+// Note: bare `unshare --user --mount` is intentionally NOT a candidate.
+// It cannot enforce a system-wide read-only bind without a custom
+// bootstrap script, and any such script would have to ignore mount
+// failures (the new mount namespace is too restricted to remount /
+// read-only on most modern kernels). Accepting it as a real-isolation
+// helper would advertise containment we cannot deliver. Hosts that
+// only have unshare therefore fall through to the path-validation
+// fallback, which is honest about its limits.
+// ----------------------------------------------------------------------
+
+export type OsSandboxKind = "bwrap" | "firejail" | "nsjail";
+
+export interface OsSandboxInfo {
+  kind: OsSandboxKind;
+  bin: string;
+}
+
+const OS_SANDBOX_PROBE_TIMEOUT_MS = 5_000;
+
+function probeHelper(bin: string, args: string[]): boolean {
+  try {
+    const r = spawnSync(bin, args, {
+      timeout: OS_SANDBOX_PROBE_TIMEOUT_MS,
+      stdio: "ignore",
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" },
+    });
+    return r.status === 0;
+  } catch {
+    return false;
+  }
+}
+
+function findHelperBin(name: string): string | null {
+  for (const dir of ["/usr/bin", "/usr/local/bin", "/bin", "/sbin", "/usr/sbin", "/run/current-system/sw/bin"]) {
+    const p = `${dir}/${name}`;
+    if (binaryExists(p)) return p;
+  }
+  return null;
+}
+
+/**
+ * Detect which OS-level sandbox helper (if any) works on this host.
+ * Probes are bounded by `OS_SANDBOX_PROBE_TIMEOUT_MS` and run with a
+ * minimal env so they don't depend on caller state.
+ *
+ * Each probe uses the same isolation primitives the real wrapper
+ * relies on (read-only bind of `/`, private tmpfs `/tmp`, dev/proc
+ * setup, die-with-parent), so if a helper passes the probe we know
+ * the host kernel will accept those primitives — not just that the
+ * binary exists. The cwd-specific bind/chdir flags are added at run
+ * time and exercise a strict subset of the same capabilities.
+ *
+ * Order: bwrap > firejail > nsjail. bwrap is the smallest viable
+ * option and the one we recommend; the others are supported for hosts
+ * that ship them but not bwrap.
+ */
+export function detectOsSandbox(): OsSandboxInfo | null {
+  const bwrap = findHelperBin("bwrap");
+  if (bwrap && probeHelper(bwrap, [
+    "--ro-bind", "/", "/",
+    "--dev-bind", "/dev", "/dev",
+    "--proc", "/proc",
+    "--tmpfs", "/tmp",
+    "--die-with-parent",
+    "--",
+    "true",
+  ])) {
+    return { kind: "bwrap", bin: bwrap };
+  }
+  const firejail = findHelperBin("firejail");
+  if (firejail && probeHelper(firejail, [
+    "--quiet",
+    "--noprofile",
+    "--read-only=/",
+    "--private-tmp",
+    "--noroot",
+    "--",
+    "true",
+  ])) {
+    return { kind: "firejail", bin: firejail };
+  }
+  const nsjail = findHelperBin("nsjail");
+  if (nsjail && probeHelper(nsjail, [
+    "-Mo",
+    "--really_quiet",
+    "--bindmount_ro", "/",
+    "-T", "/tmp",
+    "--disable_clone_newnet",
+    "--",
+    "/bin/true",
+  ])) {
+    return { kind: "nsjail", bin: nsjail };
+  }
+  return null;
+}
+
+const OS_SANDBOX = detectOsSandbox();
+
+/**
+ * Build the wrapper argv that constructs a real OS-level jail for the
+ * inner command. Layout (semantics, not literal flags):
+ *   - Host root mounted READ-ONLY at /
+ *   - `cwd` mounted READ-WRITE at the same path inside the namespace
+ *   - `/tmp` mounted as a fresh tmpfs (private to the sandbox)
+ *   - `$HOME` is left to the caller's env scrub (already pointed
+ *     inside cwd by `buildSandboxEnv`)
+ *   - `--die-with-parent` (or equivalent) so an orphaned wrapper
+ *     can't outlive the API process
+ *   - process chdir'd into `cwd`
+ * The returned argv ends with `--`; the caller appends the inner argv
+ * (typically `setpriv`/`prlimit`/`sh -c CMD`).
+ */
+export function buildOsIsolationArgv(info: OsSandboxInfo, cwd: string): string[] {
+  let realCwd = cwd;
+  try { realCwd = fs.realpathSync(cwd); } catch { /* fall back to lexical */ }
+
+  switch (info.kind) {
+    case "bwrap":
+      return [
+        info.bin,
+        "--ro-bind", "/", "/",
+        "--dev-bind", "/dev", "/dev",
+        "--proc", "/proc",
+        "--tmpfs", "/tmp",
+        "--bind", realCwd, realCwd,
+        "--chdir", realCwd,
+        "--die-with-parent",
+        "--new-session",
+        "--",
+      ];
+    case "firejail":
+      // firejail's --read-only / --read-write build up an overlay; the
+      // last writable wins for paths under cwd. --private-tmp gives us
+      // a private tmpfs at /tmp. --noroot drops the user namespace
+      // root mapping (we never want privileged operations inside).
+      return [
+        info.bin,
+        "--quiet",
+        "--noprofile",
+        "--read-only=/",
+        `--read-write=${realCwd}`,
+        "--private-tmp",
+        "--noroot",
+        "--",
+      ];
+    case "nsjail":
+      // nsjail's -Mo runs one command and exits. --bindmount_ro / makes
+      // the host root read-only; --bindmount cwd:cwd makes the project
+      // dir writable; -T /tmp mounts a fresh tmpfs.
+      return [
+        info.bin,
+        "-Mo",
+        "--rw",
+        "--bindmount_ro", "/",
+        "--bindmount", `${realCwd}:${realCwd}`,
+        "-T", "/tmp",
+        "--cwd", realCwd,
+        "--really_quiet",
+        "--disable_clone_newnet",
+        "--",
+      ];
+  }
+}
 
 /**
  * Walk a shell-ish command and return the targets of every redirection
@@ -1266,11 +1473,17 @@ export function buildSandboxEnv(cwd: string, extras: Record<string, string> = {}
 
 /**
  * Build the argv that wraps the user's `command` with the available
- * privilege-dropping and resource-limiting helpers. If neither helper
- * exists on this host the command runs directly via `sh -c`.
+ * privilege-dropping and resource-limiting helpers. If an OS-level
+ * sandbox helper (bwrap/firejail/nsjail) was detected at
+ * module load it is prepended too, giving us a real kernel-enforced
+ * filesystem jail. If none of the helpers exist the command runs
+ * directly via `sh -c` and we rely on the path-validation layer.
  */
-function buildSandboxArgv(command: string): string[] {
+export function buildSandboxArgv(command: string, cwd: string): string[] {
   const argv: string[] = [];
+  if (OS_SANDBOX) {
+    argv.push(...buildOsIsolationArgv(OS_SANDBOX, cwd));
+  }
   if (SETPRIV_BIN) {
     argv.push(SETPRIV_BIN, "--no-new-privs");
   }
@@ -1319,7 +1532,7 @@ export async function runSandboxed(command: string, opts: SandboxOptions): Promi
   }
 
   const env = buildSandboxEnv(cwd, opts.extraEnv);
-  const argv = buildSandboxArgv(command);
+  const argv = buildSandboxArgv(command, cwd);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBuffer = opts.maxBufferBytes ?? DEFAULT_MAX_BUFFER;
 
@@ -1356,4 +1569,12 @@ export async function runSandboxed(command: string, opts: SandboxOptions): Promi
 export const sandboxHelpers = {
   setpriv: SETPRIV_BIN,
   prlimit: PRLIMIT_BIN,
+  /**
+   * The kernel-level isolation helper detected at module load (or
+   * `null` if none of bwrap/firejail/nsjail worked). When
+   * non-null, `runSandboxed` prepends the appropriate wrapper to the
+   * spawn argv so writes outside the per-project cwd hit a private
+   * mount namespace (or fail with EROFS) instead of the host disk.
+   */
+  osIsolation: OS_SANDBOX,
 };

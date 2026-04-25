@@ -10,6 +10,9 @@ const {
   checkPathContainment,
   extractRedirectTargets,
   buildSandboxEnv,
+  buildSandboxArgv,
+  buildOsIsolationArgv,
+  detectOsSandbox,
   sandboxHelpers,
 } = await import("../src/lib/command-sandbox");
 
@@ -911,6 +914,7 @@ test("runSandboxed contains argv-level write escapes the safety filter would hav
   }
 });
 
+
 test("runSandboxed allows in-sandbox argv-level writes", async () => {
   const root = mkSandbox();
   try {
@@ -919,6 +923,202 @@ test("runSandboxed allows in-sandbox argv-level writes", async () => {
     assert.ok(fs.existsSync(path.join(root, "inside.txt")));
     assert.ok(fs.existsSync(path.join(root, "sub", "copy.txt")));
   } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------
+// OS-level filesystem isolation (bwrap / firejail / nsjail)
+// ---------------------------------------------------------------------
+
+test("detectOsSandbox returns either null or a known helper kind", () => {
+  const info = detectOsSandbox();
+  assert.ok(
+    info === null
+      || (typeof info === "object"
+          && ["bwrap", "firejail", "nsjail"].includes(info.kind)
+          && typeof info.bin === "string"
+          && info.bin.length > 0),
+    `unexpected detectOsSandbox result: ${JSON.stringify(info)}`,
+  );
+  // unshare is intentionally NOT a candidate — it cannot enforce a
+  // system-wide read-only bind without a fragile bootstrap script,
+  // so accepting it would create a false security posture.
+  if (info !== null) {
+    assert.notEqual(info.kind as string, "unshare",
+      "unshare must not be returned as a real-isolation helper");
+  }
+  // Should agree with the cached `sandboxHelpers.osIsolation` snapshot.
+  if (info === null) {
+    assert.equal(sandboxHelpers.osIsolation, null);
+  } else {
+    assert.ok(sandboxHelpers.osIsolation);
+    assert.equal(sandboxHelpers.osIsolation.kind, info.kind);
+    assert.equal(sandboxHelpers.osIsolation.bin, info.bin);
+  }
+});
+
+test("buildOsIsolationArgv (bwrap) read-only-binds /, writable-binds cwd, private /tmp", () => {
+  const root = mkSandbox();
+  try {
+    const realRoot = fs.realpathSync(root);
+    const argv = buildOsIsolationArgv({ kind: "bwrap", bin: "/usr/bin/bwrap" }, root);
+    assert.equal(argv[0], "/usr/bin/bwrap");
+    assert.equal(argv[argv.length - 1], "--", "argv must terminate with -- so the inner argv attaches cleanly");
+    // Read-only bind of host root.
+    const roIdx = argv.indexOf("--ro-bind");
+    assert.ok(roIdx >= 0, "expected --ro-bind in bwrap argv");
+    assert.equal(argv[roIdx + 1], "/");
+    assert.equal(argv[roIdx + 2], "/");
+    // Writable bind of the per-project cwd.
+    const bindIdx = argv.indexOf("--bind");
+    assert.ok(bindIdx >= 0, "expected --bind in bwrap argv");
+    assert.equal(argv[bindIdx + 1], realRoot);
+    assert.equal(argv[bindIdx + 2], realRoot);
+    // Private (tmpfs) /tmp.
+    const tmpfsIdx = argv.indexOf("--tmpfs");
+    assert.ok(tmpfsIdx >= 0, "expected --tmpfs in bwrap argv");
+    assert.equal(argv[tmpfsIdx + 1], "/tmp");
+    // chdir into cwd inside the namespace.
+    const chdirIdx = argv.indexOf("--chdir");
+    assert.ok(chdirIdx >= 0);
+    assert.equal(argv[chdirIdx + 1], realRoot);
+    // die-with-parent so an orphaned wrapper can't outlive the API process.
+    assert.ok(argv.includes("--die-with-parent"));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildOsIsolationArgv (firejail) read-only=/ + read-write=cwd + private-tmp", () => {
+  const root = mkSandbox();
+  try {
+    const realRoot = fs.realpathSync(root);
+    const argv = buildOsIsolationArgv({ kind: "firejail", bin: "/usr/bin/firejail" }, root);
+    assert.equal(argv[0], "/usr/bin/firejail");
+    assert.equal(argv[argv.length - 1], "--");
+    assert.ok(argv.includes("--read-only=/"));
+    assert.ok(argv.includes(`--read-write=${realRoot}`));
+    assert.ok(argv.includes("--private-tmp"));
+    assert.ok(argv.includes("--noroot"));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildOsIsolationArgv (nsjail) bindmount_ro / + bindmount cwd + tmpfs /tmp", () => {
+  const root = mkSandbox();
+  try {
+    const realRoot = fs.realpathSync(root);
+    const argv = buildOsIsolationArgv({ kind: "nsjail", bin: "/usr/bin/nsjail" }, root);
+    assert.equal(argv[0], "/usr/bin/nsjail");
+    assert.equal(argv[argv.length - 1], "--");
+    const roIdx = argv.indexOf("--bindmount_ro");
+    assert.ok(roIdx >= 0);
+    assert.equal(argv[roIdx + 1], "/");
+    const bindIdx = argv.indexOf("--bindmount");
+    assert.ok(bindIdx >= 0);
+    assert.equal(argv[bindIdx + 1], `${realRoot}:${realRoot}`);
+    const tmpIdx = argv.indexOf("-T");
+    assert.ok(tmpIdx >= 0);
+    assert.equal(argv[tmpIdx + 1], "/tmp");
+    const cwdIdx = argv.indexOf("--cwd");
+    assert.ok(cwdIdx >= 0);
+    assert.equal(argv[cwdIdx + 1], realRoot);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("buildSandboxArgv prepends the OS isolation wrapper when a helper is detected", () => {
+  const root = mkSandbox();
+  try {
+    const argv = buildSandboxArgv("echo hi", root);
+    // Always ends with sh -c CMD.
+    const shIdx = argv.lastIndexOf("sh");
+    assert.ok(shIdx >= 0);
+    assert.equal(argv[shIdx + 1], "-c");
+    assert.equal(argv[shIdx + 2], "echo hi");
+    if (sandboxHelpers.osIsolation) {
+      // Wrapper bin is at argv[0].
+      assert.equal(argv[0], sandboxHelpers.osIsolation.bin,
+        `expected OS sandbox wrapper at argv[0], got argv=${JSON.stringify(argv)}`);
+      // Wrapper terminates with -- before the inner argv.
+      assert.ok(argv.includes("--"), "expected -- separator after OS wrapper flags");
+    } else {
+      // Without an OS wrapper, argv[0] is setpriv, prlimit, or sh.
+      assert.ok(
+        argv[0] === "sh"
+          || argv[0] === sandboxHelpers.setpriv
+          || argv[0] === sandboxHelpers.prlimit,
+        `unexpected argv[0]=${argv[0]} when osIsolation is null`,
+      );
+    }
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// THE OS-LAYER ACCEPTANCE TEST.
+//
+// On hosts where bwrap / firejail / nsjail is available the
+// sandbox should contain writes that the static argv parser cannot
+// see — for example, a script the validator treats as an unknown
+// binary that internally calls `cp /etc/hostname /tmp/<unique>`.
+// Without OS isolation the static layer would still allow the script
+// (unknown binary), the script would run, and the host /tmp file
+// would appear. With OS isolation the host file MUST NOT appear:
+// either the inner write goes to the private tmpfs (/tmp) or it is
+// blocked at the kernel layer (EROFS / EACCES).
+//
+// Skipped on hosts that don't have a working helper (the legacy
+// Replit container blocks unprivileged userns via seccomp).
+test("runSandboxed contains writes outside cwd at the kernel layer when an OS sandbox helper is available", async (t) => {
+  const helper = sandboxHelpers.osIsolation;
+  if (!helper) {
+    t.skip(`no OS-level sandbox helper available on this host (setpriv=${sandboxHelpers.setpriv}, prlimit=${sandboxHelpers.prlimit})`);
+    return;
+  }
+  const root = mkSandbox();
+  const tag = randomBytes(6).toString("hex");
+  // Two host-side targets: one under /tmp (private tmpfs catches it),
+  // one under /var/tmp (read-only bind catches it). Both must remain
+  // absent on the host after the sandboxed run.
+  const escapeTmp = `/tmp/wb-os-escape-${tag}`;
+  const escapeVar = `/var/tmp/wb-os-escape-${tag}`;
+  try { fs.unlinkSync(escapeTmp); } catch {}
+  try { fs.unlinkSync(escapeVar); } catch {}
+  try {
+    // Static validator treats `./escape.sh` as an unknown binary and
+    // allows it. The script's body — which contains absolute writes —
+    // is invisible to the validator. Only the OS layer can stop it.
+    const scriptName = "escape.sh";
+    fs.writeFileSync(
+      path.join(root, scriptName),
+      `#!/bin/sh\n` +
+      `cp /etc/hostname '${escapeTmp}' >/dev/null 2>&1 || true\n` +
+      `cp /etc/hostname '${escapeVar}' >/dev/null 2>&1 || true\n` +
+      `exit 0\n`,
+    );
+    fs.chmodSync(path.join(root, scriptName), 0o755);
+
+    const r = await runSandboxed(`./${scriptName}`, { cwd: root, timeoutMs: 15_000 });
+    // Whatever the inner cp returned, the host paths must be absent.
+    assert.equal(
+      fs.existsSync(escapeTmp),
+      false,
+      `${helper.kind}: host file at ${escapeTmp} must NOT exist after OS-isolated run; ` +
+      `exitCode=${r.exitCode}, stdout=${r.stdout}, stderr=${r.stderr}`,
+    );
+    assert.equal(
+      fs.existsSync(escapeVar),
+      false,
+      `${helper.kind}: host file at ${escapeVar} must NOT exist after OS-isolated run; ` +
+      `exitCode=${r.exitCode}, stdout=${r.stdout}, stderr=${r.stderr}`,
+    );
+  } finally {
+    try { fs.unlinkSync(escapeTmp); } catch {}
+    try { fs.unlinkSync(escapeVar); } catch {}
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
