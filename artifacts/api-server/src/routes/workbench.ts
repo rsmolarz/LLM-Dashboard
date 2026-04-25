@@ -8,9 +8,32 @@ import { sql } from "drizzle-orm";
 import multer from "multer";
 import AdmZip from "adm-zip";
 import * as projectCtx from "../lib/project-context";
+import { unifiedDiff } from "../lib/file-diff";
 import { requireAuth } from "../middlewares/rateLimiter";
+import { randomBytes } from "crypto";
 
 const router: IRouter = Router();
+
+interface UndoEntry {
+  resolved: projectCtx.ResolvedProject;
+  filePath: string;
+  previousContent: string;
+  newContent: string;
+  isNew: boolean;
+  createdAt: number;
+  used: boolean;
+  userId: string;
+}
+
+const undoStore = new Map<string, UndoEntry>();
+const UNDO_TTL_MS = 60 * 60 * 1000;
+
+function pruneUndoStore() {
+  const cutoff = Date.now() - UNDO_TTL_MS;
+  for (const [k, v] of undoStore) {
+    if (v.createdAt < cutoff) undoStore.delete(k);
+  }
+}
 const PROJECT_ROOT = process.env.NODE_ENV === "production"
   ? process.cwd()
   : path.resolve(process.cwd(), "../..");
@@ -608,9 +631,63 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
               resultText = JSON.stringify({ content: r.content, size: r.size, truncated: r.truncated });
               res.write(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `read ${tu.input.path} (${r.size}B${r.truncated ? ", truncated" : ""})` })}\n\n`);
             } else if (tu.name === "write_file") {
-              const r = await projectCtx.writeFile(resolved, tu.input.path, tu.input.content || "");
-              resultText = JSON.stringify({ ok: true, bytes: r.bytes, path: tu.input.path });
-              res.write(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `wrote ${tu.input.path} (${r.bytes}B)` })}\n\n`);
+              const targetPath = tu.input.path;
+              const newContent = tu.input.content || "";
+              let previousContent = "";
+              let isNew = false;
+              let undoSafe = true;
+              let undoSkipReason: string | undefined;
+              try {
+                // Use full (untruncated) read so undo restores exact prior bytes.
+                const prev = await projectCtx.readFileFull(resolved, targetPath);
+                previousContent = prev.content || "";
+              } catch (e: any) {
+                if (e && (e.code === "ENOENT" || /ENOENT/i.test(String(e.message || "")))) {
+                  isNew = true;
+                } else {
+                  // Read failed for a non-missing reason (permission, ssh, etc).
+                  // Do NOT pretend the file is new — that would let undo delete
+                  // it. Disable undo for this edit and surface why.
+                  undoSafe = false;
+                  undoSkipReason = e?.message || "could not read previous content";
+                }
+              }
+              const r = await projectCtx.writeFile(resolved, targetPath, newContent);
+              const diff = unifiedDiff(previousContent, newContent, targetPath);
+              pruneUndoStore();
+              const userId = (req as any).user?.id || (req as any).user?.sub || "anon";
+              let editId: string | undefined;
+              if (undoSafe) {
+                editId = randomBytes(12).toString("hex");
+                undoStore.set(editId, {
+                  resolved,
+                  filePath: targetPath,
+                  previousContent,
+                  newContent,
+                  isNew,
+                  createdAt: Date.now(),
+                  used: false,
+                  userId: String(userId),
+                });
+              }
+              const summary = `wrote ${targetPath} (${r.bytes}B${isNew ? ", new" : `, +${diff.stats.added}/-${diff.stats.removed}`})`;
+              resultText = JSON.stringify({ ok: true, bytes: r.bytes, path: targetPath, isNew, added: diff.stats.added, removed: diff.stats.removed });
+              res.write(`data: ${JSON.stringify({
+                type: "file_edit",
+                name: tu.name,
+                editId,
+                path: targetPath,
+                isNew,
+                added: diff.stats.added,
+                removed: diff.stats.removed,
+                previousBytes: Buffer.byteLength(previousContent, "utf-8"),
+                newBytes: r.bytes,
+                diff: diff.diff,
+                truncated: diff.truncated,
+                summary,
+                undoDisabled: !undoSafe,
+                undoSkipReason,
+              })}\n\n`);
             } else if (tu.name === "run_shell") {
               const r = await projectCtx.execCommand(resolved, tu.input.command);
               resultText = JSON.stringify({ stdout: (r.stdout || "").slice(0, 8000), stderr: (r.stderr || "").slice(0, 4000), exitCode: r.exitCode });
@@ -651,6 +728,40 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`);
       res.end();
     } catch {}
+  }
+});
+
+router.post("/undo-edit", requireAuth, async (req, res): Promise<void> => {
+  const { editId } = req.body || {};
+  if (!editId || typeof editId !== "string") {
+    res.status(400).json({ error: "editId is required" });
+    return;
+  }
+  pruneUndoStore();
+  const entry = undoStore.get(editId);
+  if (!entry) {
+    res.status(404).json({ error: "Edit not found or expired" });
+    return;
+  }
+  if (entry.used) {
+    res.status(409).json({ error: "Edit was already undone" });
+    return;
+  }
+  const userId = String((req as any).user?.id || (req as any).user?.sub || "anon");
+  if (entry.userId !== userId) {
+    res.status(403).json({ error: "You did not author this edit" });
+    return;
+  }
+  try {
+    if (entry.isNew) {
+      await projectCtx.deleteFile(entry.resolved, entry.filePath);
+    } else {
+      await projectCtx.writeFile(entry.resolved, entry.filePath, entry.previousContent);
+    }
+    entry.used = true;
+    res.json({ ok: true, path: entry.filePath, restoredBytes: Buffer.byteLength(entry.previousContent, "utf-8"), deleted: entry.isNew });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Undo failed" });
   }
 });
 

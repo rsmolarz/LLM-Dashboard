@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { Cloud, ExternalLink, GitBranch, Loader2, RefreshCw, Send, Bot, User, Trash2, AlertTriangle, Folder, FileText, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ProjectSidebar from "@/components/workbench/ProjectSidebar";
+import { FileEditCard, type FileEdit } from "@/components/workbench/FileEditCard";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { useSelectedProject, projectDescriptorFromSidebar, type SelectedProject } from "@/hooks/useSelectedProject";
 import { useAuth } from "@workspace/replit-auth-web";
@@ -186,8 +187,26 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [toolEvents, setToolEvents] = useState<{ name: string; summary: string; error?: boolean }[]>([]);
+  const [fileEdits, setFileEdits] = useState<FileEdit[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  const handleUndo = useCallback(async (editId: string) => {
+    setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: true, undoError: null } : e));
+    try {
+      const res = await fetch("/api/workbench/undo-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ editId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undone: true } : e));
+    } catch (err: any) {
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undoError: err.message } : e));
+    }
+  }, []);
 
   const checkOrClone = useCallback(async (forceClone = false) => {
     setStatus(s => ({ ...s, loading: true, error: null }));
@@ -216,6 +235,7 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
     setStatus({ localPath: null, cloned: false, loading: false, error: null });
     setMessages([]);
     setToolEvents([]);
+    setFileEdits([]);
   }, [project.path, setMessages]);
 
   const handleSubmit = useCallback(async () => {
@@ -261,6 +281,21 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
                 setToolEvents(p => { const u = [...p]; for (let i = u.length - 1; i >= 0; i--) { if (u[i].name === evt.name && u[i].summary === "running…") { u[i] = { name: evt.name, summary: evt.summary }; return u; } } return [...u, { name: evt.name, summary: evt.summary }]; });
               } else if (evt.type === "tool_error") {
                 setToolEvents(p => [...p, { name: evt.name, summary: evt.error, error: true }]);
+              } else if (evt.type === "file_edit") {
+                setFileEdits(p => [...p, {
+                  editId: evt.editId,
+                  path: evt.path,
+                  diff: evt.diff,
+                  isNew: !!evt.isNew,
+                  added: evt.added || 0,
+                  removed: evt.removed || 0,
+                  previousBytes: evt.previousBytes || 0,
+                  newBytes: evt.newBytes || 0,
+                  truncated: !!evt.truncated,
+                  undoDisabled: !!evt.undoDisabled,
+                  undoSkipReason: evt.undoSkipReason,
+                }]);
+                setToolEvents(p => [...p, { name: evt.name || "write_file", summary: evt.summary || `wrote ${evt.path}` }]);
               } else if (evt.type === "project") {
                 if (evt.localPath) setStatus(s => ({ ...s, localPath: evt.localPath, cloned: evt.cloned }));
                 setToolEvents(p => [...p, { name: "project", summary: `loaded ${evt.origin}${evt.cloned ? " (fresh clone)" : ""}` }]);
@@ -331,6 +366,13 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
                 <Bot className="h-8 w-8 mx-auto text-[#89b4fa]" />
                 <p className="text-[#cdd6f4] text-sm">Chat with Claude scoped to this Replit project.</p>
                 <p className="text-[#6c7086] text-xs">{status.localPath ? "Edits land in the local clone." : "Pull files first to enable editing."}</p>
+              </div>
+            )}
+            {fileEdits.length > 0 && (
+              <div className="space-y-1">
+                {fileEdits.map((e, i) => (
+                  <FileEditCard key={e.editId ?? `no-undo-${i}`} edit={e} onUndo={handleUndo} />
+                ))}
               </div>
             )}
             {messages.map((m, i) => (

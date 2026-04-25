@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
 import ProjectSidebar from "@/components/workbench/ProjectSidebar";
+import { FileEditCard, type FileEdit } from "@/components/workbench/FileEditCard";
 import { FolderPlus, Upload, Paperclip } from "lucide-react";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { useSelectedProject, projectDescriptorFromSidebar } from "@/hooks/useSelectedProject";
@@ -588,9 +589,27 @@ function ClaudeCodePanel() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const [toolEvents, setToolEvents] = useState<{ name: string; summary: string; error?: boolean }[]>([]);
+  const [fileEdits, setFileEdits] = useState<FileEdit[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { project: selectedProject } = useSelectedProject();
+
+  const handleUndo = useCallback(async (editId: string) => {
+    setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: true, undoError: null } : e));
+    try {
+      const res = await fetch("/api/workbench/undo-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ editId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undone: true } : e));
+    } catch (err: any) {
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undoError: err.message } : e));
+    }
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
@@ -618,6 +637,7 @@ function ClaudeCodePanel() {
     try {
       const conversationHistory = messages.filter(m => !m.streaming).map(m => ({ role: m.role, content: m.content }));
       setToolEvents([]);
+      setFileEdits([]);
       const res = await fetch(`/api/workbench/code-chat`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, messages: conversationHistory, project: selectedProject || undefined, writeMode: !!selectedProject }),
@@ -646,6 +666,22 @@ function ClaudeCodePanel() {
               else if (data.type === "tool_start") { setToolEvents(p => [...p, { name: data.name, summary: "running…" }]); }
               else if (data.type === "tool_result") { setToolEvents(p => { const u = [...p]; for (let i = u.length - 1; i >= 0; i--) { if (u[i].name === data.name && u[i].summary === "running…") { u[i] = { name: data.name, summary: data.summary }; return u; } } return [...u, { name: data.name, summary: data.summary }]; }); }
               else if (data.type === "tool_error") { setToolEvents(p => [...p, { name: data.name, summary: data.error, error: true }]); }
+              else if (data.type === "file_edit") {
+                setFileEdits(p => [...p, {
+                  editId: data.editId,
+                  path: data.path,
+                  diff: data.diff,
+                  isNew: !!data.isNew,
+                  added: data.added || 0,
+                  removed: data.removed || 0,
+                  previousBytes: data.previousBytes || 0,
+                  newBytes: data.newBytes || 0,
+                  truncated: !!data.truncated,
+                  undoDisabled: !!data.undoDisabled,
+                  undoSkipReason: data.undoSkipReason,
+                }]);
+                setToolEvents(p => [...p, { name: data.name || "write_file", summary: data.summary || `wrote ${data.path}` }]);
+              }
               else if (data.type === "project") { setToolEvents(p => [...p, { name: "project", summary: `loaded ${data.origin} project${data.cloned ? " (fresh clone)" : ""}` }]); }
             } catch {}
           }
@@ -694,6 +730,13 @@ function ClaudeCodePanel() {
                     className="text-[10px] px-2 py-1 rounded-full border border-[#313244] text-[#6c7086] hover:text-[#cdd6f4] hover:border-[#fab387]/30">{s}</button>
                 ))}
               </div>
+            </div>
+          )}
+          {fileEdits.length > 0 && (
+            <div className="space-y-1">
+              {fileEdits.map((e, i) => (
+                <FileEditCard key={e.editId ?? `no-undo-${i}`} edit={e} onUndo={handleUndo} />
+              ))}
             </div>
           )}
           {messages.map((msg, i) => (

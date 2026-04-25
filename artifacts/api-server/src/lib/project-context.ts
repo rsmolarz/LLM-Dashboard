@@ -339,6 +339,40 @@ export async function readFile(resolved: ResolvedProject, filePath: string): Pro
   return { content: fs.readFileSync(full, "utf-8"), size: stat.size, truncated: false };
 }
 
+/**
+ * Read the full content of a file, with no size truncation. Throws on read
+ * errors. Used by features (like undo snapshots) that must capture exact
+ * prior bytes — never use for LLM context, which should use readFile().
+ *
+ * The error thrown for a missing file has `code === "ENOENT"` so callers can
+ * distinguish "file does not exist" from other failures.
+ */
+export async function readFileFull(resolved: ResolvedProject, filePath: string): Promise<{ content: string; size: number }> {
+  if (resolved.origin === "vps" && resolved.remotePath && resolved.ssh) {
+    const fullPath = joinRemote(resolved.remotePath, filePath);
+    const exists = await execSshCommand(resolved.ssh, `test -f ${shellQuote(fullPath)} && echo OK || echo MISSING`, 10000);
+    if (exists.stdout.trim() !== "OK") {
+      const err: NodeJS.ErrnoException = new Error(`ENOENT: no such file ${filePath}`);
+      err.code = "ENOENT";
+      throw err;
+    }
+    const cat = await execSshCommand(resolved.ssh, `cat ${shellQuote(fullPath)}`, 30000);
+    if (cat.exitCode !== 0) throw new Error(`SSH read failed: ${cat.stderr || "exit " + cat.exitCode}`);
+    return { content: cat.stdout, size: Buffer.byteLength(cat.stdout, "utf-8") };
+  }
+  if (!resolved.localPath) {
+    if (resolved.origin === "replit") {
+      throw new Error("Replit project not cloned yet. Sign in and use 'Pull files for editing'.");
+    }
+    throw new Error("Project has no local path");
+  }
+  const full = path.resolve(resolved.localPath, filePath);
+  const rel = path.relative(resolved.localPath, full);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("Path traversal blocked");
+  const content = fs.readFileSync(full, "utf-8");
+  return { content, size: Buffer.byteLength(content, "utf-8") };
+}
+
 export async function writeFile(resolved: ResolvedProject, filePath: string, content: string): Promise<{ bytes: number }> {
   if (resolved.origin === "vps" && resolved.remotePath && resolved.ssh) {
     const fullPath = joinRemote(resolved.remotePath, filePath);
@@ -361,6 +395,28 @@ export async function writeFile(resolved: ResolvedProject, filePath: string, con
   fs.mkdirSync(path.dirname(full), { recursive: true });
   fs.writeFileSync(full, content, "utf-8");
   return { bytes: Buffer.byteLength(content, "utf-8") };
+}
+
+export async function deleteFile(resolved: ResolvedProject, filePath: string): Promise<{ ok: true }> {
+  if (resolved.origin === "vps" && resolved.remotePath && resolved.ssh) {
+    const fullPath = joinRemote(resolved.remotePath, filePath);
+    const cmd = `rm -f ${shellQuote(fullPath)}`;
+    const res = await execSshCommand(resolved.ssh, cmd, 15000);
+    if (res.exitCode !== 0) throw new Error(`SSH delete failed: ${res.stderr || "exit " + res.exitCode}`);
+    return { ok: true };
+  }
+  if (!resolved.localPath) {
+    throw new Error("Project has no local path");
+  }
+  const full = path.resolve(resolved.localPath, filePath);
+  const rel = path.relative(resolved.localPath, full);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("Path traversal blocked");
+  try {
+    fs.unlinkSync(full);
+  } catch (err: any) {
+    if (err.code !== "ENOENT") throw err;
+  }
+  return { ok: true };
 }
 
 const BLOCKED_CMDS = ["rm -rf /", "mkfs", "dd if=", ":(){", "shutdown", "reboot", "halt", "poweroff"];

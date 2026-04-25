@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import ProjectManager, { UploadArea } from "@/components/workbench/ProjectManager";
 import ProjectSidebar from "@/components/workbench/ProjectSidebar";
+import { FileEditCard, type FileEdit } from "@/components/workbench/FileEditCard";
 import { FolderPlus, Upload, Paperclip } from "lucide-react";
 import { usePersistedState } from "@/hooks/usePersistedState";
 import { useSelectedProject, projectDescriptorFromSidebar } from "@/hooks/useSelectedProject";
@@ -703,11 +704,29 @@ function CodeChatPanel() {
   const [messages, setMessages] = usePersistedState<ChatMessage[]>("wb-chat-messages", []);
   const [isStreaming, setIsStreaming] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [fileEdits, setFileEdits] = useState<FileEdit[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
+  }, []);
+
+  const handleUndo = useCallback(async (editId: string) => {
+    setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: true, undoError: null } : e));
+    try {
+      const res = await fetch("/api/workbench/undo-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ editId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undone: true } : e));
+    } catch (err: any) {
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undoError: err.message } : e));
+    }
   }, []);
 
   const handleStop = useCallback(() => {
@@ -728,6 +747,7 @@ function CodeChatPanel() {
     const assistantMsg: ChatMessage = { role: "assistant", content: "", timestamp: Date.now(), streaming: true };
     setMessages(prev => [...prev, userMsg, assistantMsg]);
     setIsStreaming(true);
+    setFileEdits([]);
     scrollToBottom();
 
     const controller = new AbortController();
@@ -787,6 +807,20 @@ function CodeChatPanel() {
                   return updated;
                 });
                 scrollToBottom();
+              } else if (data.type === "file_edit") {
+                setFileEdits(p => [...p, {
+                  editId: data.editId,
+                  path: data.path,
+                  diff: data.diff,
+                  isNew: !!data.isNew,
+                  added: data.added || 0,
+                  removed: data.removed || 0,
+                  previousBytes: data.previousBytes || 0,
+                  newBytes: data.newBytes || 0,
+                  truncated: !!data.truncated,
+                  undoDisabled: !!data.undoDisabled,
+                  undoSkipReason: data.undoSkipReason,
+                }]);
               } else if (data.type === "done") {
                 setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m));
               } else if (data.type === "error") {
@@ -856,6 +890,14 @@ function CodeChatPanel() {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {fileEdits.length > 0 && (
+            <div className="space-y-1">
+              {fileEdits.map((e, i) => (
+                <FileEditCard key={e.editId ?? `no-undo-${i}`} edit={e} onUndo={handleUndo} />
+              ))}
             </div>
           )}
 
