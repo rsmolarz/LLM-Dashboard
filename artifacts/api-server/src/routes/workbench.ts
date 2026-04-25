@@ -379,6 +379,21 @@ async function recordShellCommand(userId: string, command: string): Promise<void
   }
 }
 
+// Lightweight read-only quota snapshot. The shell/git endpoints already
+// piggy-back a `quota` field on every response, but the workbench UI
+// needs to render the usage indicator on initial mount — before the
+// user has run any command — so we expose the same snapshot here.
+// `requireAuth` matches `/shell` so the indicator is bound to the
+// caller's per-user scratch dir, not the anonymous fallback.
+router.get("/quota", requireAuth, async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required (missing user id)" });
+    return;
+  }
+  res.json({ quota: getUserQuotaInfo(userId) });
+});
+
 router.post("/shell", requireAuth, async (req, res): Promise<void> => {
   const { command, project } = req.body || {};
   if (!command || typeof command !== "string") {

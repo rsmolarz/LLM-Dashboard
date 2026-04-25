@@ -786,6 +786,20 @@ async function listFiles(userId: string | null, requestedPath = "."): Promise<Fi
   return { status: res.status, body } as FilesResult;
 }
 
+// =============================================================================
+// GET /quota — read-only quota snapshot for the workbench UI (task #65)
+// =============================================================================
+
+async function quotaGet(userId: string | null): Promise<{ status: number; body: any }> {
+  const headers: Record<string, string> = {};
+  if (userId) headers["x-test-user"] = userId;
+  const res = await fetch(`${serverUrl}/api/quota`, { method: "GET", headers });
+  const text = await res.text();
+  let body: any = {};
+  try { body = text ? JSON.parse(text) : {}; } catch { body = { _raw: text }; }
+  return { status: res.status, body };
+}
+
 test("GET /api/files (anonymous) lists PROJECT_ROOT in host mode without privacy badges", async () => {
   const r = await listFiles(null, ".");
   assert.equal(r.status, 200);
@@ -1116,6 +1130,48 @@ test("POST /api/scratch/clear unblocks a user who was over quota", async () => {
   } finally {
     userWs.__testing__.setUserQuotaBytes(null);
   }
+});
+
+test("GET /api/quota requires auth (no anonymous quota leak)", async () => {
+  const r = await quotaGet(null);
+  assert.equal(r.status, 401, `anonymous GET /quota must be 401, got ${r.status}`);
+});
+
+test("GET /api/quota returns the same snapshot shape the shell endpoint piggy-backs", async () => {
+  const userId = trackUser(`quota-get-shape-${randomBytes(4).toString("hex")}`);
+  // Make sure the dir exists so the snapshot reflects a real on-disk
+  // walk rather than a synthesised zero.
+  userWs.ensureUserScratchDir(userId);
+  const r = await quotaGet(userId);
+  assert.equal(r.status, 200);
+  const q = r.body?.quota;
+  assert.ok(q, "GET /quota must return a quota object");
+  assert.equal(typeof q.usedBytes, "number");
+  assert.equal(typeof q.capBytes, "number");
+  assert.equal(typeof q.remainingBytes, "number");
+  assert.ok(q.capBytes > 0);
+  assert.ok(q.usedBytes >= 0);
+  assert.equal(q.remainingBytes, Math.max(0, q.capBytes - q.usedBytes));
+});
+
+test("GET /api/quota reflects on-disk writes from the same user's shell", async () => {
+  const userId = trackUser(`quota-get-delta-${randomBytes(4).toString("hex")}`);
+  // Baseline.
+  const before = await quotaGet(userId);
+  assert.equal(before.status, 200);
+  const beforeUsed = before.body.quota.usedBytes;
+  // Drop a 4 KiB file via the shell endpoint, then re-fetch /quota.
+  // The standalone GET must see the same growth the shell response
+  // already piggy-backed.
+  const w = await shell(userId, "head -c 4096 /dev/zero > probe.bin && echo ok");
+  assert.equal(w.body.exitCode, 0, `shell write must succeed: ${w.body.stderr}`);
+  const after = await quotaGet(userId);
+  assert.equal(after.status, 200);
+  const afterUsed = after.body.quota.usedBytes;
+  assert.ok(
+    afterUsed >= beforeUsed + 4096,
+    `GET /quota must see the same growth the shell response did (before=${beforeUsed} after=${afterUsed})`,
+  );
 });
 
 test("POST /api/shell blocks writes through symlinks back to the host workspace", async () => {

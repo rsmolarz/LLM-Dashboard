@@ -32,6 +32,7 @@ import {
   type SandboxContainmentNotice,
 } from "@/components/workbench/SandboxNotices";
 import { ScratchPanel } from "@/components/workbench/ScratchPanel";
+import { ScratchQuotaBar, parseScratchQuota, type ScratchQuota } from "@/components/workbench/ScratchQuotaBar";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -87,8 +88,9 @@ type ShellMutationResult =
       sandboxContained?: SandboxContainmentNotice;
       sandboxBlocked?: string;
       scope?: ShellScope;
+      quota?: ScratchQuota;
     }
-  | { ok: false; error: { message: string; code: string } };
+  | { ok: false; error: { message: string; code: string }; quota?: ScratchQuota };
 
 function ShellPanel() {
   const [input, setInput] = useState("");
@@ -103,6 +105,7 @@ function ShellPanel() {
   // Reverse-i-search state, mirroring bash's Ctrl-R. `matchIndex` walks
   // older as the user keeps pressing Ctrl-R.
   const [search, setSearch] = useState<{ query: string; matchIndex: number } | null>(null);
+  const [quota, setQuota] = useState<ScratchQuota | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const { project } = useSelectedProject();
@@ -150,10 +153,11 @@ function ShellPanel() {
       const body: Record<string, unknown> = await res.json().catch(() => ({}));
       const bodyError = typeof body.error === "string" ? body.error : null;
       const bodyCode = typeof body.code === "string" ? body.code : null;
+      const bodyQuota = parseScratchQuota(body.quota);
       if (!res.ok || bodyError) {
         const message = bodyError ?? `Shell request failed (HTTP ${res.status})`;
         const code = bodyCode ?? (res.status === 401 ? "AUTH_REQUIRED" : `HTTP_${res.status}`);
-        return { ok: false, error: { message, code } };
+        return { ok: false, error: { message, code }, ...(bodyQuota ? { quota: bodyQuota } : {}) };
       }
       return {
         ok: true,
@@ -165,6 +169,7 @@ function ShellPanel() {
           : {}),
         sandboxBlocked: typeof body.sandboxBlocked === "string" ? body.sandboxBlocked : undefined,
         scope: (body.scope && typeof body.scope === "object") ? (body.scope as ShellScope) : undefined,
+        ...(bodyQuota ? { quota: bodyQuota } : {}),
       };
     },
     onSuccess: (data, command) => {
@@ -173,6 +178,10 @@ function ShellPanel() {
       // local cache either.
       setCmdHistory(h => (h[0] === command ? h : [command, ...h].slice(0, 500)));
       setHistoryIndex(-1);
+      // Always refresh the quota indicator if the server reported one,
+      // even on failure responses (the over-quota rejection itself
+      // carries `quota` so users see exactly *why* they're blocked).
+      if (data.quota) setQuota(data.quota);
       if (!data.ok) {
         setShellError({ command, message: data.error.message, code: data.error.code || null });
         setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
@@ -387,6 +396,11 @@ function ShellPanel() {
           autoFocus
         />
       </form>
+      <ScratchQuotaBar
+        apiBase={API_BASE}
+        quota={quota}
+        onCopyClear={(cmd) => setInput(cmd)}
+      />
     </div>
   );
 }
