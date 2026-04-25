@@ -249,7 +249,7 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undone: true } : e));
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undone: true, canRedo: true, undoneAt: Date.now(), redoError: null } : e));
     } catch (err: any) {
       setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undoError: err.message } : e));
     }
@@ -257,6 +257,8 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
 
   const [fileUndoPending, setFileUndoPending] = useState<string | null>(null);
   const [fileUndoError, setFileUndoError] = useState<{ path: string; message: string } | null>(null);
+  const [fileRedoPending, setFileRedoPending] = useState<string | null>(null);
+  const [fileRedoError, setFileRedoError] = useState<{ path: string; message: string } | null>(null);
 
   const latestEditIdByPath = useMemo(() => {
     const map = new Map<string, string>();
@@ -267,6 +269,21 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
       }
     }
     return map;
+  }, [fileEdits]);
+
+  // Top of the per-file redo stack — most recently undone redoable edit.
+  const topRedoEditIdByPath = useMemo(() => {
+    const map = new Map<string, { editId: string; undoneAt: number }>();
+    for (const e of fileEdits) {
+      if (!e.undone || !e.canRedo || !e.editId || !e.undoneAt) continue;
+      const prev = map.get(e.path);
+      if (!prev || e.undoneAt > prev.undoneAt) {
+        map.set(e.path, { editId: e.editId, undoneAt: e.undoneAt });
+      }
+    }
+    const out = new Map<string, string>();
+    for (const [p, v] of map) out.set(p, v.editId);
+    return out;
   }, [fileEdits]);
 
   const handleUndoLastForFile = useCallback(async (filePath: string) => {
@@ -282,12 +299,13 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       const undoneId: string | undefined = data.editId;
+      const stamp = Date.now();
       if (undoneId) {
-        setFileEdits(prev => prev.map(e => e.editId === undoneId ? { ...e, undone: true, undoing: false } : e));
+        setFileEdits(prev => prev.map(e => e.editId === undoneId ? { ...e, undone: true, undoing: false, canRedo: true, undoneAt: stamp, redoError: null } : e));
       } else {
         const latestId = latestEditIdByPath.get(filePath);
         if (latestId) {
-          setFileEdits(prev => prev.map(e => e.editId === latestId ? { ...e, undone: true, undoing: false } : e));
+          setFileEdits(prev => prev.map(e => e.editId === latestId ? { ...e, undone: true, undoing: false, canRedo: true, undoneAt: stamp, redoError: null } : e));
         }
       }
     } catch (err: any) {
@@ -296,6 +314,51 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
       setFileUndoPending(null);
     }
   }, [project, latestEditIdByPath]);
+
+  const handleRedo = useCallback(async (editId: string) => {
+    setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, redoing: true, redoError: null } : e));
+    try {
+      const res = await fetch("/api/workbench/redo-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ editId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, redoing: false, undone: false, canRedo: false, undoneAt: undefined, undoError: null } : e));
+    } catch (err: any) {
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, redoing: false, redoError: err.message } : e));
+    }
+  }, []);
+
+  const handleRedoLastForFile = useCallback(async (filePath: string) => {
+    setFileRedoPending(filePath);
+    setFileRedoError(null);
+    try {
+      const res = await fetch("/api/workbench/redo-last-file-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ filePath, project }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const redoneId: string | undefined = data.editId;
+      if (redoneId) {
+        setFileEdits(prev => prev.map(e => e.editId === redoneId ? { ...e, redoing: false, undone: false, canRedo: false, undoneAt: undefined, undoError: null } : e));
+      } else {
+        const topId = topRedoEditIdByPath.get(filePath);
+        if (topId) {
+          setFileEdits(prev => prev.map(e => e.editId === topId ? { ...e, redoing: false, undone: false, canRedo: false, undoneAt: undefined, undoError: null } : e));
+        }
+      }
+    } catch (err: any) {
+      setFileRedoError({ path: filePath, message: err.message || "Redo failed" });
+    } finally {
+      setFileRedoPending(null);
+    }
+  }, [project, topRedoEditIdByPath]);
 
   const refreshInfo = useCallback(async () => {
     try {
@@ -471,19 +534,28 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
               } else if (evt.type === "tool_error") {
                 setToolEvents(p => [...p, { name: evt.name, summary: evt.error, error: true }]);
               } else if (evt.type === "file_edit") {
-                setFileEdits(p => [...p, {
-                  editId: evt.editId,
-                  path: evt.path,
-                  diff: evt.diff,
-                  isNew: !!evt.isNew,
-                  added: evt.added || 0,
-                  removed: evt.removed || 0,
-                  previousBytes: evt.previousBytes || 0,
-                  newBytes: evt.newBytes || 0,
-                  truncated: !!evt.truncated,
-                  undoDisabled: !!evt.undoDisabled,
-                  undoSkipReason: evt.undoSkipReason,
-                }]);
+                setFileEdits(p => {
+                  // Mirror the server: a fresh write to this path invalidates
+                  // any redo entries that pointed at it.
+                  const cleared = p.map(e => (
+                    e.path === evt.path && e.canRedo
+                      ? { ...e, canRedo: false, undoneAt: undefined, redoError: null }
+                      : e
+                  ));
+                  return [...cleared, {
+                    editId: evt.editId,
+                    path: evt.path,
+                    diff: evt.diff,
+                    isNew: !!evt.isNew,
+                    added: evt.added || 0,
+                    removed: evt.removed || 0,
+                    previousBytes: evt.previousBytes || 0,
+                    newBytes: evt.newBytes || 0,
+                    truncated: !!evt.truncated,
+                    undoDisabled: !!evt.undoDisabled,
+                    undoSkipReason: evt.undoSkipReason,
+                  }];
+                });
                 setToolEvents(p => [...p, { name: evt.name || "write_file", summary: evt.summary || `wrote ${evt.path}` }]);
               } else if (evt.type === "project") {
                 if (evt.localPath) setStatus(s => ({ ...s, localPath: evt.localPath, cloned: evt.cloned }));
@@ -735,6 +807,10 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
                 <FileEditSummary
                   edits={fileEdits}
                   onUndoLast={handleUndoLastForFile}
+                  onRedoLast={handleRedoLastForFile}
+                  redoPendingPath={fileRedoPending}
+                  redoErrorPath={fileRedoError?.path}
+                  redoErrorMessage={fileRedoError?.message}
                   pendingPath={fileUndoPending}
                   errorPath={fileUndoError?.path}
                   errorMessage={fileUndoError?.message}
@@ -744,6 +820,8 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
                     key={e.editId ?? `no-undo-${i}`}
                     edit={e}
                     onUndo={handleUndo}
+                    onRedo={handleRedo}
+                    isTopOfRedoForFile={!!e.editId && topRedoEditIdByPath.get(e.path) === e.editId}
                     isLatestForFile={!!e.editId && latestEditIdByPath.get(e.path) === e.editId}
                   />
                 ))}

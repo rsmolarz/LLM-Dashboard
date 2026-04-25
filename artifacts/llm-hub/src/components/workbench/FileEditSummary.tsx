@@ -1,13 +1,17 @@
 import { useMemo } from "react";
-import { FilePlus, FileText, Loader2, RotateCcw } from "lucide-react";
+import { FilePlus, FileText, Loader2, RotateCcw, RotateCw } from "lucide-react";
 import type { FileEdit } from "./FileEditCard";
 
 interface Props {
   edits: FileEdit[];
   onUndoLast: (path: string) => void;
+  onRedoLast: (path: string) => void;
   pendingPath?: string | null;
   errorPath?: string | null;
   errorMessage?: string | null;
+  redoPendingPath?: string | null;
+  redoErrorPath?: string | null;
+  redoErrorMessage?: string | null;
 }
 
 interface FileGroup {
@@ -17,21 +21,33 @@ interface FileGroup {
   isNewLatest: boolean;
   hasUndoableLatest: boolean;
   latestUndoSkipReason?: string;
+  hasRedoableTop: boolean;
 }
 
-export function FileEditSummary({ edits, onUndoLast, pendingPath, errorPath, errorMessage }: Props) {
+export function FileEditSummary({
+  edits,
+  onUndoLast,
+  onRedoLast,
+  pendingPath,
+  errorPath,
+  errorMessage,
+  redoPendingPath,
+  redoErrorPath,
+  redoErrorMessage,
+}: Props) {
   const groups = useMemo<FileGroup[]>(() => {
     const map = new Map<string, FileGroup>();
     const order: string[] = [];
     for (const e of edits) {
       let g = map.get(e.path);
       if (!g) {
-        g = { path: e.path, total: 0, active: 0, isNewLatest: e.isNew, hasUndoableLatest: false };
+        g = { path: e.path, total: 0, active: 0, isNewLatest: e.isNew, hasUndoableLatest: false, hasRedoableTop: false };
         map.set(e.path, g);
         order.push(e.path);
       }
       g.total += 1;
       if (!e.undone) g.active += 1;
+      if (e.undone && e.canRedo) g.hasRedoableTop = true;
     }
     // Walk in reverse to find the latest non-undone edit per file and use its
     // metadata to decide whether the per-file undo button should be live.
@@ -65,7 +81,9 @@ export function FileEditSummary({ edits, onUndoLast, pendingPath, errorPath, err
       <ul className="divide-y divide-[#313244]">
         {groups.map(g => {
           const isPending = pendingPath === g.path;
+          const isRedoPending = redoPendingPath === g.path;
           const showError = errorPath === g.path && !!errorMessage;
+          const showRedoError = redoErrorPath === g.path && !!redoErrorMessage;
           const fullyUndone = g.active === 0;
           return (
             <li key={g.path} className="px-2 py-1.5">
@@ -84,9 +102,24 @@ export function FileEditSummary({ edits, onUndoLast, pendingPath, errorPath, err
                 <span className="text-[9px] font-mono text-[#a6adc8] whitespace-nowrap">
                   {g.active}/{g.total} active
                 </span>
-                {fullyUndone ? (
+                {g.hasRedoableTop && (
+                  <button
+                    onClick={() => onRedoLast(g.path)}
+                    disabled={isRedoPending}
+                    className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded bg-[#313244] hover:bg-[#45475a] text-[#cdd6f4] disabled:opacity-50"
+                    title={`Re-apply the most recently undone AI edit to ${g.path}`}
+                  >
+                    {isRedoPending ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <RotateCw className="h-3 w-3" />
+                    )}
+                    Redo last undo
+                  </button>
+                )}
+                {fullyUndone && !g.hasRedoableTop ? (
                   <span className="text-[10px] text-[#6c7086] italic">All undone</span>
-                ) : g.hasUndoableLatest ? (
+                ) : fullyUndone ? null : g.hasUndoableLatest ? (
                   <button
                     onClick={() => onUndoLast(g.path)}
                     disabled={isPending}
@@ -111,6 +144,9 @@ export function FileEditSummary({ edits, onUndoLast, pendingPath, errorPath, err
               </div>
               {showError && (
                 <div className="mt-1 text-[10px] text-[#f38ba8]">{errorMessage}</div>
+              )}
+              {showRedoError && (
+                <div className="mt-1 text-[10px] text-[#f38ba8]">{redoErrorMessage}</div>
               )}
             </li>
           );

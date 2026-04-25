@@ -606,7 +606,7 @@ function ClaudeCodePanel() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undone: true } : e));
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undone: true, canRedo: true, undoneAt: Date.now(), redoError: null } : e));
     } catch (err: any) {
       setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undoError: err.message } : e));
     }
@@ -614,6 +614,8 @@ function ClaudeCodePanel() {
 
   const [fileUndoPending, setFileUndoPending] = useState<string | null>(null);
   const [fileUndoError, setFileUndoError] = useState<{ path: string; message: string } | null>(null);
+  const [fileRedoPending, setFileRedoPending] = useState<string | null>(null);
+  const [fileRedoError, setFileRedoError] = useState<{ path: string; message: string } | null>(null);
 
   const latestEditIdByPath = useMemo(() => {
     const map = new Map<string, string>();
@@ -624,6 +626,21 @@ function ClaudeCodePanel() {
       }
     }
     return map;
+  }, [fileEdits]);
+
+  // Top of the per-file redo stack — most recently undone redoable edit.
+  const topRedoEditIdByPath = useMemo(() => {
+    const map = new Map<string, { editId: string; undoneAt: number }>();
+    for (const e of fileEdits) {
+      if (!e.undone || !e.canRedo || !e.editId || !e.undoneAt) continue;
+      const prev = map.get(e.path);
+      if (!prev || e.undoneAt > prev.undoneAt) {
+        map.set(e.path, { editId: e.editId, undoneAt: e.undoneAt });
+      }
+    }
+    const out = new Map<string, string>();
+    for (const [p, v] of map) out.set(p, v.editId);
+    return out;
   }, [fileEdits]);
 
   const handleUndoLastForFile = useCallback(async (filePath: string) => {
@@ -639,12 +656,13 @@ function ClaudeCodePanel() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       const undoneId: string | undefined = data.editId;
+      const stamp = Date.now();
       if (undoneId) {
-        setFileEdits(prev => prev.map(e => e.editId === undoneId ? { ...e, undone: true, undoing: false } : e));
+        setFileEdits(prev => prev.map(e => e.editId === undoneId ? { ...e, undone: true, undoing: false, canRedo: true, undoneAt: stamp, redoError: null } : e));
       } else {
         const latestId = latestEditIdByPath.get(filePath);
         if (latestId) {
-          setFileEdits(prev => prev.map(e => e.editId === latestId ? { ...e, undone: true, undoing: false } : e));
+          setFileEdits(prev => prev.map(e => e.editId === latestId ? { ...e, undone: true, undoing: false, canRedo: true, undoneAt: stamp, redoError: null } : e));
         }
       }
     } catch (err: any) {
@@ -653,6 +671,51 @@ function ClaudeCodePanel() {
       setFileUndoPending(null);
     }
   }, [selectedProject, latestEditIdByPath]);
+
+  const handleRedo = useCallback(async (editId: string) => {
+    setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, redoing: true, redoError: null } : e));
+    try {
+      const res = await fetch("/api/workbench/redo-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ editId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, redoing: false, undone: false, canRedo: false, undoneAt: undefined, undoError: null } : e));
+    } catch (err: any) {
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, redoing: false, redoError: err.message } : e));
+    }
+  }, []);
+
+  const handleRedoLastForFile = useCallback(async (filePath: string) => {
+    setFileRedoPending(filePath);
+    setFileRedoError(null);
+    try {
+      const res = await fetch("/api/workbench/redo-last-file-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ filePath, project: selectedProject || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const redoneId: string | undefined = data.editId;
+      if (redoneId) {
+        setFileEdits(prev => prev.map(e => e.editId === redoneId ? { ...e, redoing: false, undone: false, canRedo: false, undoneAt: undefined, undoError: null } : e));
+      } else {
+        const topId = topRedoEditIdByPath.get(filePath);
+        if (topId) {
+          setFileEdits(prev => prev.map(e => e.editId === topId ? { ...e, redoing: false, undone: false, canRedo: false, undoneAt: undefined, undoError: null } : e));
+        }
+      }
+    } catch (err: any) {
+      setFileRedoError({ path: filePath, message: err.message || "Redo failed" });
+    } finally {
+      setFileRedoPending(null);
+    }
+  }, [selectedProject, topRedoEditIdByPath]);
 
   const scrollToBottom = useCallback(() => {
     setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 50);
@@ -710,19 +773,28 @@ function ClaudeCodePanel() {
               else if (data.type === "tool_result") { setToolEvents(p => { const u = [...p]; for (let i = u.length - 1; i >= 0; i--) { if (u[i].name === data.name && u[i].summary === "running…") { u[i] = { name: data.name, summary: data.summary }; return u; } } return [...u, { name: data.name, summary: data.summary }]; }); }
               else if (data.type === "tool_error") { setToolEvents(p => [...p, { name: data.name, summary: data.error, error: true }]); }
               else if (data.type === "file_edit") {
-                setFileEdits(p => [...p, {
-                  editId: data.editId,
-                  path: data.path,
-                  diff: data.diff,
-                  isNew: !!data.isNew,
-                  added: data.added || 0,
-                  removed: data.removed || 0,
-                  previousBytes: data.previousBytes || 0,
-                  newBytes: data.newBytes || 0,
-                  truncated: !!data.truncated,
-                  undoDisabled: !!data.undoDisabled,
-                  undoSkipReason: data.undoSkipReason,
-                }]);
+                setFileEdits(p => {
+                  // Server cleared the redo stack for this path on a new
+                  // write — mirror that here so stale redo affordances vanish.
+                  const cleared = p.map(e => (
+                    e.path === data.path && e.canRedo
+                      ? { ...e, canRedo: false, undoneAt: undefined, redoError: null }
+                      : e
+                  ));
+                  return [...cleared, {
+                    editId: data.editId,
+                    path: data.path,
+                    diff: data.diff,
+                    isNew: !!data.isNew,
+                    added: data.added || 0,
+                    removed: data.removed || 0,
+                    previousBytes: data.previousBytes || 0,
+                    newBytes: data.newBytes || 0,
+                    truncated: !!data.truncated,
+                    undoDisabled: !!data.undoDisabled,
+                    undoSkipReason: data.undoSkipReason,
+                  }];
+                });
                 setToolEvents(p => [...p, { name: data.name || "write_file", summary: data.summary || `wrote ${data.path}` }]);
               }
               else if (data.type === "project") { setToolEvents(p => [...p, { name: "project", summary: `loaded ${data.origin} project${data.cloned ? " (fresh clone)" : ""}` }]); }
@@ -780,16 +852,22 @@ function ClaudeCodePanel() {
               <FileEditSummary
                 edits={fileEdits}
                 onUndoLast={handleUndoLastForFile}
+                onRedoLast={handleRedoLastForFile}
                 pendingPath={fileUndoPending}
                 errorPath={fileUndoError?.path}
                 errorMessage={fileUndoError?.message}
+                redoPendingPath={fileRedoPending}
+                redoErrorPath={fileRedoError?.path}
+                redoErrorMessage={fileRedoError?.message}
               />
               {fileEdits.map((e, i) => (
                 <FileEditCard
                   key={e.editId ?? `no-undo-${i}`}
                   edit={e}
                   onUndo={handleUndo}
+                  onRedo={handleRedo}
                   isLatestForFile={!!e.editId && latestEditIdByPath.get(e.path) === e.editId}
+                  isTopOfRedoForFile={!!e.editId && topRedoEditIdByPath.get(e.path) === e.editId}
                 />
               ))}
             </div>

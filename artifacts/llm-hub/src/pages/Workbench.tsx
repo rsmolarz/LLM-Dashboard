@@ -724,7 +724,7 @@ function CodeChatPanel() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undone: true } : e));
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undone: true, canRedo: true, undoneAt: Date.now(), redoError: null } : e));
     } catch (err: any) {
       setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, undoing: false, undoError: err.message } : e));
     }
@@ -732,6 +732,8 @@ function CodeChatPanel() {
 
   const [fileUndoPending, setFileUndoPending] = useState<string | null>(null);
   const [fileUndoError, setFileUndoError] = useState<{ path: string; message: string } | null>(null);
+  const [fileRedoPending, setFileRedoPending] = useState<string | null>(null);
+  const [fileRedoError, setFileRedoError] = useState<{ path: string; message: string } | null>(null);
 
   const latestEditIdByPath = useMemo(() => {
     const map = new Map<string, string>();
@@ -742,6 +744,23 @@ function CodeChatPanel() {
       }
     }
     return map;
+  }, [fileEdits]);
+
+  // Top of the per-file redo stack — the most recently undone edit that the
+  // server can still redo. Tracked client-side via undoneAt timestamps so we
+  // don't have to round-trip the server just to render the right button.
+  const topRedoEditIdByPath = useMemo(() => {
+    const map = new Map<string, { editId: string; undoneAt: number }>();
+    for (const e of fileEdits) {
+      if (!e.undone || !e.canRedo || !e.editId || !e.undoneAt) continue;
+      const prev = map.get(e.path);
+      if (!prev || e.undoneAt > prev.undoneAt) {
+        map.set(e.path, { editId: e.editId, undoneAt: e.undoneAt });
+      }
+    }
+    const out = new Map<string, string>();
+    for (const [p, v] of map) out.set(p, v.editId);
+    return out;
   }, [fileEdits]);
 
   const handleUndoLastForFile = useCallback(async (filePath: string) => {
@@ -762,13 +781,14 @@ function CodeChatPanel() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       const undoneId: string | undefined = data.editId;
+      const stamp = Date.now();
       if (undoneId) {
-        setFileEdits(prev => prev.map(e => e.editId === undoneId ? { ...e, undone: true, undoing: false } : e));
+        setFileEdits(prev => prev.map(e => e.editId === undoneId ? { ...e, undone: true, undoing: false, canRedo: true, undoneAt: stamp, redoError: null } : e));
       } else {
         // Fallback: mark the latest visible edit for this file as undone.
         const latestId = latestEditIdByPath.get(filePath);
         if (latestId) {
-          setFileEdits(prev => prev.map(e => e.editId === latestId ? { ...e, undone: true, undoing: false } : e));
+          setFileEdits(prev => prev.map(e => e.editId === latestId ? { ...e, undone: true, undoing: false, canRedo: true, undoneAt: stamp, redoError: null } : e));
         }
       }
     } catch (err: any) {
@@ -777,6 +797,56 @@ function CodeChatPanel() {
       setFileUndoPending(null);
     }
   }, [latestEditIdByPath]);
+
+  const handleRedo = useCallback(async (editId: string) => {
+    setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, redoing: true, redoError: null } : e));
+    try {
+      const res = await fetch("/api/workbench/redo-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ editId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, redoing: false, undone: false, canRedo: false, undoneAt: undefined, undoError: null } : e));
+    } catch (err: any) {
+      setFileEdits(prev => prev.map(e => e.editId === editId ? { ...e, redoing: false, redoError: err.message } : e));
+    }
+  }, []);
+
+  const handleRedoLastForFile = useCallback(async (filePath: string) => {
+    setFileRedoPending(filePath);
+    setFileRedoError(null);
+    let selectedProject: any = null;
+    try {
+      const raw = localStorage.getItem("workbench-selected-project");
+      if (raw) selectedProject = JSON.parse(raw);
+    } catch {}
+    try {
+      const res = await fetch("/api/workbench/redo-last-file-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ filePath, project: selectedProject || undefined }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const redoneId: string | undefined = data.editId;
+      if (redoneId) {
+        setFileEdits(prev => prev.map(e => e.editId === redoneId ? { ...e, redoing: false, undone: false, canRedo: false, undoneAt: undefined, undoError: null } : e));
+      } else {
+        const topId = topRedoEditIdByPath.get(filePath);
+        if (topId) {
+          setFileEdits(prev => prev.map(e => e.editId === topId ? { ...e, redoing: false, undone: false, canRedo: false, undoneAt: undefined, undoError: null } : e));
+        }
+      }
+    } catch (err: any) {
+      setFileRedoError({ path: filePath, message: err.message || "Redo failed" });
+    } finally {
+      setFileRedoPending(null);
+    }
+  }, [topRedoEditIdByPath]);
 
   const handleStop = useCallback(() => {
     if (abortController) {
@@ -857,19 +927,29 @@ function CodeChatPanel() {
                 });
                 scrollToBottom();
               } else if (data.type === "file_edit") {
-                setFileEdits(p => [...p, {
-                  editId: data.editId,
-                  path: data.path,
-                  diff: data.diff,
-                  isNew: !!data.isNew,
-                  added: data.added || 0,
-                  removed: data.removed || 0,
-                  previousBytes: data.previousBytes || 0,
-                  newBytes: data.newBytes || 0,
-                  truncated: !!data.truncated,
-                  undoDisabled: !!data.undoDisabled,
-                  undoSkipReason: data.undoSkipReason,
-                }]);
+                setFileEdits(p => {
+                  // A new AI edit on this path invalidates any prior
+                  // undone-but-redoable entries for the same file — the
+                  // server already cleared its redo stack, so we mirror it.
+                  const cleared = p.map(e => (
+                    e.path === data.path && e.canRedo
+                      ? { ...e, canRedo: false, undoneAt: undefined, redoError: null }
+                      : e
+                  ));
+                  return [...cleared, {
+                    editId: data.editId,
+                    path: data.path,
+                    diff: data.diff,
+                    isNew: !!data.isNew,
+                    added: data.added || 0,
+                    removed: data.removed || 0,
+                    previousBytes: data.previousBytes || 0,
+                    newBytes: data.newBytes || 0,
+                    truncated: !!data.truncated,
+                    undoDisabled: !!data.undoDisabled,
+                    undoSkipReason: data.undoSkipReason,
+                  }];
+                });
               } else if (data.type === "done") {
                 setMessages(prev => prev.map(m => m.streaming ? { ...m, streaming: false } : m));
               } else if (data.type === "error") {
@@ -947,16 +1027,22 @@ function CodeChatPanel() {
               <FileEditSummary
                 edits={fileEdits}
                 onUndoLast={handleUndoLastForFile}
+                onRedoLast={handleRedoLastForFile}
                 pendingPath={fileUndoPending}
                 errorPath={fileUndoError?.path}
                 errorMessage={fileUndoError?.message}
+                redoPendingPath={fileRedoPending}
+                redoErrorPath={fileRedoError?.path}
+                redoErrorMessage={fileRedoError?.message}
               />
               {fileEdits.map((e, i) => (
                 <FileEditCard
                   key={e.editId ?? `no-undo-${i}`}
                   edit={e}
                   onUndo={handleUndo}
+                  onRedo={handleRedo}
                   isLatestForFile={!!e.editId && latestEditIdByPath.get(e.path) === e.editId}
+                  isTopOfRedoForFile={!!e.editId && topRedoEditIdByPath.get(e.path) === e.editId}
                 />
               ))}
             </div>

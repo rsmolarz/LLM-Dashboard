@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, FilePlus, FileText, Loader2, RotateCcw, Check } from "lucide-react";
+import { ChevronDown, ChevronRight, FilePlus, FileText, Loader2, RotateCcw, RotateCw, Check } from "lucide-react";
 
 export interface FileEdit {
   editId?: string;
@@ -17,16 +17,26 @@ export interface FileEdit {
   undoDisabled?: boolean;
   undoSkipReason?: string;
   stackDepth?: number;
+  // Redo support — set after a successful undo. canRedo flips back to false
+  // either when the redo lands or when a newer AI edit invalidates it.
+  canRedo?: boolean;
+  redoing?: boolean;
+  redoError?: string | null;
+  // Used by the parent to figure out which redoable entry is at the top of
+  // the per-file redo stack (latest undone wins).
+  undoneAt?: number;
 }
 
 interface Props {
   edit: FileEdit;
   onUndo: (editId: string) => void;
+  onRedo: (editId: string) => void;
   defaultOpen?: boolean;
   isLatestForFile?: boolean;
+  isTopOfRedoForFile?: boolean;
 }
 
-export function FileEditCard({ edit, onUndo, defaultOpen = false, isLatestForFile = true }: Props) {
+export function FileEditCard({ edit, onUndo, onRedo, defaultOpen = false, isLatestForFile = true, isTopOfRedoForFile = false }: Props) {
   const [open, setOpen] = useState(defaultOpen);
   const lines = edit.diff.split("\n");
 
@@ -56,9 +66,35 @@ export function FileEditCard({ edit, onUndo, defaultOpen = false, isLatestForFil
         )}
         <span className="ml-auto flex items-center gap-2">
           {edit.undone ? (
-            <span className="flex items-center gap-1 text-[10px] text-[#a6adc8]">
-              <Check className="h-3 w-3 text-[#a6e3a1]" /> Undone
-            </span>
+            <>
+              <span className="flex items-center gap-1 text-[10px] text-[#a6adc8]">
+                <Check className="h-3 w-3 text-[#a6e3a1]" /> Undone
+              </span>
+              {edit.canRedo && edit.editId && (
+                isTopOfRedoForFile ? (
+                  <button
+                    onClick={() => edit.editId && onRedo(edit.editId)}
+                    disabled={edit.redoing}
+                    className="flex items-center gap-1 px-2 py-0.5 text-[10px] rounded bg-[#313244] hover:bg-[#45475a] text-[#cdd6f4] disabled:opacity-50"
+                    title="Re-apply the AI's content"
+                  >
+                    {edit.redoing ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <RotateCw className="h-3 w-3" />
+                    )}
+                    Redo
+                  </button>
+                ) : (
+                  <span
+                    className="text-[10px] text-[#6c7086] italic"
+                    title="A newer undo is on top. Redo the most recent undo first."
+                  >
+                    Older undo
+                  </span>
+                )
+              )}
+            </>
           ) : edit.undoDisabled || !edit.editId ? (
             <span
               className="text-[10px] text-[#a6adc8] italic"
@@ -93,6 +129,11 @@ export function FileEditCard({ edit, onUndo, defaultOpen = false, isLatestForFil
       {edit.undoError && (
         <div className="px-2 py-1 text-[10px] text-[#f38ba8] bg-[#f38ba8]/10 border-b border-[#f38ba8]/30">
           {edit.undoError}
+        </div>
+      )}
+      {edit.redoError && (
+        <div className="px-2 py-1 text-[10px] text-[#f38ba8] bg-[#f38ba8]/10 border-b border-[#f38ba8]/30">
+          {edit.redoError}
         </div>
       )}
       {open && (
