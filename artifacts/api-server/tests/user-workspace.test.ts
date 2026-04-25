@@ -534,6 +534,231 @@ test("POST /api/shell still allows reads from safe system locations (allowlist)"
   assert.ok(r.body.stdout.trim().endsWith("OK"), `expected OK marker; got ${r.body.stdout}`);
 });
 
+// =============================================================================
+// Per-user disk quota tests (task #51)
+// =============================================================================
+
+test("computeUserScratchUsage returns 0 for a user with no scratch dir", () => {
+  const userId = `quota-empty-${randomBytes(4).toString("hex")}`;
+  // Intentionally NOT calling ensureUserScratchDir — we want a user
+  // who has never hit the workbench. Quota lookup must not throw or
+  // create the dir as a side effect.
+  assert.equal(userWs.computeUserScratchUsage(userId), 0);
+  assert.ok(
+    !fs.existsSync(userWs.getUserScratchDir(userId)),
+    "computeUserScratchUsage must not create the dir as a side effect",
+  );
+});
+
+test("computeUserScratchUsage counts only real files, not symlinks back to the host", () => {
+  // The symlink view of the host workspace would dwarf any reasonable
+  // per-user quota if we counted it. Verify the walker excludes it.
+  const userId = trackUser(`quota-symlinks-${randomBytes(4).toString("hex")}`);
+  const dir = userWs.ensureUserScratchDir(userId);
+  // Only the user's real writes should count toward usage.
+  const used = userWs.computeUserScratchUsage(userId);
+  // Without any user writes, usage must be 0 even though `dir` is
+  // populated with symlinks pointing at the (potentially huge) host
+  // workspace.
+  assert.equal(used, 0, `expected 0 used bytes for symlink-only dir, got ${used}`);
+  // Add a real file and confirm it shows up.
+  const payload = "x".repeat(1234);
+  fs.writeFileSync(path.join(dir, `quota-file-${randomBytes(2).toString("hex")}.txt`), payload);
+  assert.equal(userWs.computeUserScratchUsage(userId), payload.length);
+});
+
+test("computeUserScratchUsage walks nested subdirs (recursive accounting)", () => {
+  const userId = trackUser(`quota-nested-${randomBytes(4).toString("hex")}`);
+  const dir = userWs.ensureUserScratchDir(userId);
+  const sub = path.join(dir, `subdir-${randomBytes(2).toString("hex")}`);
+  fs.mkdirSync(sub, { recursive: true });
+  fs.writeFileSync(path.join(sub, "a.bin"), Buffer.alloc(2048));
+  fs.writeFileSync(path.join(sub, "b.bin"), Buffer.alloc(1024));
+  assert.equal(userWs.computeUserScratchUsage(userId), 2048 + 1024);
+});
+
+test("checkUserQuota blocks at/above the cap and is non-blocking below it", () => {
+  const userId = trackUser(`quota-check-${randomBytes(4).toString("hex")}`);
+  const dir = userWs.ensureUserScratchDir(userId);
+  // Set a tiny cap and write a single file just above it.
+  userWs.__testing__.setUserQuotaBytes(1024);
+  try {
+    // No writes yet — well under cap.
+    let r = userWs.checkUserQuota(userId);
+    assert.equal(r.blocked, false, `fresh dir must not be quota-blocked, reason=${r.reason}`);
+    assert.equal(r.quota.capBytes, 1024);
+    assert.equal(r.quota.usedBytes, 0);
+    assert.equal(r.quota.remainingBytes, 1024);
+    // Write past the cap.
+    fs.writeFileSync(path.join(dir, "big.bin"), Buffer.alloc(2000));
+    r = userWs.checkUserQuota(userId);
+    assert.equal(r.blocked, true, "over-cap user must be quota-blocked");
+    assert.match(r.reason || "", /quota exceeded/i);
+    assert.ok(r.quota.usedBytes >= 2000);
+    assert.equal(r.quota.remainingBytes, 0, "remainingBytes must clamp to 0, not go negative");
+  } finally {
+    userWs.__testing__.setUserQuotaBytes(null);
+  }
+});
+
+test("POST /api/shell pre-flight rejects when user is over the per-user quota", async () => {
+  const userId = trackUser(`endpoint-quota-block-${randomBytes(4).toString("hex")}`);
+  const dir = userWs.ensureUserScratchDir(userId);
+  userWs.__testing__.setUserQuotaBytes(512);
+  try {
+    // Push the user over the cap before the request.
+    fs.writeFileSync(path.join(dir, "fill.bin"), Buffer.alloc(800));
+    const r = await shell(userId, "echo should-not-run");
+    assert.equal(r.status, 200);
+    assert.notEqual(r.body.exitCode, 0, "over-quota request must not succeed");
+    assert.equal((r.body as any).quotaExceeded, true, "response must flag quotaExceeded");
+    assert.match(r.body.stderr || "", /quota exceeded/i);
+    assert.ok(r.body.sandboxBlocked, "quota rejection must surface as sandboxBlocked");
+    // Crucially the command must not have produced its echo output —
+    // the rejection runs BEFORE we spawn anything.
+    assert.ok(
+      !r.body.stdout.includes("should-not-run"),
+      `expected the command to never run; stdout=${r.body.stdout}`,
+    );
+    // Quota info must be present on the rejection too.
+    const q = (r.body as any).quota;
+    assert.ok(q && typeof q.capBytes === "number", "rejection must carry quota info");
+    assert.equal(q.capBytes, 512);
+    assert.ok(q.usedBytes >= 800);
+    assert.equal(q.remainingBytes, 0);
+  } finally {
+    userWs.__testing__.setUserQuotaBytes(null);
+  }
+});
+
+test("POST /api/shell success response includes quota usage / cap / remaining", async () => {
+  const userId = trackUser(`endpoint-quota-info-${randomBytes(4).toString("hex")}`);
+  // Use the default cap so we exercise the production path.
+  const r = await shell(userId, "true");
+  assert.equal(r.body.exitCode, 0, `baseline command must succeed: ${r.body.stderr}`);
+  const q = (r.body as any).quota;
+  assert.ok(q, "shell success response must include a quota field");
+  assert.ok(typeof q.usedBytes === "number" && q.usedBytes >= 0);
+  assert.ok(typeof q.capBytes === "number" && q.capBytes > 0);
+  assert.ok(typeof q.remainingBytes === "number" && q.remainingBytes >= 0);
+  // capBytes - usedBytes (clamped) == remainingBytes.
+  assert.equal(q.remainingBytes, Math.max(0, q.capBytes - q.usedBytes));
+});
+
+test("POST /api/shell quota delta is observable across calls", async () => {
+  const userId = trackUser(`endpoint-quota-delta-${randomBytes(4).toString("hex")}`);
+  // Warm the dir up.
+  const before = await shell(userId, "true");
+  const beforeUsed = (before.body as any).quota?.usedBytes ?? 0;
+  // Write a 4 KiB file and confirm the usage report grows by ≥ 4 KiB.
+  const after = await shell(userId, "head -c 4096 /dev/zero > delta.bin && echo OK");
+  assert.equal(after.body.exitCode, 0, `write should succeed: ${after.body.stderr}`);
+  const afterUsed = (after.body as any).quota?.usedBytes ?? 0;
+  assert.ok(
+    afterUsed >= beforeUsed + 4096,
+    `usedBytes should grow by ≥ 4096 (before=${beforeUsed} after=${afterUsed})`,
+  );
+});
+
+test("POST /api/shell kernel-bounds writes to remaining quota (write killed before it exceeds cap)", async () => {
+  // The pre-flight check stops users who are *already over*. This
+  // test exercises the OTHER half: a user just under the cap who
+  // tries to write much more than they have left. The sandbox passes
+  // `remainingBytes` as the prlimit `--fsize` cap, so the kernel
+  // itself refuses the write past that point — the bytes never land
+  // on disk, satisfying "rejected before they touch disk".
+  const userId = trackUser(`endpoint-fsize-${randomBytes(4).toString("hex")}`);
+  const dir = userWs.ensureUserScratchDir(userId);
+  const cap = 4096; // 4 KiB cap
+  userWs.__testing__.setUserQuotaBytes(cap);
+  try {
+    // Prime: 1 KiB already used, so remaining = 3 KiB.
+    fs.writeFileSync(path.join(dir, "prime.bin"), Buffer.alloc(1024));
+    // Try to write 1 MiB. The kernel cap (--fsize=3072) must kill the
+    // write well before it would exceed the user's quota. We accept
+    // a small overshoot beyond `remainingBytes` from buffered I/O,
+    // but the resulting file MUST be much smaller than the 1 MiB
+    // attempted, AND the on-disk usage MUST stay reasonably close to
+    // the cap.
+    const r = await shell(userId, "head -c 1048576 /dev/zero > big.bin; echo done=$?");
+    assert.equal(r.status, 200);
+    const big = path.join(dir, "big.bin");
+    const sz = fs.existsSync(big) ? fs.statSync(big).size : 0;
+    assert.ok(
+      sz < 100_000,
+      `kernel must have killed the write well before 1 MiB; landed=${sz}`,
+    );
+    // The actual on-disk usage must not have grown to anywhere near
+    // 1 MiB — it's bounded by the kernel cap.
+    const usedAfter = userWs.computeUserScratchUsage(userId);
+    assert.ok(
+      usedAfter < 100_000,
+      `on-disk usage must not have ballooned past the cap; usedAfter=${usedAfter}`,
+    );
+  } finally {
+    // Clean up the scratch dir before lowering / restoring the cap so
+    // a leftover oversized file doesn't poison subsequent tests.
+    try { fs.rmSync(path.join(dir, "big.bin"), { force: true }); } catch {}
+    try { fs.rmSync(path.join(dir, "prime.bin"), { force: true }); } catch {}
+    userWs.__testing__.setUserQuotaBytes(null);
+  }
+});
+
+test("cleanupAbandonedScratchDirs evicts the LARGEST scratch dirs when the host tree exceeds the host cap", () => {
+  // Build three users with very different on-disk sizes. Set a host
+  // cap small enough that one or more must be evicted, but large
+  // enough that the smallest can stay.
+  const small = trackUser(`evict-small-${randomBytes(4).toString("hex")}`);
+  const mid = trackUser(`evict-mid-${randomBytes(4).toString("hex")}`);
+  const big = trackUser(`evict-big-${randomBytes(4).toString("hex")}`);
+  const dirSmall = userWs.ensureUserScratchDir(small);
+  const dirMid = userWs.ensureUserScratchDir(mid);
+  const dirBig = userWs.ensureUserScratchDir(big);
+  fs.writeFileSync(path.join(dirSmall, "f.bin"), Buffer.alloc(500));
+  fs.writeFileSync(path.join(dirMid, "f.bin"), Buffer.alloc(5_000));
+  fs.writeFileSync(path.join(dirBig, "f.bin"), Buffer.alloc(50_000));
+
+  // All three are well within TTL — eviction must be driven by the
+  // host cap, not the TTL pass.
+  userWs.__testing__.setHostQuotaBytes(10_000); // 10 KiB
+  try {
+    const report = userWs.cleanupAbandonedScratchDirs();
+    // The big one must be evicted (it alone exceeds the cap).
+    assert.ok(
+      report.evicted.includes(userWs.__testing__.userIdHash(big)),
+      `big scratch dir must be evicted under host cap: ${JSON.stringify(report)}`,
+    );
+    assert.ok(!fs.existsSync(dirBig), "big user's scratch dir must be gone after eviction");
+    // The small one fits and must be preserved.
+    assert.ok(fs.existsSync(dirSmall), "small user's scratch dir must NOT be evicted");
+    assert.ok(
+      !report.evicted.includes(userWs.__testing__.userIdHash(small)),
+      `small scratch dir must not be evicted: ${JSON.stringify(report)}`,
+    );
+  } finally {
+    userWs.__testing__.setHostQuotaBytes(null);
+  }
+});
+
+test("cleanupAbandonedScratchDirs leaves the tree alone when host cap is not crossed", () => {
+  const userId = trackUser(`evict-noop-${randomBytes(4).toString("hex")}`);
+  const dir = userWs.ensureUserScratchDir(userId);
+  fs.writeFileSync(path.join(dir, "f.bin"), Buffer.alloc(2_000));
+  // Generous host cap → no eviction.
+  userWs.__testing__.setHostQuotaBytes(1_000_000_000);
+  try {
+    const report = userWs.cleanupAbandonedScratchDirs();
+    assert.equal(
+      report.evicted.length,
+      0,
+      `no eviction expected when under host cap: ${JSON.stringify(report)}`,
+    );
+    assert.ok(fs.existsSync(dir), "user dir must survive a no-op cleanup");
+  } finally {
+    userWs.__testing__.setHostQuotaBytes(null);
+  }
+});
+
 test("POST /api/shell blocks writes through symlinks back to the host workspace", async () => {
   const userA = trackUser(`isolate-noescape-${randomBytes(4).toString("hex")}`);
   // Touch a top-level entry that exists in the host (artifacts/) and

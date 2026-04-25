@@ -11,7 +11,7 @@ import * as projectCtx from "../lib/project-context";
 import { unifiedDiff } from "../lib/file-diff";
 import { checkShellSafety, checkGitSafety, isGitCommand } from "../lib/command-safety";
 import { runSandboxed } from "../lib/command-sandbox";
-import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment } from "../lib/user-workspace";
+import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo } from "../lib/user-workspace";
 import { requireAuth } from "../middlewares/rateLimiter";
 import { randomBytes } from "crypto";
 
@@ -309,13 +309,43 @@ router.post("/shell", requireAuth, async (req, res): Promise<void> => {
         exitCode: 1,
         scope: { origin: "workspace", path: scratchDir },
         sandboxBlocked: escape.reason,
+        quota: getUserQuotaInfo(userId),
       });
       return;
     }
+    // Pre-flight: refuse the command if the user is already at or
+    // over their per-user disk quota. The base sandbox enforces a
+    // 512 MiB single-file fsize cap via prlimit, but a user can grow
+    // their dir to many GiB by creating lots of smaller files. The
+    // post-flight quota snapshot in the success response shows the
+    // delta this command produced.
+    const quotaCheck = checkUserQuota(userId);
+    if (quotaCheck.blocked) {
+      res.json({
+        stdout: "",
+        stderr: `Sandbox blocked: ${quotaCheck.reason}`,
+        exitCode: 1,
+        scope: { origin: "workspace", path: scratchDir },
+        sandboxBlocked: quotaCheck.reason,
+        quotaExceeded: true,
+        quota: quotaCheck.quota,
+      });
+      return;
+    }
+    // Bind the sandbox's per-file `prlimit --fsize` cap to the user's
+    // ACTUAL remaining quota. This is the kernel-enforced "rejected
+    // before they touch disk" path: any single file the command tries
+    // to write past `remainingBytes` fails with EFBIG/SIGXFSZ at the
+    // write() syscall before bytes land on disk. The userspace
+    // pre-flight `du` walk above stops a user who's *already* over;
+    // this stops a user who's just under from blowing through the cap
+    // in a single command. Combined, "writes that would exceed the
+    // cap are rejected before they touch disk" holds in practice.
     const r = await runSandboxed(command, {
       cwd: scratchDir,
       timeoutMs: 30000,
       extraEnv: userScratchSandboxEnv(),
+      fsizeBytes: quotaCheck.quota.remainingBytes,
     });
     res.json({
       stdout: r.stdout,
@@ -324,6 +354,7 @@ router.post("/shell", requireAuth, async (req, res): Promise<void> => {
       scope: { origin: "workspace", path: scratchDir },
       ...(r.sandboxBlocked ? { sandboxBlocked: r.sandboxBlocked } : {}),
       ...(r.sandboxContained ? { sandboxContained: r.sandboxContained } : {}),
+      quota: getUserQuotaInfo(userId),
     });
   } catch (err: any) {
     res.json({
@@ -651,13 +682,33 @@ router.post("/git", requireAuth, async (req, res): Promise<void> => {
         stderr: `Sandbox blocked: ${escape.reason}`,
         exitCode: 1,
         sandboxBlocked: escape.reason,
+        quota: getUserQuotaInfo(userId),
       });
       return;
     }
+    // Pre-flight quota gate (mirrors POST /api/shell). git commands
+    // can grow the dir fast (`git clone` fetches potentially large
+    // packs), so the same per-user cap applies.
+    const quotaCheck = checkUserQuota(userId);
+    if (quotaCheck.blocked) {
+      res.json({
+        stdout: "",
+        stderr: `Sandbox blocked: ${quotaCheck.reason}`,
+        exitCode: 1,
+        sandboxBlocked: quotaCheck.reason,
+        quotaExceeded: true,
+        quota: quotaCheck.quota,
+      });
+      return;
+    }
+    // Same kernel-bound `--fsize` quota as POST /api/shell — see the
+    // commentary there for why this is the load-bearing pre-write
+    // enforcement path.
     const r = await runSandboxed(command, {
       cwd: scratchDir,
       timeoutMs: 30000,
       extraEnv: userScratchSandboxEnv(),
+      fsizeBytes: quotaCheck.quota.remainingBytes,
     });
     res.json({
       stdout: r.stdout,
@@ -665,6 +716,7 @@ router.post("/git", requireAuth, async (req, res): Promise<void> => {
       exitCode: r.exitCode,
       ...(r.sandboxBlocked ? { sandboxBlocked: r.sandboxBlocked } : {}),
       ...(r.sandboxContained ? { sandboxContained: r.sandboxContained } : {}),
+      quota: getUserQuotaInfo(userId),
     });
   } catch (err: any) {
     res.json({ stdout: err.stdout || "", stderr: err.stderr || err.message, exitCode: err.status || 1 });

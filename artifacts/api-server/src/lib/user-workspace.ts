@@ -97,6 +97,41 @@ const SCRATCH_TTL_MS = 24 * 60 * 60 * 1000;
 // Cleanup cadence. unref()ed so it doesn't keep the event loop alive.
 const SCRATCH_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
+// Per-user disk-usage cap on the scratch dir. Once a user crosses this
+// they cannot start any new shell/git command until they free space.
+// The base sandbox already enforces a 512 MiB single-file fsize via
+// prlimit, but a user could still grow their dir to many GiB by
+// creating lots of files just under the per-file cap. A default of
+// 1 GiB keeps generous headroom for legitimate dev workflows (npm
+// caches, test outputs) while bounding blast radius long before the
+// 24h TTL kicks in. Override via WORKBENCH_USER_QUOTA_BYTES.
+const DEFAULT_USER_QUOTA_BYTES = 1024 * 1024 * 1024; // 1 GiB
+// Host-wide cap on the entire `.cache/workbench-sandbox` tree. After
+// the TTL pass, if the tree is still bigger than this the cleanup
+// task evicts the LARGEST per-user scratch dirs first until the tree
+// fits — even if those users are still within the 24h TTL. This is
+// the load-bearing defence against many-users-each-just-under-the-
+// per-user-cap scenarios. Override via WORKBENCH_HOST_QUOTA_BYTES.
+const DEFAULT_HOST_QUOTA_BYTES = 10 * 1024 * 1024 * 1024; // 10 GiB
+
+function parsePositiveBytes(raw: string | undefined, dflt: number): number {
+  if (typeof raw !== "string" || raw.length === 0) return dflt;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) return dflt;
+  return n;
+}
+
+// `let` so the test harness can adjust caps without re-importing the
+// module (caps are otherwise read once at load time).
+let SCRATCH_USER_QUOTA_BYTES = parsePositiveBytes(
+  process.env.WORKBENCH_USER_QUOTA_BYTES,
+  DEFAULT_USER_QUOTA_BYTES,
+);
+let SCRATCH_HOST_QUOTA_BYTES = parsePositiveBytes(
+  process.env.WORKBENCH_HOST_QUOTA_BYTES,
+  DEFAULT_HOST_QUOTA_BYTES,
+);
+
 // Top-level workspace entries we deliberately do NOT mirror into the
 // scratch view. See module header for rationale on each.
 const SKIP_SYMLINK_TOP_LEVEL: ReadonlySet<string> = new Set<string>([
@@ -165,6 +200,125 @@ export function userScratchSandboxEnv(): Record<string, string> {
   return {
     GIT_CEILING_DIRECTORIES: SCRATCH_ROOT,
   };
+}
+
+/**
+ * Quota snapshot for a user's scratch dir. `usedBytes` counts only
+ * concrete files the user created — symlinks (which point back to the
+ * shared host workspace) are deliberately excluded so a stable
+ * symlink view of a 5 GiB monorepo doesn't burn through every user's
+ * 1 GiB quota on first request.
+ */
+export interface UserQuotaInfo {
+  usedBytes: number;
+  capBytes: number;
+  remainingBytes: number;
+}
+
+/**
+ * Walk a directory and return total bytes of REAL files (not
+ * symlinks, not the symlink target). Returns 0 for missing dirs and
+ * is fail-soft on unreadable subtrees so quota accounting never
+ * crashes a request handler. Recursion uses an explicit stack to
+ * avoid blowing the call stack on pathological scratch trees.
+ */
+function walkRealFileBytes(root: string): number {
+  let total = 0;
+  const stack: string[] = [root];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      // Skip symlinks: in the scratch view they point back into the
+      // shared host workspace; following them would (a) double-count
+      // host bytes against the user's per-user quota, and (b) risk
+      // walking out into the entire host filesystem.
+      if (entry.isSymbolicLink()) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      if (entry.isFile()) {
+        try {
+          const st = fs.lstatSync(full);
+          total += st.size;
+        } catch {
+          // best-effort: a transient unlink between readdir + lstat
+          // shouldn't crash the request handler.
+        }
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Compute the on-disk usage of a user's scratch dir, in bytes.
+ * Returns 0 for users with no scratch dir yet. Excludes symlinks
+ * (see `walkRealFileBytes`).
+ */
+export function computeUserScratchUsage(userId: string): number {
+  return walkRealFileBytes(getUserScratchDir(userId));
+}
+
+/**
+ * Snapshot of the user's quota: used / cap / remaining. The cap is
+ * `SCRATCH_USER_QUOTA_BYTES`. `remainingBytes` is clamped to ≥ 0 so
+ * a user who blew past the cap mid-command just sees 0 remaining
+ * (rather than a negative confusing the UI).
+ */
+export function getUserQuotaInfo(userId: string): UserQuotaInfo {
+  const usedBytes = computeUserScratchUsage(userId);
+  const capBytes = SCRATCH_USER_QUOTA_BYTES;
+  return {
+    usedBytes,
+    capBytes,
+    remainingBytes: Math.max(0, capBytes - usedBytes),
+  };
+}
+
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(2)} KiB`;
+  return `${n} B`;
+}
+
+/**
+ * Pre-flight quota check for shell / git commands. If the user's
+ * scratch dir is already at or above the per-user cap, the caller
+ * should refuse the command before spawning anything; otherwise the
+ * command is allowed to proceed and the same quota snapshot can be
+ * surfaced in the success response so the user knows their headroom.
+ *
+ * Note: the check is "already over" rather than "would exceed after
+ * this command", because we cannot statically predict how many bytes
+ * a shell command will write. The post-flight quota snapshot in the
+ * response is what reveals the actual delta. Combined with the
+ * existing 512 MiB single-file `prlimit --fsize` and a 30s wall-clock
+ * timeout, the total a single command can write past the cap is
+ * bounded.
+ */
+export function checkUserQuota(userId: string): {
+  blocked: boolean;
+  reason?: string;
+  quota: UserQuotaInfo;
+} {
+  const quota = getUserQuotaInfo(userId);
+  if (quota.usedBytes >= quota.capBytes) {
+    return {
+      blocked: true,
+      reason: `Scratch disk quota exceeded (${formatBytes(quota.usedBytes)} used of ${formatBytes(quota.capBytes)} cap). Delete files in your scratch dir before running new commands.`,
+      quota,
+    };
+  }
+  return { blocked: false, quota };
 }
 
 /**
@@ -567,22 +721,30 @@ function syncSymlinkView(scratchDir: string): void {
 
 /**
  * Sweep the scratch root for per-user dirs whose mtime is older than
- * `SCRATCH_TTL_MS` and remove them. Returns a small report so callers
- * (cleanup task, future admin endpoint) can log what happened.
+ * `SCRATCH_TTL_MS` and remove them. After the TTL pass, if the
+ * remaining tree is STILL bigger than `SCRATCH_HOST_QUOTA_BYTES`, the
+ * largest per-user dirs are evicted next-largest-first until the
+ * tree fits. The host-wide eviction is the load-bearing defence
+ * against many-active-users-each-just-under-the-per-user-cap
+ * scenarios; the TTL pass on its own would leave the host disk
+ * starved for up to 24h. Returns a small report so callers (cleanup
+ * task, future admin endpoint) can log what happened.
  */
 export function cleanupAbandonedScratchDirs(now: number = Date.now()): {
   removed: string[];
+  evicted: string[];
   kept: number;
   errors: Array<{ path: string; message: string }>;
 } {
   const removed: string[] = [];
+  const evicted: string[] = [];
   const errors: Array<{ path: string; message: string }> = [];
   let kept = 0;
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(SCRATCH_ROOT, { withFileTypes: true });
   } catch {
-    return { removed, kept, errors };
+    return { removed, evicted, kept, errors };
   }
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
@@ -612,7 +774,45 @@ export function cleanupAbandonedScratchDirs(now: number = Date.now()): {
     }
     kept++;
   }
-  return { removed, kept, errors };
+
+  // Host-wide overflow eviction. Runs only after the TTL pass so we
+  // never delete a user dir that was already going away. We
+  // intentionally walk every surviving `<hash>` dir to size it (the
+  // top-level scratch root is small in entry count even when the
+  // total bytes are large), then evict largest-first until we either
+  // fit or run out of candidates. We do NOT account for symlinks
+  // (`walkRealFileBytes`) so we don't double-count the host workspace
+  // through every user's symlink view.
+  let surviving: Array<{ name: string; bytes: number; userDir: string }> = [];
+  let totalBytes = 0;
+  let postEntries: fs.Dirent[];
+  try {
+    postEntries = fs.readdirSync(SCRATCH_ROOT, { withFileTypes: true });
+  } catch {
+    return { removed, evicted, kept, errors };
+  }
+  for (const entry of postEntries) {
+    if (!entry.isDirectory()) continue;
+    const userDir = path.join(SCRATCH_ROOT, entry.name);
+    const bytes = walkRealFileBytes(userDir);
+    surviving.push({ name: entry.name, bytes, userDir });
+    totalBytes += bytes;
+  }
+  if (totalBytes > SCRATCH_HOST_QUOTA_BYTES) {
+    surviving.sort((a, b) => b.bytes - a.bytes);
+    for (const cand of surviving) {
+      if (totalBytes <= SCRATCH_HOST_QUOTA_BYTES) break;
+      try {
+        fs.rmSync(cand.userDir, { recursive: true, force: true });
+        evicted.push(cand.name);
+        totalBytes -= cand.bytes;
+        kept = Math.max(0, kept - 1);
+      } catch (err: any) {
+        errors.push({ path: cand.userDir, message: err?.message || String(err) });
+      }
+    }
+  }
+  return { removed, evicted, kept, errors };
 }
 
 let cleanupTimer: NodeJS.Timeout | null = null;
@@ -626,9 +826,9 @@ export function startScratchCleanupSchedule(): void {
   cleanupTimer = setInterval(() => {
     try {
       const r = cleanupAbandonedScratchDirs();
-      if (r.removed.length > 0 || r.errors.length > 0) {
+      if (r.removed.length > 0 || r.evicted.length > 0 || r.errors.length > 0) {
         console.log(
-          `[user-workspace] cleanup: removed=${r.removed.length} kept=${r.kept} errors=${r.errors.length}`,
+          `[user-workspace] cleanup: removed=${r.removed.length} evicted=${r.evicted.length} kept=${r.kept} errors=${r.errors.length}`,
         );
       }
     } catch (err: any) {
@@ -660,4 +860,27 @@ export const __testing__ = {
   SKIP_SYMLINK_TOP_LEVEL,
   userIdHash,
   syncSymlinkView,
+  /** Read the current per-user quota cap (env or default). */
+  getUserQuotaBytes: () => SCRATCH_USER_QUOTA_BYTES,
+  /** Read the current host-wide eviction threshold (env or default). */
+  getHostQuotaBytes: () => SCRATCH_HOST_QUOTA_BYTES,
+  /**
+   * Override the per-user quota cap at runtime. Tests use this to
+   * exercise the quota path without writing 1 GiB of fixture data.
+   * Pass `null` to restore the default (env var or 1 GiB).
+   */
+  setUserQuotaBytes: (n: number | null) => {
+    SCRATCH_USER_QUOTA_BYTES = n === null
+      ? parsePositiveBytes(process.env.WORKBENCH_USER_QUOTA_BYTES, DEFAULT_USER_QUOTA_BYTES)
+      : n;
+  },
+  /**
+   * Override the host-wide eviction threshold. Pass `null` to restore
+   * the default (env var or 10 GiB).
+   */
+  setHostQuotaBytes: (n: number | null) => {
+    SCRATCH_HOST_QUOTA_BYTES = n === null
+      ? parsePositiveBytes(process.env.WORKBENCH_HOST_QUOTA_BYTES, DEFAULT_HOST_QUOTA_BYTES)
+      : n;
+  },
 };

@@ -136,6 +136,20 @@ export interface SandboxOptions {
    * union, applied AFTER the strict env scrub). Use sparingly.
    */
   extraEnv?: Record<string, string>;
+  /**
+   * Override the default per-file `prlimit --fsize` ceiling. The
+   * sandbox always applies a 512 MiB single-file cap; passing a
+   * smaller value here tightens it further so the kernel refuses any
+   * write past `min(default, fsizeBytes)`. Workbench callers use this
+   * to thread per-user remaining-quota down to the kernel layer:
+   * e.g. a user with 100 MiB of quota left runs with fsize=100 MiB
+   * and the write() syscall itself fails with EFBIG/SIGXFSZ once a
+   * file would grow past that, BEFORE the bytes ever land on disk.
+   * A value of 0 prevents the child from writing any new file bytes
+   * at all (useful as a defence-in-depth alongside the pre-flight
+   * "already over cap" gate).
+   */
+  fsizeBytes?: number;
 }
 
 // Redirect targets we always allow even when "absolute" — these are
@@ -1710,7 +1724,7 @@ export function buildSandboxEnv(cwd: string, extras: Record<string, string> = {}
  * filesystem jail. If none of the helpers exist the command runs
  * directly via `sh -c` and we rely on the path-validation layer.
  */
-export function buildSandboxArgv(command: string, cwd: string): string[] {
+export function buildSandboxArgv(command: string, cwd: string, fsizeBytes?: number): string[] {
   const argv: string[] = [];
   if (OS_SANDBOX) {
     argv.push(...buildOsIsolationArgv(OS_SANDBOX, cwd));
@@ -1719,12 +1733,22 @@ export function buildSandboxArgv(command: string, cwd: string): string[] {
     argv.push(SETPRIV_BIN, "--no-new-privs");
   }
   if (PRLIMIT_BIN) {
+    // Caller-supplied fsize tightens (never loosens) the default
+    // 512 MiB single-file cap. Workbench routes thread per-user
+    // remaining-quota in here so the kernel itself refuses writes
+    // past the user's headroom — that's the "rejected before they
+    // touch disk" semantics the sandbox cannot get from a userspace
+    // pre-flight `du` walk alone.
+    let fsize = PRLIMIT_FSIZE_BYTES;
+    if (typeof fsizeBytes === "number" && Number.isFinite(fsizeBytes) && fsizeBytes >= 0) {
+      fsize = Math.min(fsize, Math.floor(fsizeBytes));
+    }
     argv.push(
       PRLIMIT_BIN,
       `--as=${PRLIMIT_AS_BYTES}`,
       `--cpu=${PRLIMIT_CPU_SEC}`,
       `--nproc=${PRLIMIT_NPROC}`,
-      `--fsize=${PRLIMIT_FSIZE_BYTES}`,
+      `--fsize=${fsize}`,
       `--nofile=${PRLIMIT_NOFILE}`,
     );
   }
@@ -1763,7 +1787,7 @@ export async function runSandboxed(command: string, opts: SandboxOptions): Promi
   }
 
   const env = buildSandboxEnv(cwd, opts.extraEnv);
-  const argv = buildSandboxArgv(command, cwd);
+  const argv = buildSandboxArgv(command, cwd, opts.fsizeBytes);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxBuffer = opts.maxBufferBytes ?? DEFAULT_MAX_BUFFER;
 
