@@ -77,12 +77,8 @@ router.get("/files", async (req, res): Promise<void> => {
   if (projectRaw) {
     try {
       const project = JSON.parse(projectRaw);
-      const resolved = await projectCtx.resolveDescriptor(project);
+      const resolved = await projectCtx.resolveAndEnsureCloned(project);
       if (!resolved) { res.json({ items: [], error: "could not resolve project" }); return; }
-      if (resolved.origin === "replit" && !resolved.localPath) {
-        res.json({ items: [], notice: "Replit project not pulled yet — open Replit Workbench and click 'Pull files for editing'." });
-        return;
-      }
       const entries = await projectCtx.listFiles(resolved, requestedPath);
       const items = entries.map(e => ({
         name: e.name,
@@ -141,7 +137,7 @@ router.get("/file-content", async (req, res): Promise<void> => {
   if (projectRaw) {
     try {
       const project = JSON.parse(projectRaw);
-      const resolved = await projectCtx.resolveDescriptor(project);
+      const resolved = await projectCtx.resolveAndEnsureCloned(project);
       if (!resolved) { res.json({ error: "could not resolve project" }); return; }
       const r = await projectCtx.readFile(resolved, filePath);
       res.json({ content: r.content, size: r.size, truncated: r.truncated, path: filePath, scope: { origin: resolved.origin } });
@@ -394,7 +390,7 @@ router.post("/code-chat", async (req, res): Promise<void> => {
     let resolved: Awaited<ReturnType<typeof projectCtx.resolveDescriptor>> | null = null;
     if (projectDescriptor && projectDescriptor.origin && projectDescriptor.path) {
       try {
-        resolved = await projectCtx.resolveDescriptor(projectDescriptor);
+        resolved = await projectCtx.resolveAndEnsureCloned(projectDescriptor);
         if (resolved) {
           const summary = await projectCtx.getSummary(resolved, { tokenBudget: 3500 });
           projectContext = `\n\n## Selected Project Context\n${summary}\n`;
@@ -430,7 +426,7 @@ router.post("/code-chat", async (req, res): Promise<void> => {
 
 IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing code, include the FULL implementation — never truncate, abbreviate, or use "..." placeholders. When explaining concepts, cover all important aspects. If your response is long, that is expected and preferred. The user needs complete, production-ready answers.${projectContext ? "\n" + projectContext : ""}`;
 
-    const tools = resolved ? [
+    const baseTools = resolved ? [
       {
         name: "list_files",
         description: "List files and directories within the selected project. Use to explore the project structure. Path is relative to the project root.",
@@ -441,17 +437,20 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
         description: "Read a file from within the selected project. Returns up to 500KB of content.",
         input_schema: { type: "object", properties: { path: { type: "string", description: "File path relative to the project root" } }, required: ["path"] },
       },
+    ] : [];
+    const writeTools = resolved && isAuthed ? [
       {
         name: "write_file",
-        description: "Write or overwrite a file in the selected project. Edits apply directly to the project (VPS over SSH, Replit in the local clone, Local in place). Requires signed-in user.",
+        description: "Write or overwrite a file in the selected project. Edits apply directly to the project (VPS over SSH, Replit in the local clone, Local in place).",
         input_schema: { type: "object", properties: { path: { type: "string", description: "File path relative to the project root" }, content: { type: "string", description: "Full file contents to write" } }, required: ["path", "content"] },
       },
       {
         name: "run_shell",
-        description: "Run a shell command inside the selected project's working directory. For VPS projects this runs over SSH. Requires signed-in user. 30s timeout.",
+        description: "Run a shell command inside the selected project's working directory. For VPS projects this runs over SSH. 30s timeout.",
         input_schema: { type: "object", properties: { command: { type: "string", description: "Shell command to execute" } }, required: ["command"] },
       },
-    ] : undefined;
+    ] : [];
+    const tools = resolved ? [...baseTools, ...writeTools] : undefined;
 
     let msgs = conversationMessages.slice(-20);
     let continuations = 0;

@@ -101,17 +101,20 @@ function mergeSshConfig(descriptor: ProjectDescriptor): ConnectConfig {
 }
 
 function gitCloneUrl(descriptor: ProjectDescriptor): string {
-  if (descriptor.url && descriptor.url.startsWith("http")) {
-    return descriptor.url;
-  }
-  if (descriptor.path && /^[\w-]+\/[\w.-]+$/.test(descriptor.path)) {
-    return `https://github.com/${descriptor.path}.git`;
-  }
   if (descriptor.url && descriptor.url.includes("replit.com/@")) {
     const m = descriptor.url.match(/replit\.com\/@([^/]+)\/([^/?#]+)/);
     if (m) {
       return `https://github.com/${m[1]}/${m[2]}.git`;
     }
+  }
+  if (descriptor.path && /^[\w-]+\/[\w.-]+$/.test(descriptor.path)) {
+    return `https://github.com/${descriptor.path}.git`;
+  }
+  if (descriptor.url && (descriptor.url.endsWith(".git") || /github\.com|gitlab\.com|bitbucket\.org/.test(descriptor.url))) {
+    return descriptor.url;
+  }
+  if (descriptor.url && descriptor.url.startsWith("http")) {
+    return descriptor.url;
   }
   throw new Error("Cannot determine git clone URL for descriptor");
 }
