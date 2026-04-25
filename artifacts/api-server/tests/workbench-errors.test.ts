@@ -763,6 +763,129 @@ test("POST /api/code-chat surfaces a mid-reply continuation with no response bod
   );
 });
 
+// -----------------------------------------------------------------------------
+// /api/route-prompt and /api/claude-code: same upstream-failure contract as
+// /code-chat. Pre-stream Anthropic non-ok / no-body failures must surface as
+// HTTP 502 + `{ error, code: "AI_REQUEST_FAILED", upstreamStatus? }` so the
+// AI router panel can render an actionable message instead of a generic
+// in-band SSE "Error: ..." line under a misleading 200. Without these tests,
+// a refactor that re-introduces the old "200 + SSE error event" shape would
+// silently regress both panels and any non-streaming caller couldn't even
+// tell success from failure.
+// -----------------------------------------------------------------------------
+test("POST /api/route-prompt returns 502 + AI_REQUEST_FAILED when the initial Anthropic call returns a non-ok status", async () => {
+  await withAnthropicStub(
+    () => new Response(
+      JSON.stringify({ type: "error", error: { message: "stubbed upstream failure" } }),
+      { status: 503, headers: { "Content-Type": "application/json" } },
+    ),
+    async () => {
+      // route-prompt used to write a `model_selected` SSE event before
+      // even calling Anthropic — flushing headers committed the response
+      // to a 200 and forced any failure into an in-band "type: error"
+      // event the AI router panel rendered as a generic line. The handler
+      // now defers the SSE flush until after the upstream returns ok, so
+      // a pre-stream non-ok must produce a real 502 with the structured
+      // body. Regression test for that contract.
+      const r = await postJson<{
+        error?: string;
+        code?: string;
+        upstreamStatus?: number;
+      }>("/api/route-prompt", { prompt: "hello", mode: "auto" });
+
+      assert.equal(r.status, 502, `expected HTTP 502, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.code, "AI_REQUEST_FAILED");
+      assert.ok(
+        r.body.error && /upstream|failed|stubbed|route-prompt/i.test(r.body.error),
+        `expected an upstream-failure error string, got ${JSON.stringify(r.body)}`,
+      );
+      // The handler attaches upstreamStatus on this branch so the UI can
+      // distinguish "Anthropic 5xx'd us" from a transport error. Match
+      // /code-chat's documented shape exactly.
+      assert.equal(r.body.upstreamStatus, 503);
+    },
+  );
+});
+
+test("POST /api/route-prompt returns 502 + AI_REQUEST_FAILED when the upstream returns no response body", async () => {
+  await withAnthropicStub(
+    // ok=true but body is null. response.body?.getReader() resolves to
+    // undefined, hitting the no-body branch before the SSE stream is
+    // committed.
+    () => new Response(null, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }),
+    async () => {
+      const r = await postJson<{
+        error?: string;
+        code?: string;
+        upstreamStatus?: number;
+      }>("/api/route-prompt", { prompt: "hello", mode: "auto" });
+
+      assert.equal(r.status, 502, `expected HTTP 502, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.code, "AI_REQUEST_FAILED");
+      assert.ok(
+        r.body.error && /no response body|body|upstream/i.test(r.body.error),
+        `expected a no-response-body error string, got ${JSON.stringify(r.body)}`,
+      );
+    },
+  );
+});
+
+test("GET /api/claude-code returns 502 + AI_REQUEST_FAILED when the initial Anthropic call returns a non-ok status", async () => {
+  await withAnthropicStub(
+    () => new Response(
+      JSON.stringify({ type: "error", error: { message: "stubbed upstream failure" } }),
+      { status: 503, headers: { "Content-Type": "application/json" } },
+    ),
+    async () => {
+      // claude-code used to call res.flushHeaders() unconditionally
+      // before the first upstream fetch, locking the response to 200 and
+      // forcing every failure into an in-band SSE event. The handler now
+      // defers flushing until after the upstream returns ok, so a
+      // pre-stream non-ok must produce a real 502 with the structured
+      // body. Regression test for that contract.
+      const r = await getJson<{
+        error?: string;
+        code?: string;
+        upstreamStatus?: number;
+      }>("/api/claude-code?prompt=" + encodeURIComponent("hello"));
+
+      assert.equal(r.status, 502, `expected HTTP 502, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.code, "AI_REQUEST_FAILED");
+      assert.ok(
+        r.body.error && /upstream|failed|stubbed|claude-code/i.test(r.body.error),
+        `expected an upstream-failure error string, got ${JSON.stringify(r.body)}`,
+      );
+      assert.equal(r.body.upstreamStatus, 503);
+    },
+  );
+});
+
+test("GET /api/claude-code returns 502 + AI_REQUEST_FAILED when the upstream returns no response body", async () => {
+  await withAnthropicStub(
+    () => new Response(null, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    }),
+    async () => {
+      const r = await getJson<{
+        error?: string;
+        code?: string;
+        upstreamStatus?: number;
+      }>("/api/claude-code?prompt=" + encodeURIComponent("hello"));
+
+      assert.equal(r.status, 502, `expected HTTP 502, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.code, "AI_REQUEST_FAILED");
+      assert.ok(
+        r.body.error && /no response body|body|upstream/i.test(r.body.error),
+        `expected a no-response-body error string, got ${JSON.stringify(r.body)}`,
+      );
+    },
+  );
+});
+
 test("/api/code-chat keeps three AI_REQUEST_FAILED emit sites with the documented response shape", () => {
   // The agent-loop fallthrough at line ~1129 is defensive: in the current
   // structure the loop always either returns early (branches above) or
@@ -772,12 +895,16 @@ test("/api/code-chat keeps three AI_REQUEST_FAILED emit sites with the documente
   // 200 + error-in-body shape).
   const source = fs.readFileSync(WORKBENCH_SRC, "utf-8");
 
-  // Slice out just the /code-chat handler so /code-review's AI_REQUEST_FAILED
-  // emit doesn't leak into the count.
+  // Slice out just the /code-chat handler so AI_REQUEST_FAILED emits in
+  // sibling routes (/code-review, /route-prompt, /claude-code) don't leak
+  // into the count. The previous slice stopped at /code-review, but other
+  // handlers (e.g. undo/redo, /route-prompt) sit between them, so we slice
+  // up to the very next `router.{post,get,...}(` declaration instead.
   const start = source.indexOf('router.post("/code-chat"');
   assert.ok(start >= 0, "could not locate /code-chat handler in workbench.ts");
-  const codeReviewStart = source.indexOf('router.post("/code-review"', start);
-  const end = codeReviewStart >= 0 ? codeReviewStart : source.length;
+  const afterStart = source.slice(start + 1);
+  const nextRouterRel = afterStart.search(/router\.(post|get|put|delete|use)\(/);
+  const end = nextRouterRel >= 0 ? start + 1 + nextRouterRel : source.length;
   const handler = source.slice(start, end);
 
   const emitSites = Array.from(

@@ -1207,6 +1207,10 @@ function AIRouterPanel() {
         body: JSON.stringify(body), signal: controller.signal, credentials: "include",
       });
       if (!res.ok) {
+        // Parse the structured `{ error, code, upstreamStatus }` body the
+        // workbench AI routes return — without this, a 502 would surface
+        // as an opaque "HTTP 502" toast instead of the actionable upstream
+        // error message. Mirrors the /code-chat panel's contract.
         const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
         if (err?.code === "AI_NOT_CONFIGURED") {
           const aiErr: any = new Error(
@@ -1215,7 +1219,9 @@ function AIRouterPanel() {
           aiErr.code = "AI_NOT_CONFIGURED";
           throw aiErr;
         }
-        throw new Error(err?.error || `HTTP ${res.status}`);
+        const aiErr: any = new Error(err?.error || `HTTP ${res.status}`);
+        if (err?.code) aiErr.code = err.code;
+        throw aiErr;
       }
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();

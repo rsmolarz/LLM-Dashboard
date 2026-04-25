@@ -1700,11 +1700,21 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
     }
   }
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-
-  res.write(`data: ${JSON.stringify({ type: "model_selected", model: selectedModel, name: selectedModel })}\n\n`);
+  // Defer SSE header flush + the model_selected event until we know the
+  // initial Anthropic call actually succeeded. Once res.write() runs the
+  // headers are flushed and we can no longer change the HTTP status, so
+  // any pre-stream failure has to surface as a real 4xx/5xx with the
+  // documented `{ error, code }` body — same contract as /code-chat.
+  let streamStarted = false;
+  const startStream = () => {
+    if (streamStarted) return;
+    streamStarted = true;
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+    res.write(`data: ${JSON.stringify({ type: "model_selected", model: selectedModel, name: selectedModel })}\n\n`);
+  };
 
   try {
     let systemPrompt = `You are an AI coding assistant in the Claude Workbench. Model: ${selectedModel}.`;
@@ -1730,13 +1740,31 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
 
     if (!response.ok) {
       const errText = await response.text();
-      res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
-      res.end();
+      // Initial upstream call failed before we committed to SSE — return
+      // a real HTTP 502 + structured error so frontend retry logic and
+      // CDNs see the failure instead of a misleading 200 with an in-band
+      // SSE error event. Mirrors the /code-chat contract.
+      res.status(502).json({
+        error: errText || "Upstream route-prompt request failed",
+        code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+        upstreamStatus: response.status,
+      });
       return;
     }
 
     const reader = response.body?.getReader();
-    if (!reader) { res.write(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`); res.end(); return; }
+    if (!reader) {
+      res.status(502).json({
+        error: "Upstream returned no response body",
+        code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+      });
+      return;
+    }
+
+    // Upstream is OK — commit to streaming. Subsequent failures inside
+    // the read loop have to be surfaced as SSE events because the headers
+    // are now flushed.
+    startStream();
 
     const decoder = new TextDecoder();
     let buffer = "";
@@ -1769,6 +1797,18 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
     res.write(`data: ${JSON.stringify({ type: "done", tokens: Math.round(totalTokens) })}\n\n`);
     res.end();
   } catch (err: any) {
+    if (!streamStarted) {
+      // Transport-level / abort failure before SSE began — return a real
+      // 5xx so the AI router panel can render the same actionable message
+      // /code-chat does, instead of an in-band SSE error event.
+      try {
+        res.status(502).json({
+          error: err?.message || "Upstream route-prompt request failed",
+          code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+        });
+      } catch {}
+      return;
+    }
     try { res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`); res.end(); } catch {}
   }
 });
@@ -1868,14 +1908,24 @@ router.get("/claude-code", async (req, res): Promise<void> => {
     return;
   }
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  const ccKeepAlive = setInterval(() => {
-    try { res.write(": keepalive\n\n"); } catch { clearInterval(ccKeepAlive); }
-  }, 15000);
+  // Defer SSE header flush + keepalive timer until we know the initial
+  // Anthropic call actually succeeded. Once flushHeaders() runs we can
+  // no longer change the HTTP status, so any pre-stream failure has to
+  // surface as a real 4xx/5xx with the documented `{ error, code }`
+  // body — same contract as /code-chat.
+  let streamStarted = false;
+  let ccKeepAlive: NodeJS.Timeout | null = null;
+  const startStream = () => {
+    if (streamStarted) return;
+    streamStarted = true;
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+    ccKeepAlive = setInterval(() => {
+      try { res.write(": keepalive\n\n"); } catch { if (ccKeepAlive) clearInterval(ccKeepAlive); }
+    }, 15000);
+  };
 
   const ccSystem = "You are Claude Code, an expert AI coding agent in the Claude Workbench. You write production-ready code, debug complex issues, and architect systems. Always provide complete working code with proper error handling.\n\nIMPORTANT: Always provide thorough, comprehensive, and complete responses. Do not cut your response short. When showing code, include the FULL implementation — never truncate, abbreviate, or use \"...\" placeholders. When explaining concepts, cover all important aspects. If your response is long, that is expected and preferred. The user needs complete, production-ready answers.";
   try {
@@ -1893,13 +1943,41 @@ router.get("/claude-code", async (req, res): Promise<void> => {
 
       if (!response.ok) {
         const errText = await response.text();
+        if (!streamStarted) {
+          // Initial upstream call failed before we committed to SSE —
+          // return a real HTTP 502 + structured error so frontend retry
+          // logic and CDNs see the failure instead of a misleading 200
+          // with an in-band SSE error event. Mirrors /code-chat.
+          res.status(502).json({
+            error: errText || "Upstream claude-code request failed",
+            code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+            upstreamStatus: response.status,
+          });
+          return;
+        }
         res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
         res.end();
         return;
       }
 
       const reader = response.body?.getReader();
-      if (!reader) { res.write(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`); res.end(); return; }
+      if (!reader) {
+        if (!streamStarted) {
+          res.status(502).json({
+            error: "Upstream returned no response body",
+            code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+          });
+          return;
+        }
+        res.write(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`);
+        res.end();
+        return;
+      }
+
+      // Upstream is OK — commit to streaming. Subsequent failures inside
+      // the read loop or on continuation iterations have to be surfaced
+      // as SSE events because the headers are now flushed.
+      startStream();
 
       const decoder = new TextDecoder();
       let buffer = "";
@@ -1943,12 +2021,34 @@ router.get("/claude-code", async (req, res): Promise<void> => {
       break;
     }
 
-    clearInterval(ccKeepAlive);
-    res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-    res.end();
+    if (ccKeepAlive) clearInterval(ccKeepAlive);
+    if (streamStarted) {
+      res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+      res.end();
+    } else {
+      // Reached end of loop without ever starting the stream — treat as
+      // an unexpected upstream issue rather than a silent 200. Mirrors
+      // the defensive fallthrough in /code-chat.
+      res.status(502).json({
+        error: "Upstream claude-code returned no usable response",
+        code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+      });
+    }
   } catch (err: any) {
-    clearInterval(ccKeepAlive);
+    if (ccKeepAlive) clearInterval(ccKeepAlive);
     console.error(`[claude-code] Error:`, err.message);
+    if (!streamStarted) {
+      // Transport-level / abort failure before SSE began — return a real
+      // 5xx so the workbench UI can render the same actionable message
+      // /code-chat does, instead of an in-band SSE error event.
+      try {
+        res.status(502).json({
+          error: err?.message || "Upstream claude-code request failed",
+          code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+        });
+      } catch {}
+      return;
+    }
     try { res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`); res.end(); } catch {}
   }
 });
