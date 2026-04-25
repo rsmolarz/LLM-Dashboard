@@ -354,7 +354,13 @@ router.post("/shell", requireAuth, async (req, res): Promise<void> => {
         return;
       }
       const r = await projectCtx.execCommand(resolved, command);
-      res.json({ stdout: r.stdout || "", stderr: r.stderr || "", exitCode: r.exitCode, scope: { origin: resolved.origin, path: resolved.origin === "vps" ? resolved.remotePath : resolved.localPath } });
+      res.json({
+        stdout: r.stdout || "",
+        stderr: r.stderr || "",
+        exitCode: r.exitCode,
+        scope: { origin: resolved.origin, path: resolved.origin === "vps" ? resolved.remotePath : resolved.localPath },
+        ...(r.sandboxContained ? { sandboxContained: r.sandboxContained } : {}),
+      });
       return;
     }
 

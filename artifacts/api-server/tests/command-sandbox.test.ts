@@ -1554,3 +1554,47 @@ test("runSandboxed does NOT surface sandboxContained on hosts without an active 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------
+// Remote (VPS) sandbox containment
+//
+// `projectCtx.execCommand` for VPS-origin projects pipes stderr from a
+// remote SSH command through the same `detectOsContainment` mapper.
+// The detector is path-driven, so passing the remote project root as
+// the sandboxRoot works even though the path lives on another machine
+// — only writes outside the project root are flagged.
+//
+// We exercise the mapper here with a remote-style root (one that does
+// NOT exist on the test host, since it represents a path on the VPS)
+// to prove the realpath fallback keeps the EROFS notice working end
+// to end.
+// ---------------------------------------------------------------------
+
+test("detectOsContainment maps remote-path EROFS stderr to a notice when the sandbox root is a non-existent VPS path", () => {
+  // Remote project root — picked so it definitely does NOT exist on
+  // the local test host. The mapper must fall back to lexical path
+  // comparison instead of bailing on the missing realpath.
+  const remoteRoot = "/var/www/wb-vps-project-" + randomBytes(4).toString("hex");
+  assert.equal(fs.existsSync(remoteRoot), false, "premise: remote root must not exist locally");
+  const stderr =
+    "cp: cannot create regular file '/etc/wb-vps-escape': Read-only file system\n";
+  const got = detectOsContainment(stderr, remoteRoot);
+  assert.ok(got, `expected containment notice for remote stderr, got null`);
+  assert.equal(got!.reason, "readonly");
+  assert.equal(got!.path, "/etc/wb-vps-escape");
+  assert.match(got!.message, /outside the project/i);
+  assert.ok(
+    got!.message.includes("/etc/wb-vps-escape"),
+    `friendly message should mention the offending path, got: ${got!.message}`,
+  );
+});
+
+test("detectOsContainment does NOT flag in-project remote EROFS (path lives inside the VPS project root)", () => {
+  // Even on a VPS, an EROFS line that names a path INSIDE the project
+  // tree must not be branded a sandbox event — the detector trusts
+  // the path-containment check, not the marker alone.
+  const remoteRoot = "/var/www/wb-vps-project-" + randomBytes(4).toString("hex");
+  const inside = `${remoteRoot}/build/output.txt`;
+  const stderr = `cp: cannot create regular file '${inside}': Read-only file system\n`;
+  assert.equal(detectOsContainment(stderr, remoteRoot), null);
+});

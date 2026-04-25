@@ -4,7 +4,20 @@ import * as os from "os";
 import { Client, type ConnectConfig } from "ssh2";
 import { execFile } from "child_process";
 import { checkShellSafety } from "./command-safety";
-import { runSandboxed } from "./command-sandbox";
+import { runSandboxed, detectOsContainment, type SandboxContainment } from "./command-sandbox";
+
+// Whether the remote VPS host is running an OS-level jail (bwrap /
+// firejail / nsjail / equivalent) for project shell sessions. When set
+// to a truthy value the VPS branch of `execCommand` mirrors the local
+// behaviour and brands EROFS / system-path EACCES stderr lines with a
+// friendly `sandboxContained` notice. Defaults to off so that on a
+// non-jailed VPS today we don't lie to the user about a sandbox that
+// isn't there. Set `VPS_OS_SANDBOX_ACTIVE=1` once the remote jail is
+// rolled out.
+function vpsSandboxActive(): boolean {
+  const v = (process.env.VPS_OS_SANDBOX_ACTIVE || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
 
 export type ProjectOrigin = "local" | "vps" | "replit";
 
@@ -702,7 +715,11 @@ export async function deleteFile(resolved: ResolvedProject, filePath: string): P
   return { ok: true };
 }
 
-export async function execCommand(resolved: ResolvedProject, command: string, timeoutMs = 30000): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+export async function execCommand(
+  resolved: ResolvedProject,
+  command: string,
+  timeoutMs = 30000,
+): Promise<{ stdout: string; stderr: string; exitCode: number; sandboxContained?: SandboxContainment }> {
   const safety = checkShellSafety(command);
   if (safety.blocked) {
     return {
@@ -713,7 +730,24 @@ export async function execCommand(resolved: ResolvedProject, command: string, ti
   }
   if (resolved.origin === "vps" && resolved.remotePath && resolved.ssh) {
     const wrapped = `cd ${shellQuote(resolved.remotePath)} && ${command}`;
-    return execSshCommand(resolved.ssh, wrapped, timeoutMs);
+    const r = await execSshCommand(resolved.ssh, wrapped, timeoutMs);
+    // Mirror the local /shell behaviour: when an OS-level jail is
+    // active on the remote (gated by env so we don't fabricate a
+    // sandbox that isn't there yet), inspect the merged stderr for
+    // EROFS / system-path EACCES write-attempts that escaped the
+    // project root. The detector is path-driven, so passing the
+    // remote project root as the "sandboxRoot" works even though the
+    // path lives on another machine — only writes outside that root
+    // are flagged.
+    const contained = vpsSandboxActive()
+      ? detectOsContainment(r.stderr || "", resolved.remotePath)
+      : null;
+    return {
+      stdout: r.stdout,
+      stderr: r.stderr,
+      exitCode: r.exitCode,
+      ...(contained ? { sandboxContained: contained } : {}),
+    };
   }
   if (!resolved.localPath) throw new Error("Project has no local path");
   // Funnel local execution through the sandbox helper so it inherits the
@@ -723,7 +757,12 @@ export async function execCommand(resolved: ResolvedProject, command: string, ti
     cwd: resolved.localPath,
     timeoutMs,
   });
-  return { stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode };
+  return {
+    stdout: r.stdout,
+    stderr: r.stderr,
+    exitCode: r.exitCode,
+    ...(r.sandboxContained ? { sandboxContained: r.sandboxContained } : {}),
+  };
 }
 
 const KEY_FILES = ["README.md", "README", "package.json", "pyproject.toml", "Cargo.toml", "go.mod", "requirements.txt"];

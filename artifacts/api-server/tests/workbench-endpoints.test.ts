@@ -559,6 +559,98 @@ test("POST /api/shell runs benign commands inside a local-project scope", async 
   assert.equal(r.body.scope?.origin, "local");
 });
 
+// Forwarding of `sandboxContained` for VPS-origin /shell results. The
+// SSH layer is mocked (see installSshMock), so a remote command runs
+// against the local filesystem under vpsRemoteRoot. We seed a script
+// there that prints an EROFS-shaped stderr line naming a path OUTSIDE
+// the project root; the route should map that to the friendly notice
+// when the VPS sandbox feature flag is on.
+test("POST /api/shell forwards sandboxContained for VPS-origin EROFS stderr when VPS_OS_SANDBOX_ACTIVE=1", async () => {
+  const before = process.env.VPS_OS_SANDBOX_ACTIVE;
+  process.env.VPS_OS_SANDBOX_ACTIVE = "1";
+  const scriptName = `fake-erofs-${randomBytes(4).toString("hex")}.sh`;
+  const scriptAbs = path.join(vpsRemoteRoot, scriptName);
+  fs.writeFileSync(
+    scriptAbs,
+    `#!/bin/sh\n` +
+      `printf "%s\\n" "cp: cannot create regular file '/etc/wb-vps-fake': Read-only file system" >&2\n` +
+      `exit 1\n`,
+  );
+  fs.chmodSync(scriptAbs, 0o755);
+  try {
+    const r = await postJson<{
+      stdout: string;
+      stderr: string;
+      exitCode: number;
+      scope?: { origin: string };
+      sandboxContained?: { reason: string; path: string; message: string };
+    }>(
+      "/api/shell",
+      { command: `./${scriptName}`, project: vpsProject() },
+      { "x-test-user": "user-A" },
+    );
+    assert.equal(r.status, 200);
+    assert.equal(r.body.scope?.origin, "vps");
+    assert.equal(r.body.exitCode, 1);
+    assert.match(r.body.stderr, /Read-only file system/);
+    assert.ok(
+      r.body.sandboxContained,
+      `expected sandboxContained on VPS shell result, got ${JSON.stringify(r.body)}`,
+    );
+    assert.equal(r.body.sandboxContained!.reason, "readonly");
+    assert.equal(r.body.sandboxContained!.path, "/etc/wb-vps-fake");
+    assert.match(r.body.sandboxContained!.message, /outside the project/i);
+  } finally {
+    if (before === undefined) delete process.env.VPS_OS_SANDBOX_ACTIVE;
+    else process.env.VPS_OS_SANDBOX_ACTIVE = before;
+    try { fs.unlinkSync(scriptAbs); } catch {}
+  }
+});
+
+test("POST /api/shell does NOT brand VPS EROFS stderr as sandboxContained when VPS_OS_SANDBOX_ACTIVE is unset", async () => {
+  // Same input as above, but without the env gate the route must NOT
+  // brand a non-jailed VPS error as a sandbox event. This mirrors the
+  // local rule that we only emit `sandboxContained` when an OS jail is
+  // actually in place.
+  const before = process.env.VPS_OS_SANDBOX_ACTIVE;
+  delete process.env.VPS_OS_SANDBOX_ACTIVE;
+  const scriptName = `fake-erofs-${randomBytes(4).toString("hex")}.sh`;
+  const scriptAbs = path.join(vpsRemoteRoot, scriptName);
+  fs.writeFileSync(
+    scriptAbs,
+    `#!/bin/sh\n` +
+      `printf "%s\\n" "cp: cannot create regular file '/etc/wb-vps-fake': Read-only file system" >&2\n` +
+      `exit 1\n`,
+  );
+  fs.chmodSync(scriptAbs, 0o755);
+  try {
+    const r = await postJson<{
+      exitCode: number;
+      stderr: string;
+      scope?: { origin: string };
+      sandboxContained?: unknown;
+    }>(
+      "/api/shell",
+      { command: `./${scriptName}`, project: vpsProject() },
+      { "x-test-user": "user-A" },
+    );
+    assert.equal(r.status, 200);
+    assert.equal(r.body.scope?.origin, "vps");
+    // The EROFS line still flows through stderr — we just must not
+    // attribute it to a sandbox that isn't there.
+    assert.match(r.body.stderr, /Read-only file system/);
+    assert.equal(
+      r.body.sandboxContained,
+      undefined,
+      `expected NO sandboxContained without the VPS jail flag, got ${JSON.stringify(r.body.sandboxContained)}`,
+    );
+  } finally {
+    if (before === undefined) delete process.env.VPS_OS_SANDBOX_ACTIVE;
+    else process.env.VPS_OS_SANDBOX_ACTIVE = before;
+    try { fs.unlinkSync(scriptAbs); } catch {}
+  }
+});
+
 // =============================================================================
 // POST /api/git
 // =============================================================================
