@@ -2083,6 +2083,40 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
   // any pre-stream failure has to surface as a real 4xx/5xx with the
   // documented `{ error, code }` body — same contract as /code-chat.
   let streamStarted = false;
+  // Tracks whether the client has gone away (closed the tab, dropped the
+  // network, aborted the request) so we (a) stop writing to a dead
+  // socket and (b) recognise the resulting upstream AbortError as
+  // expected — no error spam in logs, no SSE error event written to
+  // nothing. Mirrors the /code-chat pattern.
+  let clientClosed = false;
+  let activeUpstreamReader:
+    | ReadableStreamDefaultReader<Uint8Array>
+    | null = null;
+  // Per-request AbortController combined with the existing 120s timeout
+  // via AbortSignal.any() below. Aborting it from the close handler
+  // tears down the upstream HTTP request the moment the user walks
+  // away, so Anthropic stops generating (and we stop being billed for)
+  // tokens nobody will see — instead of letting the request run for the
+  // full 2-minute timeout window. Mirrors the fix in /code-chat.
+  const upstreamController = new AbortController();
+  const safeWrite = (chunk: string): boolean => {
+    if (clientClosed || res.writableEnded) return false;
+    try {
+      res.write(chunk);
+      return true;
+    } catch {
+      clientClosed = true;
+      return false;
+    }
+  };
+  res.on("close", () => {
+    if (res.writableEnded) return;
+    clientClosed = true;
+    try { upstreamController.abort(); } catch { /* may already be aborted */ }
+    if (activeUpstreamReader) {
+      try { activeUpstreamReader.cancel().catch(() => {}); } catch { /* released */ }
+    }
+  });
   const startStream = () => {
     if (streamStarted) return;
     streamStarted = true;
@@ -2090,7 +2124,7 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
-    res.write(`data: ${JSON.stringify({ type: "model_selected", model: selectedModel, name: selectedModel })}\n\n`);
+    safeWrite(`data: ${JSON.stringify({ type: "model_selected", model: selectedModel, name: selectedModel })}\n\n`);
   };
 
   try {
@@ -2112,7 +2146,13 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
         system: systemPrompt,
         messages: conversationMessages.slice(-20),
       }),
-      signal: AbortSignal.timeout(120000),
+      // Combine our disconnect-aware controller with the existing 120s
+      // timeout. Either firing tears down the upstream HTTP request
+      // immediately so we stop being billed for tokens nobody will see.
+      signal: AbortSignal.any([
+        upstreamController.signal,
+        AbortSignal.timeout(120000),
+      ]),
     });
 
     if (!response.ok) {
@@ -2137,11 +2177,20 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
       });
       return;
     }
+    // Track the active reader so the close handler can cancel it the
+    // moment the client disconnects, instead of waiting for the upstream
+    // body to finish on its own.
+    activeUpstreamReader = reader;
 
     // Upstream is OK — commit to streaming. Subsequent failures inside
     // the read loop have to be surfaced as SSE events because the headers
     // are now flushed.
     startStream();
+    if (clientClosed) {
+      try { reader.cancel().catch(() => {}); } catch {}
+      activeUpstreamReader = null;
+      return;
+    }
 
     const decoder = new TextDecoder();
     let buffer = "";
@@ -2150,6 +2199,7 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (clientClosed) break;
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
@@ -2162,18 +2212,33 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
             const parsed = JSON.parse(data);
             if (parsed.type === "content_block_delta" && parsed.delta?.text) {
               totalTokens += parsed.delta.text.length / 4;
-              res.write(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text, model: selectedModel })}\n\n`);
+              safeWrite(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text, model: selectedModel })}\n\n`);
             } else if (parsed.type === "message_stop") {
-              res.write(`data: ${JSON.stringify({ type: "done", tokens: Math.round(totalTokens) })}\n\n`);
+              safeWrite(`data: ${JSON.stringify({ type: "done", tokens: Math.round(totalTokens) })}\n\n`);
             }
           } catch {}
         }
       }
     }
 
-    res.write(`data: ${JSON.stringify({ type: "done", tokens: Math.round(totalTokens) })}\n\n`);
-    res.end();
+    activeUpstreamReader = null;
+    if (clientClosed) {
+      if (!res.writableEnded) { try { res.end(); } catch {} }
+      return;
+    }
+
+    safeWrite(`data: ${JSON.stringify({ type: "done", tokens: Math.round(totalTokens) })}\n\n`);
+    if (!res.writableEnded) res.end();
   } catch (err: any) {
+    if (clientClosed) {
+      // Errors thrown after the client went away (e.g. the upstream
+      // fetch rejecting with an AbortError because we aborted its
+      // controller in the close handler) are expected. There's nobody
+      // to surface them to and we don't want to spam logs every time
+      // a user closes their tab mid-reply.
+      if (!res.writableEnded) { try { res.end(); } catch {} }
+      return;
+    }
     if (!streamStarted) {
       // Transport-level / abort failure before SSE began — return a real
       // 5xx so the AI router panel can render the same actionable message
@@ -2186,7 +2251,7 @@ router.post("/route-prompt", async (req, res): Promise<void> => {
       } catch {}
       return;
     }
-    try { res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`); res.end(); } catch {}
+    try { safeWrite(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`); if (!res.writableEnded) res.end(); } catch {}
   }
 });
 
@@ -2203,6 +2268,22 @@ router.post("/code-review", async (req, res): Promise<void> => {
     });
     return;
   }
+
+  // Per-request AbortController combined with the existing 60s timeout
+  // via AbortSignal.any() below. /code-review is not an SSE endpoint —
+  // it returns a single JSON response — but the same disconnect leak
+  // applies: without a disconnect-aware signal the upstream Anthropic
+  // call keeps generating (and we keep paying for) a review nobody will
+  // read until the 60s timeout fires. Aborting the controller from the
+  // close handler tears the request down immediately. Mirrors the fix
+  // in /code-chat.
+  let clientClosed = false;
+  const upstreamController = new AbortController();
+  res.on("close", () => {
+    if (res.writableEnded) return;
+    clientClosed = true;
+    try { upstreamController.abort(); } catch { /* may already be aborted */ }
+  });
 
   try {
     let filesContent = "";
@@ -2236,8 +2317,16 @@ router.post("/code-review", async (req, res): Promise<void> => {
         system: "You are a senior code reviewer. Respond ONLY with valid JSON matching this schema: { overallGrade: 'A'|'B'|'C'|'D', overallSummary: string, securityAudit: { score: number(1-10), findings: string[] }, issues: [{ title: string, severity: 'critical'|'warning'|'info', category: string, file: string, line: number|null, detail: string, suggestion: string }] }",
         messages: [{ role: "user", content: `Review this codebase for bugs, security issues, and code quality:\n\n${filesContent.substring(0, 30000)}` }],
       }),
-      signal: AbortSignal.timeout(60000),
+      // Combine our disconnect-aware controller with the existing 60s
+      // timeout. Either firing tears down the upstream HTTP request so
+      // we stop being billed for tokens nobody will see.
+      signal: AbortSignal.any([
+        upstreamController.signal,
+        AbortSignal.timeout(60000),
+      ]),
     });
+
+    if (clientClosed) return;
 
     if (!response.ok) {
       res.status(502).json({
@@ -2250,6 +2339,7 @@ router.post("/code-review", async (req, res): Promise<void> => {
     }
 
     const result = await response.json() as any;
+    if (clientClosed) return;
     const text = result.content?.[0]?.text || "";
 
     let review;
@@ -2260,8 +2350,16 @@ router.post("/code-review", async (req, res): Promise<void> => {
       review = { overallGrade: "B", overallSummary: text.substring(0, 500), issues: [], securityAudit: { score: 7, findings: [] } };
     }
 
+    if (res.writableEnded) return;
     res.json({ review, meta: { filesScanned: fileCount, model: "claude-haiku-4-5", slug: projectSlug } });
   } catch (err: any) {
+    if (clientClosed) {
+      // Expected post-disconnect AbortError — the upstream fetch
+      // rejecting because we aborted its controller in the close
+      // handler is the success case here, not something to log.
+      if (!res.writableEnded) { try { res.end(); } catch {} }
+      return;
+    }
     res.status(500).json({
       error: err?.message || "Code review failed",
       code: "INTERNAL_ERROR" satisfies WorkbenchErrorCode,
@@ -2292,6 +2390,51 @@ router.get("/claude-code", async (req, res): Promise<void> => {
   // body — same contract as /code-chat.
   let streamStarted = false;
   let ccKeepAlive: NodeJS.Timeout | null = null;
+  // Tracks whether the client has gone away so the keep-alive interval
+  // and the agent loop can both shut down promptly instead of holding
+  // the response object alive for up to the upstream's 5-minute
+  // timeout. Mirrors the /code-chat pattern.
+  let clientClosed = false;
+  let activeUpstreamReader:
+    | ReadableStreamDefaultReader<Uint8Array>
+    | null = null;
+  // Per-iteration AbortController so the close handler can abort the
+  // currently-in-flight upstream call without affecting any future
+  // iteration — and so each iteration gets a fresh 5-minute timeout
+  // window. Mirrors the /code-chat pattern.
+  let activeUpstreamController: AbortController | null = null;
+  const clearKeepAlive = () => {
+    if (ccKeepAlive) {
+      clearInterval(ccKeepAlive);
+      ccKeepAlive = null;
+    }
+  };
+  const safeWrite = (chunk: string): boolean => {
+    if (clientClosed || res.writableEnded) return false;
+    try {
+      res.write(chunk);
+      return true;
+    } catch {
+      clientClosed = true;
+      clearKeepAlive();
+      return false;
+    }
+  };
+  res.on("close", () => {
+    if (res.writableEnded) return;
+    clientClosed = true;
+    clearKeepAlive();
+    if (activeUpstreamController) {
+      // Tear down the upstream HTTP request itself, not just our local
+      // body reader. Without this, Anthropic happily keeps generating
+      // tokens (which we get billed for) until the 5-minute timeout
+      // signal fires, even though nobody is on the other end.
+      try { activeUpstreamController.abort(); } catch { /* may already be aborted */ }
+    }
+    if (activeUpstreamReader) {
+      try { activeUpstreamReader.cancel().catch(() => {}); } catch { /* released */ }
+    }
+  });
   const startStream = () => {
     if (streamStarted) return;
     streamStarted = true;
@@ -2300,7 +2443,11 @@ router.get("/claude-code", async (req, res): Promise<void> => {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
     ccKeepAlive = setInterval(() => {
-      try { res.write(": keepalive\n\n"); } catch { if (ccKeepAlive) clearInterval(ccKeepAlive); }
+      // The close handler above clears this interval as soon as the
+      // client disconnects; the safeWrite() guard is belt-and-suspenders
+      // for the race where the timer fires between disconnect and
+      // clearInterval.
+      if (!safeWrite(": keepalive\n\n")) clearKeepAlive();
     }, 15000);
   };
 
@@ -2311,11 +2458,24 @@ router.get("/claude-code", async (req, res): Promise<void> => {
     const maxContinuations = 5;
 
     while (continuations <= maxContinuations) {
+      // Bail out before issuing another upstream request if the client
+      // has already gone away — otherwise a continuation could happily
+      // fire off another 5-minute Anthropic call to a closed socket.
+      if (clientClosed) break;
+      const upstreamController = new AbortController();
+      activeUpstreamController = upstreamController;
       const response = await fetch(`${baseUrl}/v1/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
         body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 64000, stream: true, system: ccSystem, messages: msgs }),
-        signal: AbortSignal.timeout(300000),
+        // Combine our disconnect-aware controller with the existing 5-
+        // minute timeout. Either firing tears down the upstream HTTP
+        // request immediately so we stop being billed for tokens
+        // nobody will see.
+        signal: AbortSignal.any([
+          upstreamController.signal,
+          AbortSignal.timeout(300000),
+        ]),
       });
 
       if (!response.ok) {
@@ -2332,8 +2492,8 @@ router.get("/claude-code", async (req, res): Promise<void> => {
           });
           return;
         }
-        res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
-        res.end();
+        safeWrite(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
+        if (!res.writableEnded) res.end();
         return;
       }
 
@@ -2346,8 +2506,8 @@ router.get("/claude-code", async (req, res): Promise<void> => {
           });
           return;
         }
-        res.write(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`);
-        res.end();
+        safeWrite(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`);
+        if (!res.writableEnded) res.end();
         return;
       }
 
@@ -2355,6 +2515,12 @@ router.get("/claude-code", async (req, res): Promise<void> => {
       // the read loop or on continuation iterations have to be surfaced
       // as SSE events because the headers are now flushed.
       startStream();
+      activeUpstreamReader = reader;
+      if (clientClosed) {
+        try { reader.cancel().catch(() => {}); } catch {}
+        activeUpstreamReader = null;
+        return;
+      }
 
       const decoder = new TextDecoder();
       let buffer = "";
@@ -2364,6 +2530,7 @@ router.get("/claude-code", async (req, res): Promise<void> => {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (clientClosed) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
@@ -2376,7 +2543,7 @@ router.get("/claude-code", async (req, res): Promise<void> => {
               const parsed = JSON.parse(data);
               if (parsed.type === "content_block_delta" && parsed.delta?.text) {
                 accumulatedText += parsed.delta.text;
-                res.write(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text })}\n\n`);
+                safeWrite(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text })}\n\n`);
               } else if (parsed.type === "message_delta" && parsed.delta?.stop_reason) {
                 stopReason = parsed.delta.stop_reason;
               }
@@ -2384,6 +2551,10 @@ router.get("/claude-code", async (req, res): Promise<void> => {
           }
         }
       }
+
+      activeUpstreamReader = null;
+      activeUpstreamController = null;
+      if (clientClosed) break;
 
       console.log(`[claude-code] stop_reason=${stopReason}, textLen=${accumulatedText.length}, continuation=${continuations}`);
 
@@ -2398,10 +2569,14 @@ router.get("/claude-code", async (req, res): Promise<void> => {
       break;
     }
 
-    if (ccKeepAlive) clearInterval(ccKeepAlive);
+    clearKeepAlive();
+    if (clientClosed) {
+      if (!res.writableEnded) { try { res.end(); } catch {} }
+      return;
+    }
     if (streamStarted) {
-      res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-      res.end();
+      safeWrite(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+      if (!res.writableEnded) res.end();
     } else {
       // Reached end of loop without ever starting the stream — treat as
       // an unexpected upstream issue rather than a silent 200. Mirrors
@@ -2412,7 +2587,16 @@ router.get("/claude-code", async (req, res): Promise<void> => {
       });
     }
   } catch (err: any) {
-    if (ccKeepAlive) clearInterval(ccKeepAlive);
+    clearKeepAlive();
+    if (clientClosed) {
+      // Errors thrown after the client went away (e.g. the upstream
+      // fetch rejecting with an AbortError because we aborted its
+      // controller in the close handler) are expected — there's nobody
+      // to surface them to and we don't want to spam logs every time
+      // a user closes their tab mid-reply.
+      if (!res.writableEnded) { try { res.end(); } catch {} }
+      return;
+    }
     console.error(`[claude-code] Error:`, err.message);
     if (!streamStarted) {
       // Transport-level / abort failure before SSE began — return a real
@@ -2426,7 +2610,7 @@ router.get("/claude-code", async (req, res): Promise<void> => {
       } catch {}
       return;
     }
-    try { res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`); res.end(); } catch {}
+    try { safeWrite(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`); if (!res.writableEnded) res.end(); } catch {}
   }
 });
 

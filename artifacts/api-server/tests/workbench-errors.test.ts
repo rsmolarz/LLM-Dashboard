@@ -1176,6 +1176,272 @@ test("POST /api/code-chat aborts the upstream Anthropic fetch (not just the body
   }
 });
 
+// -----------------------------------------------------------------------------
+// Sibling disconnect-abort tests for /route-prompt, /code-review, and
+// /claude-code: same regression as /code-chat (task-57). Without a
+// disconnect-aware signal on the upstream fetch, Anthropic happily keeps
+// generating (and we keep paying for) tokens nobody will see, until the
+// route's per-call timeout fires (60s for /code-review, 120s for
+// /route-prompt, 300s for /claude-code). The fix is to build a per-request
+// AbortController, combine its signal with the existing AbortSignal.timeout
+// via AbortSignal.any([...]), and abort the controller from a
+// res.on("close", ...) listener. We prove the wiring by spying on the
+// signal the route attaches to its upstream fetch — if the regression came
+// back, the captured signal would never fire on disconnect and these tests
+// would time out with a useful message.
+// -----------------------------------------------------------------------------
+
+interface DisconnectAbortFixture {
+  upstreamSignal: AbortSignal | null;
+  signalAborted: boolean;
+  signalAbortedPromise: Promise<void>;
+  restore: () => void;
+}
+
+function installDisconnectAbortStub(opts: {
+  // When true, the stub returns a Response whose body is an open SSE-style
+  // ReadableStream so the route commits to streaming and we can read at
+  // least one byte before aborting (for SSE routes). When false, returns
+  // a Response whose body stream stays open without yielding anything,
+  // forcing `await response.json()` (non-streaming routes like
+  // /code-review) to hang on the body consumer.
+  ssePreamble: boolean;
+}): DisconnectAbortFixture {
+  const prevApiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const prevBaseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY = prevApiKey || "test-fake-key";
+  process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL =
+    prevBaseUrl || "http://127.0.0.1:1/anthropic-stub";
+
+  const realFetch = globalThis.fetch;
+  const upstreamHost = new URL(
+    process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL!,
+  ).host;
+
+  const fixture: DisconnectAbortFixture = {
+    upstreamSignal: null,
+    signalAborted: false,
+    signalAbortedPromise: undefined as unknown as Promise<void>,
+    restore: () => {
+      globalThis.fetch = realFetch;
+      if (prevApiKey === undefined) delete process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+      else process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY = prevApiKey;
+      if (prevBaseUrl === undefined) delete process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+      else process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL = prevBaseUrl;
+    },
+  };
+
+  let resolveSignal!: () => void;
+  fixture.signalAbortedPromise = new Promise<void>((resolve) => {
+    resolveSignal = resolve;
+  });
+
+  globalThis.fetch = (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => {
+    const url = typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : (input as Request).url;
+    if (url.includes(upstreamHost) || url.includes("/v1/messages")) {
+      // Capture the signal the route attached to its upstream fetch. The
+      // contract under test: the signal MUST be one whose abort event
+      // fires on client disconnect — i.e. a combined signal containing
+      // an AbortController the close handler can fire, NOT a bare
+      // AbortSignal.timeout() that only fires after the per-route
+      // timeout window regardless of what happens to the client.
+      fixture.upstreamSignal = init?.signal ?? null;
+      if (fixture.upstreamSignal) {
+        if (fixture.upstreamSignal.aborted) {
+          fixture.signalAborted = true;
+          resolveSignal();
+        } else {
+          fixture.upstreamSignal.addEventListener("abort", () => {
+            fixture.signalAborted = true;
+            resolveSignal();
+          });
+        }
+      }
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          if (opts.ssePreamble) {
+            controller.enqueue(encoder.encode(
+              'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+            ));
+            controller.enqueue(encoder.encode(
+              'data: {"type":"content_block_delta","index":0,"delta":{"text":"in-progress reply"}}\n\n',
+            ));
+          }
+          // Intentionally not closed — the only way the route stops is
+          // by observing the abort.
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          "Content-Type": opts.ssePreamble ? "text/event-stream" : "application/json",
+        },
+      });
+    }
+    return realFetch(input, init);
+  }) as typeof fetch;
+
+  return fixture;
+}
+
+async function awaitSignalAbort(
+  fixture: DisconnectAbortFixture,
+  routeLabel: string,
+): Promise<void> {
+  await Promise.race([
+    fixture.signalAbortedPromise,
+    new Promise<never>((_, reject) =>
+      setTimeout(
+        () =>
+          reject(
+            new Error(
+              `timed out waiting for the upstream fetch's signal to fire after client disconnect on ${routeLabel} — the route is probably back to passing only AbortSignal.timeout(...) so Anthropic keeps streaming (and billing) until the per-call timeout fires`,
+            ),
+          ),
+        5000,
+      ),
+    ),
+  ]);
+  assert.equal(
+    fixture.signalAborted,
+    true,
+    `expected the upstream fetch's signal on ${routeLabel} to fire on client disconnect so the upstream HTTP request is actually torn down`,
+  );
+}
+
+test("POST /api/route-prompt aborts the upstream Anthropic fetch (not just the body reader) when the client disconnects mid-stream", async () => {
+  // Sibling of the /code-chat task-57 regression test: /route-prompt also
+  // streams SSE and previously opened its upstream fetch with only
+  //   signal: AbortSignal.timeout(120000)
+  // — there was NO signal that fired on disconnect, so Anthropic kept
+  // generating (and we kept paying for) tokens we'd never show until the
+  // 2-minute timeout finally expired. This test pins the fix.
+  const fixture = installDisconnectAbortStub({ ssePreamble: true });
+  try {
+    const controller = new AbortController();
+    const res = await fetch(`${serverUrl}/api/route-prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "hello", mode: "auto" }),
+      signal: controller.signal,
+    });
+    assert.equal(
+      res.status,
+      200,
+      `expected HTTP 200 (SSE stream), got ${res.status}`,
+    );
+    // Read at least one chunk so we know the route has flushed headers
+    // and is genuinely mid-stream (not stuck in pre-stream warm-up where
+    // there's no upstream fetch in flight yet).
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    assert.ok(first.value, "expected at least one byte from the SSE stream");
+    assert.ok(
+      fixture.upstreamSignal,
+      "expected /api/route-prompt to attach an AbortSignal to its upstream fetch (it currently doesn't, so disconnect can't tear it down)",
+    );
+    controller.abort();
+    try { await reader.cancel(); } catch { /* expected after abort */ }
+    await awaitSignalAbort(fixture, "/api/route-prompt");
+  } finally {
+    fixture.restore();
+  }
+});
+
+test("POST /api/code-review aborts the upstream Anthropic fetch when the client disconnects before the JSON response is consumed", async () => {
+  // Sibling of the /code-chat task-57 regression test: /code-review is
+  // non-streaming (it returns one JSON blob), but it has the same leak
+  // shape — the upstream Anthropic fetch was opened with only
+  //   signal: AbortSignal.timeout(60000)
+  // so a user closing the tab mid-review left Anthropic generating (and
+  // us being billed for) the review nobody would read, until the 60-
+  // second timeout finally expired. This test pins the fix.
+  //
+  // Because /code-review doesn't stream chunks back to the client, we
+  // can't read a "first byte" to confirm we're mid-call. Instead the
+  // stub returns a Response whose body never yields, so the route's
+  // `await response.json()` hangs and the route stays in flight until
+  // the close handler fires.
+  const fixture = installDisconnectAbortStub({ ssePreamble: false });
+  try {
+    const controller = new AbortController();
+    // Kick off the request without awaiting — `fetch()` won't resolve
+    // until the response body completes, which it won't, because the
+    // stub never closes its body stream.
+    const reqPromise = fetch(`${serverUrl}/api/code-review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectSlug: "test-slug" }),
+      signal: controller.signal,
+    }).catch((err) => {
+      // The expected outcome of controller.abort() below is that the
+      // client fetch rejects with an AbortError. Swallowing it here
+      // keeps the test focused on what we actually care about: the
+      // signal the SERVER attached to its upstream fetch firing.
+      if (err?.name !== "AbortError") throw err;
+    });
+    // Wait until the route has actually issued the upstream fetch (and
+    // therefore captured a signal we can spy on). Polling is simpler
+    // than threading a "signal captured" promise back through the stub.
+    const startedAt = Date.now();
+    while (!fixture.upstreamSignal && Date.now() - startedAt < 5000) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.ok(
+      fixture.upstreamSignal,
+      "expected /api/code-review to attach an AbortSignal to its upstream fetch (it currently doesn't, so disconnect can't tear it down)",
+    );
+    controller.abort();
+    await reqPromise;
+    await awaitSignalAbort(fixture, "/api/code-review");
+  } finally {
+    fixture.restore();
+  }
+});
+
+test("GET /api/claude-code aborts the upstream Anthropic fetch (not just the body reader) when the client disconnects mid-stream", async () => {
+  // Sibling of the /code-chat task-57 regression test: /claude-code also
+  // streams SSE and previously opened its upstream fetch with only
+  //   signal: AbortSignal.timeout(300000)
+  // so Anthropic kept generating (and we kept paying for) tokens we'd
+  // never show until the FULL 5-minute timeout finally expired — the
+  // worst leak of the four streaming routes by wall-clock. This test
+  // pins the fix.
+  const fixture = installDisconnectAbortStub({ ssePreamble: true });
+  try {
+    const controller = new AbortController();
+    const res = await fetch(
+      `${serverUrl}/api/claude-code?prompt=${encodeURIComponent("hello")}`,
+      { signal: controller.signal },
+    );
+    assert.equal(
+      res.status,
+      200,
+      `expected HTTP 200 (SSE stream), got ${res.status}`,
+    );
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    assert.ok(first.value, "expected at least one byte from the SSE stream");
+    assert.ok(
+      fixture.upstreamSignal,
+      "expected /api/claude-code to attach an AbortSignal to its upstream fetch (it currently doesn't, so disconnect can't tear it down)",
+    );
+    controller.abort();
+    try { await reader.cancel(); } catch { /* expected after abort */ }
+    await awaitSignalAbort(fixture, "/api/claude-code");
+  } finally {
+    fixture.restore();
+  }
+});
+
 test("/api/code-chat keeps three AI_REQUEST_FAILED emit sites with the documented response shape", () => {
   // The agent-loop fallthrough at line ~1129 is defensive: in the current
   // structure the loop always either returns early (branches above) or
