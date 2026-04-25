@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   Activity, Server, Database, HardDrive, Brain, Clock,
@@ -593,13 +593,27 @@ export default function Monitor() {
 }
 
 function SandboxPosturePanel({ sandbox }: { sandbox: DashboardData["sandbox"] }) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!sandbox) return;
+    if (typeof window === "undefined") return;
+    if (window.location.hash !== "#sandbox") return;
+    const t = setTimeout(() => {
+      ref.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
+    return () => clearTimeout(t);
+  }, [sandbox]);
+
   if (!sandbox) return null;
   const isStrong = sandbox.posture === "kernel-jail";
   return (
     <motion.div
+      ref={ref}
+      id="sandbox"
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="glass-panel rounded-2xl border border-white/5 p-5"
+      className="glass-panel rounded-2xl border border-white/5 p-5 scroll-mt-4"
       data-testid="sandbox-posture-panel"
     >
       <div className="flex items-center justify-between mb-4">
