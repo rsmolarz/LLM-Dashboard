@@ -34,6 +34,7 @@ import {
   type SandboxContainmentNotice,
 } from "@/components/workbench/SandboxNotices";
 import { ScratchQuotaBar, parseScratchQuota, type ScratchQuota } from "@/components/workbench/ScratchQuotaBar";
+import { ScratchPanel } from "@/components/workbench/ScratchPanel";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -2755,6 +2756,7 @@ const PANELS = [
   { id: "claude", label: "Claude Code", icon: Sparkles, component: ClaudeCodePanel },
   { id: "router", label: "AI Router", icon: Zap, component: AIRouterPanel },
   { id: "shell", label: "Shell", icon: Terminal, component: ShellPanel },
+  { id: "scratch", label: "Scratch", icon: HardDrive, component: ScratchPanel },
   { id: "ssh", label: "SSH", icon: Server, component: CWSSHPanel },
   { id: "upload", label: "Upload", icon: Upload, component: () => <div className="p-3 h-full overflow-auto"><UploadArea catppuccin={true} /></div> },
   { id: "files", label: "Files", icon: FolderTree, component: FileExplorerPanel },
