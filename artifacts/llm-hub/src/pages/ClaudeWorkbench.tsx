@@ -235,10 +235,16 @@ function PreviewPanel() {
 }
 
 function GitPanel() {
-  const { data, isLoading, refetch } = useQuery<any>({
+  const { data, isLoading, error, refetch } = useQuery<any>({
     queryKey: ["wb-git-status"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/git-status`, { credentials: "include" }); return res.json(); },
+    queryFn: async () => {
+      const res = await fetch(`/api/workbench/git-status`, { credentials: "include" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Failed to load git status (HTTP ${res.status})`);
+      return body;
+    },
   });
+  const errorMessage = (error as Error | null)?.message || (data as any)?.error || null;
 
   const gitMutation = useMutation({
     mutationFn: async (command: string) => { const res = await fetch(`/api/workbench/git`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command }), credentials: "include" }); return res.json(); },
@@ -261,6 +267,12 @@ function GitPanel() {
       </div>
       <div className="flex-1 overflow-y-auto">
         {isLoading ? <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-6 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
+        errorMessage ? (
+          <div className="p-4 space-y-2">
+            <div className="text-sm text-red-400">Could not load git status: {errorMessage}</div>
+            <button onClick={() => refetch()} className="text-[10px] px-2 py-1 rounded border border-[#313244] hover:bg-[#313244] text-[#a6adc8]">Retry</button>
+          </div>
+        ) :
         <div className="p-2 space-y-3">
           {data?.changes?.length > 0 && (
             <div>
@@ -302,10 +314,16 @@ function GitPanel() {
 
 function AgentActivityPanel() {
   const [expandedCommit, setExpandedCommit] = useState<string | null>(null);
-  const { data, isLoading, refetch } = useQuery<any>({
+  const { data, isLoading, error, refetch } = useQuery<any>({
     queryKey: ["wb-agent-activity"],
-    queryFn: async () => { const res = await fetch(`/api/workbench/agent-activity`, { credentials: "include" }); return res.json(); },
+    queryFn: async () => {
+      const res = await fetch(`/api/workbench/agent-activity`, { credentials: "include" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Failed to load agent activity (HTTP ${res.status})`);
+      return body;
+    },
   });
+  const errorMessage = (error as Error | null)?.message || (data as any)?.error || null;
 
   const entries = data?.entries || [];
 
@@ -321,6 +339,12 @@ function AgentActivityPanel() {
       </div>
       <div className="flex-1 overflow-y-auto">
         {isLoading ? <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-10 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
+        errorMessage ? (
+          <div className="p-4 space-y-2">
+            <div className="text-sm text-red-400">Could not load agent activity: {errorMessage}</div>
+            <button onClick={() => refetch()} className="text-[10px] px-2 py-1 rounded border border-[#313244] hover:bg-[#313244] text-[#a6adc8]">Retry</button>
+          </div>
+        ) :
         entries.length === 0 ? <div className="p-4 text-sm text-center text-[#585b70]">No activity found</div> :
         <div className="p-1">{entries.map((entry: any) => {
           const expanded = expandedCommit === entry.hash;
@@ -362,8 +386,16 @@ function DatabasePanel() {
   const [results, setResults] = useState<any>(null);
 
   const queryMutation = useMutation({
-    mutationFn: async (q: string) => { const res = await fetch(`/api/workbench/db-query?q=${encodeURIComponent(q)}`, { credentials: "include" }); return res.json(); },
+    mutationFn: async (q: string) => {
+      const res = await fetch(`/api/workbench/db-query?q=${encodeURIComponent(q)}`, { credentials: "include" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { error: body?.error || `Query failed (HTTP ${res.status})`, rows: [], fields: [], rowCount: 0 };
+      }
+      return body;
+    },
     onSuccess: (data) => setResults(data),
+    onError: (err: any) => setResults({ error: err?.message || "Query failed", rows: [], fields: [], rowCount: 0 }),
   });
 
   return (
@@ -1112,7 +1144,12 @@ function CodeReviewPanel() {
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
 
   const reviewMutation = useMutation({
-    mutationFn: async () => { const res = await fetch(`/api/workbench/code-review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectSlug: "llm-hub" }), credentials: "include" }); return res.json(); },
+    mutationFn: async () => {
+      const res = await fetch(`/api/workbench/code-review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectSlug: "llm-hub" }), credentials: "include" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || `Code review failed (HTTP ${res.status})`);
+      return body;
+    },
   });
 
   useEffect(() => { reviewMutation.mutate(); }, []);
@@ -1139,10 +1176,11 @@ function CodeReviewPanel() {
   }
 
   if (!review) {
+    const errMsg = (reviewMutation.error as Error | null)?.message || "Review failed";
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 p-6">
         <XCircle className="h-6 w-6 text-[#f38ba8]" />
-        <p className="text-sm text-[#f38ba8]">Review failed</p>
+        <p className="text-sm text-[#f38ba8] text-center">{errMsg}</p>
         <button className="px-3 py-1 text-xs rounded bg-[#313244] text-[#cdd6f4] hover:bg-[#45475a]" onClick={() => reviewMutation.mutate()}>Retry</button>
       </div>
     );

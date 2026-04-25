@@ -219,10 +219,14 @@ type WorkbenchErrorCode =
   | "FILE_TOO_LARGE"
   | "NOT_FOUND"
   | "MISSING_PATH"
+  | "INVALID_INPUT"
   | "INVALID_PROJECT"
   | "PROJECT_UNRESOLVED"
   | "PROJECT_NOT_PULLED"
   | "AUTH_REQUIRED"
+  | "GIT_ERROR"
+  | "DB_QUERY_FAILED"
+  | "AI_REQUEST_FAILED"
   | "INTERNAL_ERROR";
 
 function classifyWorkbenchError(err: unknown): { status: number; code: WorkbenchErrorCode; message: string } {
@@ -551,7 +555,10 @@ router.get("/git-status", async (_req, res): Promise<void> => {
 
     res.json({ currentBranch, changes, commits, remotes });
   } catch (err: any) {
-    res.json({ error: err.message });
+    res.status(500).json({
+      error: err?.message || "Failed to load git status",
+      code: "GIT_ERROR" satisfies WorkbenchErrorCode,
+    });
   }
 });
 
@@ -626,19 +633,19 @@ router.get("/process-info", async (_req, res): Promise<void> => {
 router.get("/db-query", async (req, res): Promise<void> => {
   const q = req.query.q as string;
   if (!q) {
-    res.status(400).json({ error: "q parameter required" });
+    res.status(400).json({ error: "q parameter required", code: "INVALID_INPUT" satisfies WorkbenchErrorCode });
     return;
   }
 
   const lower = q.trim().toLowerCase();
   if (!lower.startsWith("select")) {
-    res.status(400).json({ error: "Only SELECT queries allowed for safety" });
+    res.status(400).json({ error: "Only SELECT queries allowed for safety", code: "INVALID_INPUT" satisfies WorkbenchErrorCode });
     return;
   }
 
   const forbidden = ["insert", "update", "delete", "drop", "alter", "create", "truncate", "grant", "revoke", "exec"];
   if (forbidden.some(kw => lower.includes(kw))) {
-    res.status(400).json({ error: "Query contains forbidden keyword" });
+    res.status(400).json({ error: "Query contains forbidden keyword", code: "INVALID_INPUT" satisfies WorkbenchErrorCode });
     return;
   }
 
@@ -648,7 +655,13 @@ router.get("/db-query", async (req, res): Promise<void> => {
     const fields = rows.length > 0 ? Object.keys(rows[0]) : [];
     res.json({ rows: rows.slice(0, 500), fields, rowCount: rows.length });
   } catch (err: any) {
-    res.json({ error: err.message, rows: [], fields: [], rowCount: 0 });
+    res.status(500).json({
+      error: err?.message || "Query failed",
+      code: "DB_QUERY_FAILED" satisfies WorkbenchErrorCode,
+      rows: [],
+      fields: [],
+      rowCount: 0,
+    });
   }
 });
 
@@ -703,7 +716,12 @@ router.get("/agent-activity", async (_req, res): Promise<void> => {
       stats: { totalCommits: entries.length, agentCommits, manualCommits: entries.length - agentCommits, filesChanged },
     });
   } catch (err: any) {
-    res.json({ entries: [], stats: null, error: err.message });
+    res.status(500).json({
+      error: err?.message || "Failed to load agent activity",
+      code: "GIT_ERROR" satisfies WorkbenchErrorCode,
+      entries: [],
+      stats: null,
+    });
   }
 });
 
@@ -731,42 +749,65 @@ router.post("/code-chat", async (req, res): Promise<void> => {
     return;
   }
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
+  // Warm-up phase: do everything that can fail before we commit to SSE.
+  // Once flushHeaders() runs we can no longer change the HTTP status, so
+  // any failure after that point has to surface as an SSE `type: "error"`
+  // event under a misleading 200. By resolving the project (and queueing
+  // the upstream call below) before flushing, real failure modes here
+  // get the correct 4xx/5xx + structured body that CDNs and frontend
+  // retry logic can reason about.
+  let projectContext = "";
+  let resolved: Awaited<ReturnType<typeof projectCtx.resolveDescriptor>> | null = null;
+  let projectWarmupWarning: string | null = null;
+  if (projectDescriptor && projectDescriptor.origin && projectDescriptor.path) {
+    try {
+      resolved = isAuthed
+        ? await projectCtx.resolveAndEnsureCloned(projectDescriptor)
+        : await projectCtx.resolveDescriptor(projectDescriptor);
+      if (resolved) {
+        const summary = await projectCtx.getSummary(resolved, { tokenBudget: 3500 });
+        projectContext = `\n\n## Selected Project Context\n${summary}\n`;
+      }
+    } catch (err: any) {
+      // Soft failure: the chat falls back to general-assistant mode rather
+      // than refusing the request. We surface the reason as a `warning`
+      // SSE event once the stream is committed below — it's not fatal,
+      // so we don't return 4xx here.
+      projectWarmupWarning = `Project context unavailable: ${err?.message || String(err)}`;
+    }
+  } else {
+    try {
+      const pkgPath = path.join(PROJECT_ROOT, "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+        projectContext = `Project: ${pkg.name || "unknown"}\n`;
+      }
+      const dirs = fs.readdirSync(PROJECT_ROOT).filter(d => !d.startsWith(".") && d !== "node_modules").slice(0, 20);
+      projectContext += `Top-level: ${dirs.join(", ")}\n`;
+    } catch {}
+  }
 
-  const keepAlive = setInterval(() => {
-    try { res.write(": keepalive\n\n"); } catch { clearInterval(keepAlive); }
-  }, 15000);
+  let streamStarted = false;
+  let keepAlive: NodeJS.Timeout | null = null;
+  const startStream = () => {
+    if (streamStarted) return;
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+    streamStarted = true;
+    keepAlive = setInterval(() => {
+      try { res.write(": keepalive\n\n"); } catch { if (keepAlive) clearInterval(keepAlive); }
+    }, 15000);
+    if (resolved) {
+      res.write(`data: ${JSON.stringify({ type: "project", origin: resolved.origin, localPath: resolved.localPath, remotePath: resolved.remotePath, cloned: resolved.cloned })}\n\n`);
+    }
+    if (projectWarmupWarning) {
+      res.write(`data: ${JSON.stringify({ type: "warning", content: projectWarmupWarning })}\n\n`);
+    }
+  };
 
   try {
-    let projectContext = "";
-    let resolved: Awaited<ReturnType<typeof projectCtx.resolveDescriptor>> | null = null;
-    if (projectDescriptor && projectDescriptor.origin && projectDescriptor.path) {
-      try {
-        resolved = isAuthed
-          ? await projectCtx.resolveAndEnsureCloned(projectDescriptor)
-          : await projectCtx.resolveDescriptor(projectDescriptor);
-        if (resolved) {
-          const summary = await projectCtx.getSummary(resolved, { tokenBudget: 3500 });
-          projectContext = `\n\n## Selected Project Context\n${summary}\n`;
-          res.write(`data: ${JSON.stringify({ type: "project", origin: resolved.origin, localPath: resolved.localPath, remotePath: resolved.remotePath, cloned: resolved.cloned })}\n\n`);
-        }
-      } catch (err: any) {
-        res.write(`data: ${JSON.stringify({ type: "warning", content: `Project context unavailable: ${err.message}` })}\n\n`);
-      }
-    } else {
-      try {
-        const pkgPath = path.join(PROJECT_ROOT, "package.json");
-        if (fs.existsSync(pkgPath)) {
-          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-          projectContext = `Project: ${pkg.name || "unknown"}\n`;
-        }
-        const dirs = fs.readdirSync(PROJECT_ROOT).filter(d => !d.startsWith(".") && d !== "node_modules").slice(0, 20);
-        projectContext += `Top-level: ${dirs.join(", ")}\n`;
-      } catch {}
-    }
 
     const conversationMessages = (history || []).map((m: any) => ({
       role: m.role,
@@ -836,6 +877,17 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
 
       if (!response.ok) {
         const errText = await response.text();
+        if (!streamStarted) {
+          // First upstream call failed before we committed to SSE — return
+          // a real HTTP error so frontend retry logic and CDNs see the
+          // failure instead of a misleading 200.
+          res.status(502).json({
+            error: errText || "Upstream chat request failed",
+            code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+            upstreamStatus: response.status,
+          });
+          return;
+        }
         res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
         res.end();
         return;
@@ -843,10 +895,22 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
 
       const reader = response.body?.getReader();
       if (!reader) {
+        if (!streamStarted) {
+          res.status(502).json({
+            error: "Upstream returned no response body",
+            code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+          });
+          return;
+        }
         res.write(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`);
         res.end();
         return;
       }
+
+      // Upstream is OK — commit to streaming. Subsequent failures inside
+      // the read loop or on continuation iterations have to be surfaced
+      // as SSE events because the headers are now flushed.
+      startStream();
 
       const decoder = new TextDecoder();
       let buffer = "";
@@ -1053,12 +1117,28 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       break;
     }
 
-    clearInterval(keepAlive);
-    res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-    res.end();
+    if (keepAlive) clearInterval(keepAlive);
+    if (streamStarted) {
+      res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+      res.end();
+    } else {
+      // Reached end of loop without ever starting the stream — treat as
+      // an unexpected upstream issue rather than silent 200.
+      res.status(502).json({
+        error: "Upstream chat returned no usable response",
+        code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+      });
+    }
   } catch (err: any) {
-    clearInterval(keepAlive);
+    if (keepAlive) clearInterval(keepAlive);
     console.error(`[code-chat] Error:`, err.message);
+    if (!streamStarted) {
+      // Failure happened during warm-up / before SSE began — return a
+      // proper 5xx so retry logic can react.
+      const c = classifyWorkbenchError(err);
+      res.status(c.status).json({ error: c.message, code: c.code });
+      return;
+    }
     try {
       res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`);
       res.end();
@@ -1719,7 +1799,12 @@ router.post("/code-review", async (req, res): Promise<void> => {
     });
 
     if (!response.ok) {
-      res.json({ error: "Review request failed", review: null, meta: null });
+      res.status(502).json({
+        error: "Upstream code-review request failed",
+        code: "AI_REQUEST_FAILED" satisfies WorkbenchErrorCode,
+        review: null,
+        meta: null,
+      });
       return;
     }
 
@@ -1736,7 +1821,12 @@ router.post("/code-review", async (req, res): Promise<void> => {
 
     res.json({ review, meta: { filesScanned: fileCount, model: "claude-haiku-4-5", slug: projectSlug } });
   } catch (err: any) {
-    res.json({ error: err.message, review: null, meta: null });
+    res.status(500).json({
+      error: err?.message || "Code review failed",
+      code: "INTERNAL_ERROR" satisfies WorkbenchErrorCode,
+      review: null,
+      meta: null,
+    });
   }
 });
 
