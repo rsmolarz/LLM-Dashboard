@@ -3,6 +3,7 @@ import * as path from "path";
 import * as os from "os";
 import { Client, type ConnectConfig } from "ssh2";
 import { execFile } from "child_process";
+import { checkShellSafety } from "./command-safety";
 
 export type ProjectOrigin = "local" | "vps" | "replit";
 
@@ -700,11 +701,14 @@ export async function deleteFile(resolved: ResolvedProject, filePath: string): P
   return { ok: true };
 }
 
-const BLOCKED_CMDS = ["rm -rf /", "mkfs", "dd if=", ":(){", "shutdown", "reboot", "halt", "poweroff"];
-
 export async function execCommand(resolved: ResolvedProject, command: string, timeoutMs = 30000): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  if (BLOCKED_CMDS.some(b => command.includes(b))) {
-    return { stdout: "", stderr: "Command blocked for safety", exitCode: 1 };
+  const safety = checkShellSafety(command);
+  if (safety.blocked) {
+    return {
+      stdout: "",
+      stderr: `Command blocked for safety: ${safety.reason || "unsafe command"}`,
+      exitCode: 1,
+    };
   }
   if (resolved.origin === "vps" && resolved.remotePath && resolved.ssh) {
     const wrapped = `cd ${shellQuote(resolved.remotePath)} && ${command}`;

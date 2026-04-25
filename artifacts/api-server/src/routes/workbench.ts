@@ -9,6 +9,7 @@ import multer from "multer";
 import AdmZip from "adm-zip";
 import * as projectCtx from "../lib/project-context";
 import { unifiedDiff } from "../lib/file-diff";
+import { checkShellSafety, checkGitSafety, isGitCommand } from "../lib/command-safety";
 import { requireAuth } from "../middlewares/rateLimiter";
 import { randomBytes } from "crypto";
 
@@ -249,9 +250,13 @@ router.post("/shell", requireAuth, async (req, res): Promise<void> => {
     return;
   }
 
-  const blocked = ["rm -rf /", "mkfs", "dd if=", ":(){", "fork bomb"];
-  if (blocked.some(b => command.includes(b))) {
-    res.json({ stdout: "", stderr: "Command blocked for safety", exitCode: 1 });
+  const safety = checkShellSafety(command);
+  if (safety.blocked) {
+    res.json({
+      stdout: "",
+      stderr: `Command blocked for safety: ${safety.reason || "unsafe command"}`,
+      exitCode: 1,
+    });
     return;
   }
 
@@ -476,14 +481,22 @@ router.get("/git-status", async (_req, res): Promise<void> => {
 
 router.post("/git", requireAuth, async (req, res): Promise<void> => {
   const { command } = req.body || {};
-  if (!command || typeof command !== "string" || !command.startsWith("git ")) {
+  if (!command || typeof command !== "string") {
+    res.status(400).json({ error: "command is required" });
+    return;
+  }
+  if (!isGitCommand(command)) {
     res.status(400).json({ error: "Only git commands allowed" });
     return;
   }
 
-  const dangerous = ["git push --force", "git reset --hard", "git clean -fd"];
-  if (dangerous.some(d => command.includes(d))) {
-    res.json({ stdout: "", stderr: "Dangerous git command blocked", exitCode: 1 });
+  const safety = checkGitSafety(command);
+  if (safety.blocked) {
+    res.json({
+      stdout: "",
+      stderr: `Dangerous git command blocked: ${safety.reason || "unsafe command"}`,
+      exitCode: 1,
+    });
     return;
   }
 

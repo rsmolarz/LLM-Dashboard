@@ -453,6 +453,100 @@ test("POST /api/shell short-circuits dangerous commands via the blocklist", asyn
   }
 });
 
+test("POST /api/shell blocks whitespace and quoting variants of `rm -rf /`", async () => {
+  const variants = [
+    "rm  -rf /",                   // extra whitespace between tokens
+    "rm -rf  /",
+    "rm\t-rf\t/",                  // tabs instead of spaces
+    "r''m -rf /",                  // empty single-quoted gap inside the word
+    "'rm' -rf /",                  // wholly single-quoted exe
+    'r"m" -rf /',                  // double quotes
+    "r\\m -rf /",                  // backslash escape
+    "/bin/rm -rf /",               // absolute path bypasses basename match
+    "/usr/bin/rm -rf /",
+    "rm -r -f /",                  // separate flags
+    "rm -fr /",                    // reversed combined flags
+    "rm --recursive --force /",    // long-form flags
+    "rm -rf /etc",                 // system path other than /
+    "rm -rf /home",
+    "FOO=bar rm -rf /",            // env-var prefix
+    "echo hi; rm -rf /",           // hidden after another command
+    "true && rm -rf /",
+    "true || rm -rf /",
+    "$(rm -rf /)",                 // command substitution
+    "`rm -rf /`",                  // backtick substitution
+    "echo \"$(rm -rf /)\"",        // command substitution inside double quotes
+    "rm --no-preserve-root /",
+  ];
+  for (const cmd of variants) {
+    const r = await postJson<{ stdout: string; stderr: string; exitCode: number }>(
+      "/api/shell",
+      { command: cmd },
+      { "x-test-user": "user-A" },
+    );
+    assert.equal(r.body.stdout, "", `expected empty stdout for "${cmd}"`);
+    assert.match(
+      r.body.stderr,
+      /blocked for safety/i,
+      `expected safety block for "${cmd}", got ${JSON.stringify(r.body)}`,
+    );
+    assert.equal(r.body.exitCode, 1, `expected exit 1 for "${cmd}"`);
+  }
+});
+
+test("POST /api/shell blocks other dangerous binaries by argv parsing", async () => {
+  const variants = [
+    "mkfs.ext4 /dev/sda1",         // mkfs family with suffix
+    "/sbin/mkfs.ext4 /dev/sda1",   // absolute path
+    "'mkfs' /dev/sda1",            // quoted
+    "shutdown -h now",
+    "/sbin/reboot",
+    "poweroff",
+    "halt",
+    "dd if=/dev/zero of=/dev/sda bs=1M",
+    "echo hi && shutdown -h now",
+  ];
+  for (const cmd of variants) {
+    const r = await postJson<{ stdout: string; stderr: string; exitCode: number }>(
+      "/api/shell",
+      { command: cmd },
+      { "x-test-user": "user-A" },
+    );
+    assert.match(
+      r.body.stderr,
+      /blocked for safety/i,
+      `expected safety block for "${cmd}", got ${JSON.stringify(r.body)}`,
+    );
+    assert.equal(r.body.exitCode, 1);
+  }
+});
+
+test("POST /api/shell allows benign commands with whitespace, quoting, and substitutions", async () => {
+  // These all should run (or at least not be safety-blocked); the
+  // execution itself may or may not succeed depending on the runtime,
+  // so we only assert that the safety filter did not short-circuit.
+  const allowed = [
+    "echo  hello  world",
+    "'echo' done",
+    'echo "quoted"',
+    "ls -la",
+    "rm /tmp/some-explicit-file-that-does-not-matter",  // non-recursive
+    "rm -rf /tmp/myproj/build",                         // recursive on a deep subpath
+    "git status",                                        // not via /api/git
+  ];
+  for (const cmd of allowed) {
+    const r = await postJson<{ stderr: string }>(
+      "/api/shell",
+      { command: cmd, project: localProject() },
+      { "x-test-user": "user-A" },
+    );
+    assert.ok(
+      !/blocked for safety/i.test(r.body.stderr || ""),
+      `should not safety-block "${cmd}", got ${JSON.stringify(r.body)}`,
+    );
+  }
+});
+
 test("POST /api/shell runs benign commands inside a local-project scope", async () => {
   const r = await postJson<{ stdout: string; exitCode: number; scope?: { origin: string; path?: string } }>(
     "/api/shell",
@@ -496,6 +590,92 @@ test("POST /api/git blocks dangerous git commands via the safety list", async ()
     assert.equal(r.body.stdout, "");
     assert.match(r.body.stderr, /dangerous git command blocked/i);
     assert.equal(r.body.exitCode, 1);
+  }
+});
+
+test("POST /api/git blocks whitespace and quoting variants of dangerous git commands", async () => {
+  const variants = [
+    "git  push  --force origin main",   // extra whitespace
+    "git\tpush\t--force",                // tab separators
+    "'git' push --force",                // quoted exe
+    "g'i't push --force",                // partial quoting
+    "git push -f",                       // short-form force
+    "git push -fu origin main",          // combined short flags
+    "git -C /tmp push --force",          // -C dir before subcommand
+    "git --git-dir=. push --force",      // --git-dir= form
+    "git reset  --hard HEAD",            // extra whitespace
+    "git reset HEAD --hard",             // --hard later in argv
+    "git -C . reset --hard",
+    "git clean -df",
+    "git clean -f -d",
+    "git clean -fdx",
+    "git clean --force -d",
+    "git status; git push --force",      // chained after benign
+    "git status && git reset --hard",
+  ];
+  for (const cmd of variants) {
+    const r = await postJson<{ stdout: string; stderr: string; exitCode: number }>(
+      "/api/git",
+      { command: cmd },
+      { "x-test-user": "user-A" },
+    );
+    assert.equal(r.body.stdout, "", `expected empty stdout for "${cmd}"`);
+    assert.match(
+      r.body.stderr,
+      /dangerous git command blocked/i,
+      `expected git block for "${cmd}", got ${JSON.stringify(r.body)}`,
+    );
+    assert.equal(r.body.exitCode, 1);
+  }
+});
+
+test("POST /api/git rejects chained payloads where any command is not git", async () => {
+  // The previous `command.startsWith("git ")` admission check let
+  // payloads like `git status; rm -rf /tmp` slip past the "Only git"
+  // gate. The parser-based `isGitCommand` now requires every extracted
+  // top-level command to be a git invocation.
+  const variants = [
+    "git status; rm -rf /tmp",
+    "git status && mkfs.ext4 /dev/sda1",
+    "git status || /sbin/poweroff",
+    "git status | tee /tmp/out",         // pipe to non-git
+    "git log; echo done",                 // even benign chained cmd is rejected
+  ];
+  for (const cmd of variants) {
+    const r = await postJson<{ error?: string; stderr?: string }>(
+      "/api/git",
+      { command: cmd },
+      { "x-test-user": "user-A" },
+    );
+    assert.equal(r.status, 400, `expected 400 for "${cmd}", got ${r.status} ${JSON.stringify(r.body)}`);
+    assert.match(
+      r.body.error || "",
+      /git commands allowed/i,
+      `expected "Only git commands allowed" for "${cmd}", got ${JSON.stringify(r.body)}`,
+    );
+  }
+});
+
+test("POST /api/git allows benign multi-arg git commands", async () => {
+  const allowed = [
+    "git status",
+    "git log -1",
+    "git diff HEAD",
+    "git push origin main",                    // non-force push
+    "git push --force-with-lease origin main", // safer force variant
+    "git reset HEAD",                          // soft reset
+    "git clean -n",                            // dry run
+  ];
+  for (const cmd of allowed) {
+    const r = await postJson<{ stderr: string }>(
+      "/api/git",
+      { command: cmd },
+      { "x-test-user": "user-A" },
+    );
+    assert.ok(
+      !/dangerous git command blocked/i.test(r.body.stderr || ""),
+      `should not safety-block "${cmd}", got ${JSON.stringify(r.body)}`,
+    );
   }
 });
 
