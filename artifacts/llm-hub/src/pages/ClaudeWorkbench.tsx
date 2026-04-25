@@ -33,7 +33,7 @@ import {
   type FileScope,
   type SandboxContainmentNotice,
 } from "@/components/workbench/SandboxNotices";
-import { ScratchQuotaBar, parseScratchQuota, type ScratchQuota } from "@/components/workbench/ScratchQuotaBar";
+import { ScratchQuotaBar, ScratchQuotaBadge, parseScratchQuota, broadcastScratchQuota, type ScratchQuota } from "@/components/workbench/ScratchQuotaBar";
 import { ScratchPanel } from "@/components/workbench/ScratchPanel";
 import { useAuth } from "@workspace/replit-auth-web";
 
@@ -431,7 +431,10 @@ function ShellPanel() {
       // Surface the freshest quota snapshot the server included,
       // even when the request failed (the over-quota rejection
       // itself carries `quota`).
-      if (data.quota) setQuota(data.quota);
+      if (data.quota) {
+        setQuota(data.quota);
+        broadcastScratchQuota(data.quota);
+      }
       // Refresh the History sidebar's list in the background so newly
       // run commands appear there without forcing the user to click
       // refresh.
@@ -2897,6 +2900,18 @@ export default function ClaudeWorkbench() {
     setSharedProject(projectDescriptorFromSidebar(project));
   };
 
+  // Top-bar scratch badge focuses the shell panel so users land on the
+  // full ScratchQuotaBar (with the clear-cmd affordance) when they
+  // click. We avoid rearranging panels if shell is already mounted
+  // somewhere; otherwise we route it into the bottom-left slot and
+  // force the bottom row open.
+  const focusShellPanel = () => {
+    if (leftPanel === "shell" || rightPanel === "shell") return;
+    if (showBottom && (bottomPanel === "shell" || bottomRightPanel === "shell")) return;
+    setBottomPanel("shell");
+    setShowBottom(true);
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)]">
       <div className="flex items-center justify-between px-4 py-2 border-b border-[#313244] bg-[#1e1e2e]/95 backdrop-blur">
@@ -2932,6 +2947,7 @@ export default function ClaudeWorkbench() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <ScratchQuotaBadge apiBase={API_BASE} onFocusShell={focusShellPanel} />
           <button className={cn("px-3 py-1 rounded-lg text-xs font-medium transition-colors",
               showBottom ? "bg-[#fab387] text-[#1e1e2e]" : "border border-[#313244] text-[#a6adc8] hover:bg-[#313244]"
             )} onClick={() => setShowBottom(!showBottom)}>

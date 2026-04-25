@@ -32,7 +32,7 @@ import {
   type SandboxContainmentNotice,
 } from "@/components/workbench/SandboxNotices";
 import { ScratchPanel } from "@/components/workbench/ScratchPanel";
-import { ScratchQuotaBar, parseScratchQuota, type ScratchQuota } from "@/components/workbench/ScratchQuotaBar";
+import { ScratchQuotaBar, ScratchQuotaBadge, parseScratchQuota, broadcastScratchQuota, type ScratchQuota } from "@/components/workbench/ScratchQuotaBar";
 import { useAuth } from "@workspace/replit-auth-web";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
@@ -448,7 +448,12 @@ function ShellPanel() {
       // Always refresh the quota indicator if the server reported one,
       // even on failure responses (the over-quota rejection itself
       // carries `quota` so users see exactly *why* they're blocked).
-      if (data.quota) setQuota(data.quota);
+      // Also broadcast so the top-bar badge updates immediately rather
+      // than waiting for its next poll.
+      if (data.quota) {
+        setQuota(data.quota);
+        broadcastScratchQuota(data.quota);
+      }
       // Refresh the History sidebar's list in the background so newly
       // run commands appear there without forcing the user to click
       // refresh. We swallow errors — the sidebar will fall back to its
@@ -3128,6 +3133,18 @@ export default function Workbench() {
     setSharedProject(projectDescriptorFromSidebar(project));
   };
 
+  // Top-bar scratch badge focuses the shell panel so users land on the
+  // full ScratchQuotaBar (with the clear-cmd affordance) when they
+  // click. We keep an existing shell mount in place if it's already
+  // visible somewhere; otherwise we route it into the bottom-left slot
+  // and force the bottom row open.
+  const focusShellPanel = () => {
+    if (leftPanel === "shell" || rightPanel === "shell") return;
+    if (showBottom && (bottomPanel === "shell" || bottomRightPanel === "shell")) return;
+    setBottomPanel("shell");
+    setShowBottom(true);
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem)] bg-[#1e1e2e]">
       <div className="flex items-center justify-between px-4 py-2 border-b border-[#313244] bg-[#181825]">
@@ -3144,6 +3161,7 @@ export default function Workbench() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <ScratchQuotaBadge apiBase={API_BASE} onFocusShell={focusShellPanel} />
           <button
             className={cn(
               "px-3 py-1 rounded-lg text-xs font-medium transition-colors",

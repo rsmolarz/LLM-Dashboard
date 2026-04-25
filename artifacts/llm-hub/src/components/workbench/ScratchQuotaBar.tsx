@@ -1,7 +1,24 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { HardDrive, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// Event name used by panels that observe live quota changes (e.g. the
+// shell mutation response carries the latest snapshot) to broadcast the
+// new value to other surfaces — most notably the top-bar badge that
+// otherwise only refetches on its own polling interval.
+export const SCRATCH_QUOTA_EVENT = "workbench:scratch-quota";
+
+/**
+ * Helper for any panel that just got a fresh quota snapshot from the
+ * server (e.g. via the shell, upload, or git endpoints) and wants the
+ * top-bar badge to reflect the new value immediately, without waiting
+ * for the badge's next poll.
+ */
+export function broadcastScratchQuota(quota: ScratchQuota): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(SCRATCH_QUOTA_EVENT, { detail: quota }));
+}
 
 export type ScratchQuota = {
   usedBytes: number;
@@ -168,5 +185,101 @@ export function ScratchQuotaBar({
         </span>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Compact, top-bar variant of {@link ScratchQuotaBar}. Task #65 put the
+ * full bar inside the Shell panel footer, but file-upload, git, and
+ * create-project flows count against the same per-user 1 GiB cap and
+ * users get no warning until a write fails. This badge promotes the
+ * indicator into the workbench top bar so it's visible no matter which
+ * panel is active.
+ *
+ * Visual states match the footer bar (neutral / warn at >= 80% / red
+ * at 100%). Clicking the badge calls `onFocusShell` so the parent can
+ * open / focus the shell panel where the full bar (with the clear-cmd
+ * affordance) lives.
+ *
+ * The badge fetches its own snapshot via GET /quota with a 30s poll so
+ * background activity (uploads, git clones) keeps it roughly fresh,
+ * and also listens for {@link SCRATCH_QUOTA_EVENT} so the shell panel's
+ * fresher post-mutation snapshots flow in immediately.
+ */
+export function ScratchQuotaBadge({
+  apiBase,
+  onFocusShell,
+}: {
+  apiBase: string;
+  onFocusShell?: () => void;
+}) {
+  const [override, setOverride] = useState<ScratchQuota | null>(null);
+
+  const initial = useQuery<ScratchQuota | null>({
+    queryKey: ["workbench-quota", apiBase],
+    queryFn: async () => {
+      const res = await fetch(`${apiBase}/api/workbench/quota`, {
+        credentials: "include",
+      });
+      if (!res.ok) return null;
+      const body = await res.json().catch(() => ({}));
+      return parseScratchQuota((body as any)?.quota) ?? null;
+    },
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  });
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<unknown>).detail;
+      const parsed = parseScratchQuota(detail);
+      if (parsed) setOverride(parsed);
+    };
+    window.addEventListener(SCRATCH_QUOTA_EVENT, handler);
+    return () => window.removeEventListener(SCRATCH_QUOTA_EVENT, handler);
+  }, []);
+
+  const effective = override ?? initial.data ?? null;
+  if (!effective) return null;
+
+  const { usedBytes, capBytes } = effective;
+  const ratio = capBytes > 0 ? Math.min(1, usedBytes / capBytes) : 0;
+  const pct = Math.round(ratio * 100);
+  const atCap = usedBytes >= capBytes && capBytes > 0;
+  const warn = !atCap && ratio >= 0.8;
+
+  const stateClass = atCap
+    ? "border-[#f38ba8]/50 bg-[#f38ba8]/10 text-[#f38ba8] hover:bg-[#f38ba8]/20"
+    : warn
+      ? "border-[#f9e2af]/50 bg-[#f9e2af]/10 text-[#f9e2af] hover:bg-[#f9e2af]/20"
+      : "border-[#313244] text-[#a6adc8] hover:bg-[#313244]";
+
+  const titleText = atCap
+    ? `Scratch space full: ${formatScratchBytes(usedBytes)} of ${formatScratchBytes(capBytes)} used. Click to open the shell.`
+    : `Scratch ${pct}% used: ${formatScratchBytes(usedBytes)} of ${formatScratchBytes(capBytes)}. Click to open the shell.`;
+
+  return (
+    <button
+      type="button"
+      onClick={onFocusShell}
+      className={cn(
+        "inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] font-mono border transition-colors",
+        stateClass,
+      )}
+      title={titleText}
+      aria-label={
+        atCap
+          ? `Scratch space full: ${formatScratchBytes(usedBytes)} of ${formatScratchBytes(capBytes)} used`
+          : `Scratch space ${pct}% used: ${formatScratchBytes(usedBytes)} of ${formatScratchBytes(capBytes)}`
+      }
+      data-testid="scratch-quota-badge"
+      data-state={atCap ? "full" : warn ? "warn" : "ok"}
+    >
+      <HardDrive className="h-3 w-3 shrink-0" />
+      <span>
+        Scratch: {formatScratchBytes(usedBytes)} / {formatScratchBytes(capBytes)}
+      </span>
+    </button>
   );
 }
