@@ -4,6 +4,7 @@ import * as os from "os";
 import { Client, type ConnectConfig } from "ssh2";
 import { execFile } from "child_process";
 import { checkShellSafety } from "./command-safety";
+import { runSandboxed } from "./command-sandbox";
 
 export type ProjectOrigin = "local" | "vps" | "replit";
 
@@ -715,24 +716,14 @@ export async function execCommand(resolved: ResolvedProject, command: string, ti
     return execSshCommand(resolved.ssh, wrapped, timeoutMs);
   }
   if (!resolved.localPath) throw new Error("Project has no local path");
-  return new Promise((resolve) => {
-    execFile("sh", ["-c", command], {
-      cwd: resolved.localPath!,
-      timeout: timeoutMs,
-      maxBuffer: 1024 * 1024,
-      env: { ...process.env, TERM: "dumb" },
-    }, (err, stdout, stderr) => {
-      if (err) {
-        resolve({
-          stdout: typeof stdout === "string" ? stdout : "",
-          stderr: typeof stderr === "string" ? stderr : err.message,
-          exitCode: (err as any).code || 1,
-        });
-      } else {
-        resolve({ stdout: stdout || "", stderr: stderr || "", exitCode: 0 });
-      }
-    });
+  // Funnel local execution through the sandbox helper so it inherits the
+  // same env scrub, redirect-target containment, prlimit caps, and
+  // no-new-privs wrapping as the /shell and /git routes.
+  const r = await runSandboxed(command, {
+    cwd: resolved.localPath,
+    timeoutMs,
   });
+  return { stdout: r.stdout, stderr: r.stderr, exitCode: r.exitCode };
 }
 
 const KEY_FILES = ["README.md", "README", "package.json", "pyproject.toml", "Cargo.toml", "go.mod", "requirements.txt"];

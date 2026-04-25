@@ -10,6 +10,7 @@ import AdmZip from "adm-zip";
 import * as projectCtx from "../lib/project-context";
 import { unifiedDiff } from "../lib/file-diff";
 import { checkShellSafety, checkGitSafety, isGitCommand } from "../lib/command-safety";
+import { runSandboxed } from "../lib/command-sandbox";
 import { requireAuth } from "../middlewares/rateLimiter";
 import { randomBytes } from "crypto";
 
@@ -277,14 +278,14 @@ router.post("/shell", requireAuth, async (req, res): Promise<void> => {
       return;
     }
 
-    const stdout = execSync(command, {
-      cwd: PROJECT_ROOT,
-      timeout: 30000,
-      maxBuffer: 1024 * 1024,
-      encoding: "utf-8",
-      env: { ...process.env, TERM: "dumb" },
+    const r = await runSandboxed(command, { cwd: PROJECT_ROOT, timeoutMs: 30000 });
+    res.json({
+      stdout: r.stdout,
+      stderr: r.stderr,
+      exitCode: r.exitCode,
+      scope: { origin: "workspace", path: PROJECT_ROOT },
+      ...(r.sandboxBlocked ? { sandboxBlocked: r.sandboxBlocked } : {}),
     });
-    res.json({ stdout: stdout || "", stderr: "", exitCode: 0, scope: { origin: "workspace", path: PROJECT_ROOT } });
   } catch (err: any) {
     res.json({
       stdout: err.stdout || "",
@@ -585,8 +586,13 @@ router.post("/git", requireAuth, async (req, res): Promise<void> => {
   }
 
   try {
-    const stdout = execSync(command, { cwd: PROJECT_ROOT, timeout: 30000, encoding: "utf-8" });
-    res.json({ stdout, stderr: "", exitCode: 0 });
+    const r = await runSandboxed(command, { cwd: PROJECT_ROOT, timeoutMs: 30000 });
+    res.json({
+      stdout: r.stdout,
+      stderr: r.stderr,
+      exitCode: r.exitCode,
+      ...(r.sandboxBlocked ? { sandboxBlocked: r.sandboxBlocked } : {}),
+    });
   } catch (err: any) {
     res.json({ stdout: err.stdout || "", stderr: err.stderr || err.message, exitCode: err.status || 1 });
   }
