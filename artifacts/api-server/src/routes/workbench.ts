@@ -880,6 +880,15 @@ router.post("/code-chat", async (req, res): Promise<void> => {
   let activeUpstreamReader:
     | ReadableStreamDefaultReader<Uint8Array>
     | null = null;
+  // AbortController for the in-flight upstream Anthropic fetch. Cancelling
+  // just the body reader (above) unblocks our read loop, but the underlying
+  // HTTP request opened with `signal: AbortSignal.timeout(...)` keeps
+  // running — meaning Anthropic keeps generating (and we keep paying for)
+  // tokens nobody will see. The close handler aborts this controller so
+  // the upstream HTTP request itself is torn down the moment the user
+  // walks away. Combined with the existing 5-minute timeout via
+  // AbortSignal.any() on the per-iteration fetch below.
+  let activeUpstreamController: AbortController | null = null;
   const clearKeepAlive = () => {
     if (keepAlive) {
       clearInterval(keepAlive);
@@ -913,6 +922,17 @@ router.post("/code-chat", async (req, res): Promise<void> => {
     if (res.writableEnded) return;
     clientClosed = true;
     clearKeepAlive();
+    if (activeUpstreamController) {
+      // Tear down the upstream HTTP request itself, not just our local
+      // body reader. Without this, Anthropic happily keeps generating
+      // tokens (which we get billed for) until the 5-minute timeout
+      // signal fires, even though nobody is on the other end. Aborting
+      // the controller propagates through AbortSignal.any() to the
+      // fetch's signal and closes the connection immediately.
+      try {
+        activeUpstreamController.abort();
+      } catch { /* controller may already be aborted */ }
+    }
     if (activeUpstreamReader) {
       // Cancel the upstream stream so the read loop's pending
       // `reader.read()` resolves with done=true and the agent loop can
@@ -997,6 +1017,11 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       // already gone away — otherwise a tool-use continuation could happily
       // fire off another 5-minute Anthropic call to a closed socket.
       if (clientClosed) break;
+      // Per-iteration controller so the close handler can abort the
+      // current upstream call without affecting any future iteration —
+      // and so each iteration gets a fresh 5-minute timeout window.
+      const upstreamController = new AbortController();
+      activeUpstreamController = upstreamController;
       const response = await fetch(`${baseUrl}/v1/messages`, {
         method: "POST",
         headers: {
@@ -1012,7 +1037,14 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
           messages: msgs,
           ...(tools ? { tools } : {}),
         }),
-        signal: AbortSignal.timeout(300000),
+        // Combine our disconnect-aware controller with the existing 5-
+        // minute timeout. Either firing tears down the upstream HTTP
+        // request immediately so we stop being billed for tokens nobody
+        // will see.
+        signal: AbortSignal.any([
+          upstreamController.signal,
+          AbortSignal.timeout(300000),
+        ]),
       });
 
       if (!response.ok) {
@@ -1123,9 +1155,11 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
         }
       }
 
-      // Read loop is done, drop the reader reference so the close handler
-      // can't try to cancel an already-released reader on the next disconnect.
+      // Read loop is done, drop the reader / controller references so the
+      // close handler can't try to cancel an already-released reader or
+      // abort a no-longer-relevant fetch on the next disconnect.
       activeUpstreamReader = null;
+      activeUpstreamController = null;
 
       // If the client disconnected partway through, don't waste cycles
       // running tool calls / firing another upstream continuation — there's
@@ -1307,17 +1341,19 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
     }
   } catch (err: any) {
     clearKeepAlive();
-    console.error(`[code-chat] Error:`, err.message);
     if (clientClosed) {
       // Errors thrown after the client went away (e.g. the upstream fetch
-      // rejecting with an AbortError because we cancelled the reader) are
-      // expected and not worth surfacing — there's nobody to surface them
-      // to. Just make sure the response is closed and bail.
+      // rejecting with an AbortError because we aborted its controller in
+      // the close handler) are expected and not worth surfacing — there's
+      // nobody to surface them to, and we don't want to spam logs every
+      // time a user closes their tab mid-reply. Just make sure the
+      // response is closed and bail.
       if (!res.writableEnded) {
         try { res.end(); } catch { /* socket already gone */ }
       }
       return;
     }
+    console.error(`[code-chat] Error:`, err.message);
     if (!streamStarted) {
       // Failure happened during warm-up / before SSE began — return a
       // proper 5xx so retry logic can react.

@@ -1018,6 +1018,164 @@ test("POST /api/code-chat cancels its keep-alive timer + upstream reader when th
   );
 });
 
+test("POST /api/code-chat aborts the upstream Anthropic fetch (not just the body reader) when the client disconnects mid-stream", async () => {
+  // Regression for task-57: previously the close handler cancelled only
+  // the body reader, but the upstream `fetch()` was opened with
+  //   signal: AbortSignal.timeout(300000)
+  // and nothing else — there was NO signal that fired on disconnect, so
+  // Anthropic happily kept generating (and we kept paying for) tokens
+  // we'd never show the user, until the 5-minute timeout finally
+  // expired. The fix builds an `AbortController` per upstream call,
+  // combines its signal with the existing 300s timeout via
+  // `AbortSignal.any([...])`, and aborts that controller from the
+  // `res.on("close", ...)` handler so the upstream HTTP request is
+  // torn down immediately.
+  //
+  // We can prove the wiring is correct by spying on the `signal` the
+  // route attaches to its upstream fetch. If the regression came back
+  // (route reverts to plain `AbortSignal.timeout(...)`), the captured
+  // signal would never fire when the client disconnects and this test
+  // would time out on `signalAbortedPromise` with a useful message.
+  let upstreamSignal: AbortSignal | null = null;
+  let signalAborted = false;
+  let resolveSignal!: () => void;
+  const signalAbortedPromise = new Promise<void>((resolve) => {
+    resolveSignal = resolve;
+  });
+
+  // Inline fetch stub (rather than withAnthropicStub) because we need
+  // access to the `init` arg to capture the signal; the existing
+  // helper's `stub: () => Response` callback has no place to plumb
+  // that through.
+  const prevApiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const prevBaseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+  process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY = prevApiKey || "test-fake-key";
+  process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL =
+    prevBaseUrl || "http://127.0.0.1:1/anthropic-stub";
+
+  const realFetch = globalThis.fetch;
+  const upstreamHost = new URL(
+    process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL!,
+  ).host;
+
+  globalThis.fetch = (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ) => {
+    const url = typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : (input as Request).url;
+    if (url.includes(upstreamHost) || url.includes("/v1/messages")) {
+      // Capture the signal the route attached to its upstream fetch.
+      // The contract under test: the signal MUST be one whose abort
+      // event fires on client disconnect — i.e. it has to be a
+      // combined signal containing an AbortController the close
+      // handler can fire, NOT a bare `AbortSignal.timeout()` that
+      // only fires after 5 minutes regardless of what happens to the
+      // client connection.
+      upstreamSignal = init?.signal ?? null;
+      if (upstreamSignal) {
+        if (upstreamSignal.aborted) {
+          signalAborted = true;
+          resolveSignal();
+        } else {
+          upstreamSignal.addEventListener("abort", () => {
+            signalAborted = true;
+            resolveSignal();
+          });
+        }
+      }
+      // Same in-progress-stream pattern as the sibling reader-cancel
+      // test: send enough SSE events to commit the route to the
+      // streaming response, then DON'T close the upstream so the only
+      // way the route stops is by observing the abort.
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+          ));
+          controller.enqueue(encoder.encode(
+            'data: {"type":"content_block_delta","index":0,"delta":{"text":"in-progress reply"}}\n\n',
+          ));
+          // Intentionally not closed.
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    }
+    return realFetch(input, init);
+  }) as typeof fetch;
+
+  try {
+    const controller = new AbortController();
+    const res = await fetch(`${serverUrl}/api/code-chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: "hello" }),
+      signal: controller.signal,
+    });
+
+    assert.equal(
+      res.status,
+      200,
+      `expected HTTP 200 (SSE stream), got ${res.status}`,
+    );
+
+    // Read at least one chunk so we know the route has flushed
+    // headers, started the keep-alive interval, and is genuinely
+    // mid-stream (not stuck in warm-up where there's no upstream
+    // fetch in flight yet).
+    const reader = res.body!.getReader();
+    const first = await reader.read();
+    assert.ok(first.value, "expected at least one byte from the SSE stream");
+
+    assert.ok(
+      upstreamSignal,
+      "expected the route to attach an AbortSignal to its upstream fetch (it currently doesn't, so disconnect can't tear it down)",
+    );
+
+    // Simulate the user closing the tab / aborting the request. The
+    // route's res.on("close", ...) listener should fire, abort the
+    // controller behind the combined signal, and the stub's signal
+    // listener above should observe the abort.
+    controller.abort();
+    try { await reader.cancel(); } catch { /* expected after abort */ }
+
+    // Cap the wait so a regression fails with a useful message instead
+    // of hanging until --test-force-exit kills the suite.
+    await Promise.race([
+      signalAbortedPromise,
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                "timed out waiting for the upstream fetch's signal to fire after client disconnect — the route is probably back to passing only AbortSignal.timeout(...) so Anthropic keeps streaming (and billing) for 5 minutes after the user walks away",
+              ),
+            ),
+          5000,
+        ),
+      ),
+    ]);
+    assert.equal(
+      signalAborted,
+      true,
+      "expected the upstream fetch's signal to fire on client disconnect so the upstream HTTP request is actually torn down",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+    if (prevApiKey === undefined) delete process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+    else process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY = prevApiKey;
+    if (prevBaseUrl === undefined) delete process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+    else process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL = prevBaseUrl;
+  }
+});
+
 test("/api/code-chat keeps three AI_REQUEST_FAILED emit sites with the documented response shape", () => {
   // The agent-loop fallthrough at line ~1129 is defensive: in the current
   // structure the loop always either returns early (branches above) or
