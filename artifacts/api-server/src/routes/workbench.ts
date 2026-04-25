@@ -799,6 +799,58 @@ router.post("/code-chat", async (req, res): Promise<void> => {
 
   let streamStarted = false;
   let keepAlive: NodeJS.Timeout | null = null;
+  // Tracks whether the client has gone away (closed the tab, dropped the
+  // network, aborted the request) so that the keep-alive interval and the
+  // agent loop can both shut down promptly instead of holding the response
+  // object alive for up to the upstream's 5-minute timeout.
+  let clientClosed = false;
+  // Reader for the in-flight upstream SSE body, captured so the close
+  // handler can cancel it and unblock the read loop immediately.
+  let activeUpstreamReader:
+    | ReadableStreamDefaultReader<Uint8Array>
+    | null = null;
+  const clearKeepAlive = () => {
+    if (keepAlive) {
+      clearInterval(keepAlive);
+      keepAlive = null;
+    }
+  };
+  // All `res.write()` calls inside this handler go through this helper so
+  // that once the client has disconnected we (a) stop attempting writes
+  // (which would otherwise raise EPIPE on the closed socket) and (b) signal
+  // the caller to bail out of any further work.
+  const safeWrite = (chunk: string): boolean => {
+    if (clientClosed || res.writableEnded) return false;
+    try {
+      res.write(chunk);
+      return true;
+    } catch {
+      clientClosed = true;
+      clearKeepAlive();
+      return false;
+    }
+  };
+  // We listen on the RESPONSE socket's close, not the request's. In Node
+  // 20+ / Express 5 the IncomingMessage's `close` event fires as soon as
+  // the request body has been fully consumed by the body parser — long
+  // before the response is done — which would falsely flag every chat as
+  // "client disconnected". The response stream's close event, by contrast,
+  // only fires when (a) we end the response normally or (b) the underlying
+  // socket is torn down by the client. Combined with the `writableEnded`
+  // guard below, this gives us a reliable "client went away" signal.
+  res.on("close", () => {
+    if (res.writableEnded) return;
+    clientClosed = true;
+    clearKeepAlive();
+    if (activeUpstreamReader) {
+      // Cancel the upstream stream so the read loop's pending
+      // `reader.read()` resolves with done=true and the agent loop can
+      // exit instead of waiting for the upstream agent (up to 5 minutes).
+      try {
+        activeUpstreamReader.cancel().catch(() => {});
+      } catch { /* reader may already be released */ }
+    }
+  });
   const startStream = () => {
     if (streamStarted) return;
     res.setHeader("Content-Type", "text/event-stream");
@@ -807,13 +859,16 @@ router.post("/code-chat", async (req, res): Promise<void> => {
     res.flushHeaders();
     streamStarted = true;
     keepAlive = setInterval(() => {
-      try { res.write(": keepalive\n\n"); } catch { if (keepAlive) clearInterval(keepAlive); }
+      // The close handler above clears this interval as soon as the client
+      // disconnects; the safeWrite() guard is belt-and-suspenders for the
+      // race where the timer fires between disconnect and clearInterval.
+      if (!safeWrite(": keepalive\n\n")) clearKeepAlive();
     }, 15000);
     if (resolved) {
-      res.write(`data: ${JSON.stringify({ type: "project", origin: resolved.origin, localPath: resolved.localPath, remotePath: resolved.remotePath, cloned: resolved.cloned })}\n\n`);
+      safeWrite(`data: ${JSON.stringify({ type: "project", origin: resolved.origin, localPath: resolved.localPath, remotePath: resolved.remotePath, cloned: resolved.cloned })}\n\n`);
     }
     if (projectWarmupWarning) {
-      res.write(`data: ${JSON.stringify({ type: "warning", content: projectWarmupWarning })}\n\n`);
+      safeWrite(`data: ${JSON.stringify({ type: "warning", content: projectWarmupWarning })}\n\n`);
     }
   };
 
@@ -867,6 +922,10 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
     let toolIterations = 0;
 
     while (continuations <= maxContinuations && toolIterations <= maxToolIterations) {
+      // Bail out before issuing another upstream request if the client has
+      // already gone away — otherwise a tool-use continuation could happily
+      // fire off another 5-minute Anthropic call to a closed socket.
+      if (clientClosed) break;
       const response = await fetch(`${baseUrl}/v1/messages`, {
         method: "POST",
         headers: {
@@ -898,8 +957,8 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
           });
           return;
         }
-        res.write(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
-        res.end();
+        safeWrite(`data: ${JSON.stringify({ type: "error", content: errText })}\n\n`);
+        if (!res.writableEnded) res.end();
         return;
       }
 
@@ -912,8 +971,8 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
           });
           return;
         }
-        res.write(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`);
-        res.end();
+        safeWrite(`data: ${JSON.stringify({ type: "error", content: "No response body" })}\n\n`);
+        if (!res.writableEnded) res.end();
         return;
       }
 
@@ -921,6 +980,18 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       // the read loop or on continuation iterations have to be surfaced
       // as SSE events because the headers are now flushed.
       startStream();
+      // Track the active reader so the close handler can cancel it the
+      // moment the client disconnects, instead of waiting up to 5 minutes
+      // for the upstream agent to finish.
+      activeUpstreamReader = reader;
+      // If the client disconnected during startStream() / between events,
+      // close handler may have already requested a cancel — make sure we
+      // honor that immediately rather than waiting for the first read.
+      if (clientClosed) {
+        try { reader.cancel().catch(() => {}); } catch {}
+        activeUpstreamReader = null;
+        return;
+      }
 
       const decoder = new TextDecoder();
       let buffer = "";
@@ -932,6 +1003,12 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        if (clientClosed) {
+          // Client went away mid-stream. Drop the rest of the upstream
+          // body on the floor; the close handler already cleared the
+          // keep-alive timer and cancelled the reader.
+          break;
+        }
         buffer += decoder.decode(value, { stream: true });
 
         const lines = buffer.split("\n");
@@ -948,14 +1025,14 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
               contentBlocks[parsed.index] = block;
               if (block.type === "tool_use") {
                 toolInputBuffers[parsed.index] = "";
-                res.write(`data: ${JSON.stringify({ type: "tool_start", name: block.name, id: block.id })}\n\n`);
+                safeWrite(`data: ${JSON.stringify({ type: "tool_start", name: block.name, id: block.id })}\n\n`);
               }
             } else if (parsed.type === "content_block_delta") {
               if (parsed.delta?.text) {
                 accumulatedText += parsed.delta.text;
                 contentBlocks[parsed.index] = contentBlocks[parsed.index] || { type: "text", text: "" };
                 contentBlocks[parsed.index].text += parsed.delta.text;
-                res.write(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text })}\n\n`);
+                safeWrite(`data: ${JSON.stringify({ type: "chunk", content: parsed.delta.text })}\n\n`);
               } else if (parsed.delta?.partial_json !== undefined) {
                 toolInputBuffers[parsed.index] = (toolInputBuffers[parsed.index] || "") + parsed.delta.partial_json;
               }
@@ -974,6 +1051,15 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
           } catch {}
         }
       }
+
+      // Read loop is done, drop the reader reference so the close handler
+      // can't try to cancel an already-released reader on the next disconnect.
+      activeUpstreamReader = null;
+
+      // If the client disconnected partway through, don't waste cycles
+      // running tool calls / firing another upstream continuation — there's
+      // nobody left to send the result to.
+      if (clientClosed) break;
 
       console.log(`[code-chat] stop_reason=${stopReason}, textLen=${accumulatedText.length}, continuation=${continuations}, toolIter=${toolIterations}`);
 
@@ -995,23 +1081,23 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
           try {
             const writeOrExec = tu.name === "write_file" || tu.name === "run_shell";
             if (writeOrExec && !isAuthed) {
-              res.write(`data: ${JSON.stringify({ type: "error", status: 401, content: "Authentication required for write_file/run_shell. Please sign in." })}\n\n`);
-              res.end();
+              safeWrite(`data: ${JSON.stringify({ type: "error", status: 401, content: "Authentication required for write_file/run_shell. Please sign in." })}\n\n`);
+              if (!res.writableEnded) res.end();
               return;
             }
             if (writeOrExec && resolved && resolved.origin === "replit" && !resolved.localPath) {
               const ec = await projectCtx.ensureCloned(projectDescriptor);
               resolved = { ...resolved, localPath: ec.localPath, cloned: ec.cloned };
-              res.write(`data: ${JSON.stringify({ type: "project", origin: resolved.origin, localPath: resolved.localPath, cloned: ec.cloned })}\n\n`);
+              safeWrite(`data: ${JSON.stringify({ type: "project", origin: resolved.origin, localPath: resolved.localPath, cloned: ec.cloned })}\n\n`);
             }
             if (tu.name === "list_files") {
               const entries = await projectCtx.listFiles(resolved, tu.input.path || ".");
               resultText = JSON.stringify({ entries: entries.slice(0, 200) });
-              res.write(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `${entries.length} entries in ${tu.input.path || "."}` })}\n\n`);
+              safeWrite(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `${entries.length} entries in ${tu.input.path || "."}` })}\n\n`);
             } else if (tu.name === "read_file") {
               const r = await projectCtx.readFile(resolved, tu.input.path);
               resultText = JSON.stringify({ content: r.content, size: r.size, truncated: r.truncated });
-              res.write(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `read ${tu.input.path} (${r.size}B${r.truncated ? ", truncated" : ""})` })}\n\n`);
+              safeWrite(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `read ${tu.input.path} (${r.size}B${r.truncated ? ", truncated" : ""})` })}\n\n`);
             } else if (tu.name === "write_file") {
               const targetPath = tu.input.path;
               const newContent = tu.input.content || "";
@@ -1079,7 +1165,7 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
               }
               const summary = `wrote ${targetPath} (${r.bytes}B${isNew ? ", new" : `, +${diff.stats.added}/-${diff.stats.removed}`})`;
               resultText = JSON.stringify({ ok: true, bytes: r.bytes, path: targetPath, isNew, added: diff.stats.added, removed: diff.stats.removed });
-              res.write(`data: ${JSON.stringify({
+              safeWrite(`data: ${JSON.stringify({
                 type: "file_edit",
                 name: tu.name,
                 editId,
@@ -1100,14 +1186,14 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
             } else if (tu.name === "run_shell") {
               const r = await projectCtx.execCommand(resolved, tu.input.command);
               resultText = JSON.stringify({ stdout: (r.stdout || "").slice(0, 8000), stderr: (r.stderr || "").slice(0, 4000), exitCode: r.exitCode });
-              res.write(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `$ ${tu.input.command} → exit ${r.exitCode}` })}\n\n`);
+              safeWrite(`data: ${JSON.stringify({ type: "tool_result", name: tu.name, summary: `$ ${tu.input.command} → exit ${r.exitCode}` })}\n\n`);
             } else {
               throw new Error(`Unknown tool ${tu.name}`);
             }
           } catch (err: any) {
             isError = true;
             resultText = JSON.stringify({ error: err.message });
-            res.write(`data: ${JSON.stringify({ type: "tool_error", name: tu.name, error: err.message })}\n\n`);
+            safeWrite(`data: ${JSON.stringify({ type: "tool_error", name: tu.name, error: err.message })}\n\n`);
           }
           toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: resultText, ...(isError ? { is_error: true } : {}) });
         }
@@ -1127,10 +1213,19 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       break;
     }
 
-    if (keepAlive) clearInterval(keepAlive);
+    clearKeepAlive();
+    if (clientClosed) {
+      // Client disconnected mid-reply. The close handler already cleared
+      // the keep-alive and cancelled the upstream reader; nothing more to
+      // send and the response is already torn down by the client.
+      if (!res.writableEnded) {
+        try { res.end(); } catch { /* socket already gone */ }
+      }
+      return;
+    }
     if (streamStarted) {
-      res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-      res.end();
+      safeWrite(`data: ${JSON.stringify({ type: "done" })}\n\n`);
+      if (!res.writableEnded) res.end();
     } else {
       // Reached end of loop without ever starting the stream — treat as
       // an unexpected upstream issue rather than silent 200.
@@ -1140,8 +1235,18 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       });
     }
   } catch (err: any) {
-    if (keepAlive) clearInterval(keepAlive);
+    clearKeepAlive();
     console.error(`[code-chat] Error:`, err.message);
+    if (clientClosed) {
+      // Errors thrown after the client went away (e.g. the upstream fetch
+      // rejecting with an AbortError because we cancelled the reader) are
+      // expected and not worth surfacing — there's nobody to surface them
+      // to. Just make sure the response is closed and bail.
+      if (!res.writableEnded) {
+        try { res.end(); } catch { /* socket already gone */ }
+      }
+      return;
+    }
     if (!streamStarted) {
       // Failure happened during warm-up / before SSE began — return a
       // proper 5xx so retry logic can react.
@@ -1150,8 +1255,8 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
       return;
     }
     try {
-      res.write(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`);
-      res.end();
+      safeWrite(`data: ${JSON.stringify({ type: "error", content: err.message })}\n\n`);
+      if (!res.writableEnded) res.end();
     } catch {}
   }
 });

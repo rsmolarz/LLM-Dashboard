@@ -886,6 +886,138 @@ test("GET /api/claude-code returns 502 + AI_REQUEST_FAILED when the upstream ret
   );
 });
 
+test("POST /api/code-chat cancels its keep-alive timer + upstream reader when the client aborts mid-stream", async () => {
+  // Regression for the leak described in task-47: the keep-alive
+  // setInterval inside startStream() was only cleared on the happy
+  // path (after res.end()) and in the catch block — NOT when the client
+  // tore down the connection mid-reply (closed the tab, dropped the
+  // network, aborted the fetch). Each abandoned chat then kept the
+  // timer + the held `res` reference alive on the server until the
+  // upstream agent loop eventually finished or its 5-minute timeout
+  // expired, wasting memory and triggering EPIPE writes on the closed
+  // socket every 15 seconds.
+  //
+  // The fix attaches a `res.on("close", ...)` listener that:
+  //   1. clears the keep-alive interval immediately,
+  //   2. cancels the in-flight upstream ReadableStream reader so the
+  //      agent loop's pending `reader.read()` resolves and the loop
+  //      can exit instead of blocking on the upstream API.
+  //
+  // We can prove (2) directly by giving the stub upstream a `cancel()`
+  // callback on its ReadableStream — Node only invokes that callback
+  // when *something* (the route, in this case) calls `.cancel()` on
+  // the consumer-side reader. If the regression came back the route
+  // would never cancel and this test would time out on
+  // `cancelledPromise`. (1) follows: the close handler clears the
+  // interval on the same code path that triggers the cancel.
+  let upstreamCancelled = false;
+  let resolveCancelled!: () => void;
+  const cancelledPromise = new Promise<void>((resolve) => {
+    resolveCancelled = resolve;
+  });
+
+  await withAnthropicStub(
+    () => {
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          // Send enough SSE events to commit the route to the streaming
+          // response (startStream() runs after we receive the first chunk
+          // of the upstream body) and surface a visible chunk to the
+          // client. Then DON'T close — leaving the upstream stream open
+          // simulates an in-progress AI reply that hasn't finished yet,
+          // which is exactly the state the user would interrupt by
+          // closing their tab.
+          controller.enqueue(encoder.encode(
+            'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+          ));
+          controller.enqueue(encoder.encode(
+            'data: {"type":"content_block_delta","index":0,"delta":{"text":"in-progress reply"}}\n\n',
+          ));
+          // Intentionally do not call controller.close() — we want the
+          // upstream to stay open until the route cancels it.
+        },
+        cancel() {
+          // This fires only when the consumer (the /code-chat route's
+          // reader) calls `.cancel()` on the reader bound to this body.
+          // Resolving here is what makes the assertion below reach the
+          // happy `cancelledPromise`-resolved branch.
+          upstreamCancelled = true;
+          resolveCancelled();
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    },
+    async () => {
+      const controller = new AbortController();
+      const res = await fetch(`${serverUrl}/api/code-chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "hello" }),
+        signal: controller.signal,
+      });
+
+      assert.equal(
+        res.status,
+        200,
+        `expected HTTP 200 (SSE stream), got ${res.status}`,
+      );
+      assert.match(
+        res.headers.get("content-type") || "",
+        /text\/event-stream/,
+        "expected SSE content-type once the stream has started",
+      );
+
+      // Read at least one chunk so we know the route has flushed
+      // headers and started the keep-alive interval — i.e. we're
+      // genuinely exercising the post-startStream() disconnect path,
+      // not the pre-stream short-circuit branches.
+      const reader = res.body!.getReader();
+      const first = await reader.read();
+      assert.ok(first.value, "expected at least one byte from the SSE stream");
+      const firstChunk = new TextDecoder().decode(first.value);
+      assert.match(
+        firstChunk,
+        /in-progress reply/,
+        `expected the upstream chunk to be relayed to the client, got: ${firstChunk}`,
+      );
+
+      // Simulate the user closing the tab / aborting the request. The
+      // server's `res.on("close", ...)` listener should fire shortly
+      // after, clearing the keep-alive interval and cancelling the
+      // upstream reader.
+      controller.abort();
+      try { await reader.cancel(); } catch { /* expected after abort */ }
+
+      // Cap the wait so that if the regression returns the test fails
+      // with a useful message instead of hanging until --test-force-exit
+      // kills the suite.
+      await Promise.race([
+        cancelledPromise,
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "timed out waiting for the route to cancel the upstream reader after client disconnect",
+                ),
+              ),
+            5000,
+          ),
+        ),
+      ]);
+      assert.equal(
+        upstreamCancelled,
+        true,
+        "expected the route's res.on('close') handler to cancel the upstream reader (and clear the keep-alive interval) on client disconnect",
+      );
+    },
+  );
+});
+
 test("/api/code-chat keeps three AI_REQUEST_FAILED emit sites with the documented response shape", () => {
   // The agent-loop fallthrough at line ~1129 is defensive: in the current
   // structure the loop always either returns early (branches above) or
