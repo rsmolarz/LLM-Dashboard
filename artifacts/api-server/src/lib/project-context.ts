@@ -160,20 +160,28 @@ export async function resolveDescriptor(descriptor: ProjectDescriptor | undefine
   }
 
   if (descriptor.origin === "replit") {
-    let cloned = false;
-    let localPath: string;
-    try {
-      const result = await ensureCloned(descriptor);
-      localPath = result.localPath;
-      cloned = result.cloned;
-    } catch {
-      localPath = cloneCacheDir(descriptor);
-      cloned = false;
-    }
-    return { descriptor, origin: "replit", localPath, cloned, remotePath: null };
+    const dest = cloneCacheDir(descriptor);
+    const exists = fs.existsSync(path.join(dest, ".git"));
+    return {
+      descriptor,
+      origin: "replit",
+      localPath: exists ? dest : null,
+      cloned: false,
+      remotePath: null,
+    };
   }
 
   return null;
+}
+
+export async function resolveAndEnsureCloned(descriptor: ProjectDescriptor | undefined | null): Promise<ResolvedProject | null> {
+  const resolved = await resolveDescriptor(descriptor);
+  if (!resolved) return null;
+  if (resolved.origin === "replit" && !resolved.localPath) {
+    const result = await ensureCloned(descriptor!);
+    return { ...resolved, localPath: result.localPath, cloned: result.cloned };
+  }
+  return resolved;
 }
 
 export interface ListEntry {
@@ -308,7 +316,12 @@ export async function readFile(resolved: ResolvedProject, filePath: string): Pro
     const cat = await execSshCommand(resolved.ssh, `cat ${shellQuote(fullPath)}`, 15000);
     return { content: cat.stdout, size, truncated: false };
   }
-  if (!resolved.localPath) throw new Error("Project has no local path");
+  if (!resolved.localPath) {
+    if (resolved.origin === "replit") {
+      throw new Error("Replit project not cloned yet. Sign in and use 'Pull files for editing'.");
+    }
+    throw new Error("Project has no local path");
+  }
   const full = path.resolve(resolved.localPath, filePath);
   const rel = path.relative(resolved.localPath, full);
   if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("Path traversal blocked");
@@ -333,7 +346,12 @@ export async function writeFile(resolved: ResolvedProject, filePath: string, con
     if (res.exitCode !== 0) throw new Error(`SSH write failed: ${res.stderr || "exit " + res.exitCode}`);
     return { bytes: Buffer.byteLength(content, "utf-8") };
   }
-  if (!resolved.localPath) throw new Error("Project has no local path");
+  if (!resolved.localPath) {
+    if (resolved.origin === "replit") {
+      throw new Error("Replit project not cloned yet. Sign in and use 'Pull files for editing'.");
+    }
+    throw new Error("Project has no local path");
+  }
   const full = path.resolve(resolved.localPath, filePath);
   const rel = path.relative(resolved.localPath, full);
   if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("Path traversal blocked");

@@ -8,6 +8,7 @@ import { sql } from "drizzle-orm";
 import multer from "multer";
 import AdmZip from "adm-zip";
 import * as projectCtx from "../lib/project-context";
+import { requireAuth } from "../middlewares/rateLimiter";
 
 const router: IRouter = Router();
 const PROJECT_ROOT = process.env.NODE_ENV === "production"
@@ -28,8 +29,8 @@ function safePath(requestedPath: string): string {
   return resolved;
 }
 
-router.post("/shell", async (req, res): Promise<void> => {
-  const { command } = req.body || {};
+router.post("/shell", requireAuth, async (req, res): Promise<void> => {
+  const { command, project } = req.body || {};
   if (!command || typeof command !== "string") {
     res.status(400).json({ error: "command is required" });
     return;
@@ -42,6 +43,17 @@ router.post("/shell", async (req, res): Promise<void> => {
   }
 
   try {
+    if (project && project.origin) {
+      const resolved = await projectCtx.resolveAndEnsureCloned(project);
+      if (!resolved) {
+        res.status(400).json({ error: "could not resolve project" });
+        return;
+      }
+      const r = await projectCtx.execCommand(resolved, command);
+      res.json({ stdout: r.stdout || "", stderr: r.stderr || "", exitCode: r.exitCode, scope: { origin: resolved.origin, path: resolved.origin === "vps" ? resolved.remotePath : resolved.localPath } });
+      return;
+    }
+
     const stdout = execSync(command, {
       cwd: PROJECT_ROOT,
       timeout: 30000,
@@ -49,7 +61,7 @@ router.post("/shell", async (req, res): Promise<void> => {
       encoding: "utf-8",
       env: { ...process.env, TERM: "dumb" },
     });
-    res.json({ stdout: stdout || "", stderr: "", exitCode: 0 });
+    res.json({ stdout: stdout || "", stderr: "", exitCode: 0, scope: { origin: "workspace", path: PROJECT_ROOT } });
   } catch (err: any) {
     res.json({
       stdout: err.stdout || "",
@@ -61,6 +73,30 @@ router.post("/shell", async (req, res): Promise<void> => {
 
 router.get("/files", async (req, res): Promise<void> => {
   const requestedPath = (req.query.path as string) || ".";
+  const projectRaw = req.query.project as string | undefined;
+  if (projectRaw) {
+    try {
+      const project = JSON.parse(projectRaw);
+      const resolved = await projectCtx.resolveDescriptor(project);
+      if (!resolved) { res.json({ items: [], error: "could not resolve project" }); return; }
+      if (resolved.origin === "replit" && !resolved.localPath) {
+        res.json({ items: [], notice: "Replit project not pulled yet — open Replit Workbench and click 'Pull files for editing'." });
+        return;
+      }
+      const entries = await projectCtx.listFiles(resolved, requestedPath);
+      const items = entries.map(e => ({
+        name: e.name,
+        type: e.type,
+        path: requestedPath === "." || !requestedPath ? e.name : `${requestedPath}/${e.name}`,
+        ...(e.size !== undefined ? { size: e.size } : {}),
+      }));
+      res.json({ items, path: requestedPath, scope: { origin: resolved.origin } });
+      return;
+    } catch (err: any) {
+      res.json({ items: [], error: err.message });
+      return;
+    }
+  }
   try {
     const fullPath = safePath(requestedPath);
     const entries = fs.readdirSync(fullPath, { withFileTypes: true });
@@ -97,9 +133,23 @@ router.get("/files", async (req, res): Promise<void> => {
 
 router.get("/file-content", async (req, res): Promise<void> => {
   const filePath = req.query.path as string;
+  const projectRaw = req.query.project as string | undefined;
   if (!filePath) {
     res.status(400).json({ error: "path is required" });
     return;
+  }
+  if (projectRaw) {
+    try {
+      const project = JSON.parse(projectRaw);
+      const resolved = await projectCtx.resolveDescriptor(project);
+      if (!resolved) { res.json({ error: "could not resolve project" }); return; }
+      const r = await projectCtx.readFile(resolved, filePath);
+      res.json({ content: r.content, size: r.size, truncated: r.truncated, path: filePath, scope: { origin: resolved.origin } });
+      return;
+    } catch (err: any) {
+      res.json({ error: err.message });
+      return;
+    }
   }
 
   try {
@@ -516,6 +566,11 @@ IMPORTANT: Always provide thorough, comprehensive, and complete responses. Do no
             const writeOrExec = tu.name === "write_file" || tu.name === "run_shell";
             if (writeOrExec && !isAuthed) {
               throw new Error("Authentication required for write_file/run_shell. Please sign in.");
+            }
+            if (writeOrExec && resolved && resolved.origin === "replit" && !resolved.localPath) {
+              const ec = await projectCtx.ensureCloned(projectDescriptor);
+              resolved = { ...resolved, localPath: ec.localPath, cloned: ec.cloned };
+              res.write(`data: ${JSON.stringify({ type: "project", origin: resolved.origin, localPath: resolved.localPath, cloned: ec.cloned })}\n\n`);
             }
             if (tu.name === "list_files") {
               const entries = await projectCtx.listFiles(resolved, tu.input.path || ".");

@@ -44,9 +44,10 @@ function ShellPanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const { project } = useSelectedProject();
   const shellMutation = useMutation({
     mutationFn: async (command: string) => {
-      const res = await fetch(`/api/workbench/shell`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command }), credentials: "include" });
+      const res = await fetch(`/api/workbench/shell`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command, ...(project ? { project } : {}) }), credentials: "include" });
       return res.json();
     },
     onSuccess: (data, command) => {
@@ -111,15 +112,18 @@ function ShellPanel() {
 function FileExplorerPanel() {
   const [currentPath, setCurrentPath] = usePersistedState("cw-file-path", ".");
   const [selectedFile, setSelectedFile] = usePersistedState<string | null>("cw-file-selected", null);
+  const { project } = useSelectedProject();
+  const projectKey = project ? JSON.stringify(project) : "";
+  const projectQuery = project ? `&project=${encodeURIComponent(JSON.stringify(project))}` : "";
 
   const { data, isLoading, refetch } = useQuery<any>({
-    queryKey: ["wb-files", currentPath],
-    queryFn: async () => { const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}`, { credentials: "include" }); return res.json(); },
+    queryKey: ["cw-files", currentPath, projectKey],
+    queryFn: async () => { const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}${projectQuery}`, { credentials: "include" }); return res.json(); },
   });
 
   const { data: fileContent, isLoading: contentLoading } = useQuery<any>({
-    queryKey: ["wb-file-content", selectedFile],
-    queryFn: async () => { const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}`, { credentials: "include" }); return res.json(); },
+    queryKey: ["cw-file-content", selectedFile, projectKey],
+    queryFn: async () => { const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}${projectQuery}`, { credentials: "include" }); return res.json(); },
     enabled: !!selectedFile,
   });
 
@@ -997,6 +1001,8 @@ function CWSSHPanel() {
   const [aiDragOver, setAiDragOver] = useState(false);
   const [aiUploading, setAiUploading] = useState(false);
   const [aiAttachedFiles, setAiAttachedFiles] = useState<{ name: string; remotePath: string; size: number }[]>([]);
+  const [aiIncludeProjectContext, setAiIncludeProjectContext] = usePersistedState("cw-ssh-ai-include-ctx", true);
+  const { project: sshSelectedProject } = useSelectedProject();
   const [remotePath, setRemotePath] = usePersistedState("cw-ssh-remote-path", "/");
   const [remoteFiles, setRemoteFiles] = useState<{ name: string; type: string; size: number; modified: number }[]>([]);
   const [remoteLoading, setRemoteLoading] = useState(false);
@@ -1242,7 +1248,7 @@ function CWSSHPanel() {
       const convHistory = aiMessages.filter(m => !m.streaming).map(m => ({ role: m.role, content: m.content }));
       const res = await fetch(`/api/workbench/ssh/ai-chat`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...sshBodyBase(), prompt, messages: convHistory, modelOverride: aiModel !== "auto" ? aiModel : undefined }),
+        body: JSON.stringify({ ...sshBodyBase(), prompt, messages: convHistory, modelOverride: aiModel !== "auto" ? aiModel : undefined, project: sshSelectedProject || undefined, includeProjectContext: aiIncludeProjectContext }),
         signal: controller.signal, credentials: "include",
       });
       if (!res.ok) { const err = await res.json().catch(() => ({ error: "Request failed" })); throw new Error(err.error || `HTTP ${res.status}`); }
@@ -1284,7 +1290,7 @@ function CWSSHPanel() {
       setAiStreaming(false);
       setAiAbort(null);
     }
-  }, [aiInput, aiStreaming, aiMessages, host, port, username, authType, password, privateKey]);
+  }, [aiInput, aiStreaming, aiMessages, host, port, username, authType, password, privateKey, aiModel, sshSelectedProject, aiIncludeProjectContext, aiAttachedFiles]);
 
   useEffect(() => {
     if (aiScrollRef.current) aiScrollRef.current.scrollTo({ top: aiScrollRef.current.scrollHeight });
@@ -1502,10 +1508,24 @@ function CWSSHPanel() {
                   onChange={e => setAiInput(e.target.value)}
                   onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleAISubmit(); } }}
                   className="flex-1 bg-[#1e1e2e] text-[#cdd6f4] text-xs rounded border border-[#313244] px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#cba6f7] placeholder:text-[#585b70] resize-none min-h-[28px] max-h-[80px]"
-                  placeholder={aiAttachedFiles.length > 0 ? "Ask about the uploaded files..." : "Ask AI to run commands, or attach files..."}
+                  placeholder={aiAttachedFiles.length > 0 ? "Ask about the uploaded files..." : sshSelectedProject && aiIncludeProjectContext ? `Ask AI (project ctx: ${sshSelectedProject.name || sshSelectedProject.path})…` : "Ask AI to run commands, or attach files..."}
                   rows={1}
                   disabled={aiStreaming}
                 />
+                {sshSelectedProject && (
+                  <button
+                    onClick={() => setAiIncludeProjectContext(v => !v)}
+                    className={cn(
+                      "px-1.5 py-1 rounded text-[10px] font-mono border transition-colors",
+                      aiIncludeProjectContext
+                        ? "bg-[#cba6f7]/20 text-[#cba6f7] border-[#cba6f7]/40"
+                        : "text-[#6c7086] border-[#313244] hover:text-[#cdd6f4]"
+                    )}
+                    title={aiIncludeProjectContext ? "Project context enabled — click to disable" : "Project context disabled — click to enable"}
+                  >
+                    ctx
+                  </button>
+                )}
                 {aiStreaming ? (
                   <button onClick={() => aiAbort?.abort()} className="p-1.5 rounded bg-[#f38ba8] text-[#1e1e2e] hover:bg-[#f38ba8]/80"><XCircle className="h-3.5 w-3.5" /></button>
                 ) : (
@@ -1765,11 +1785,10 @@ export default function ClaudeWorkbench() {
   const [bottomRightPanel, setBottomRightPanel] = usePersistedState<PanelId>("cw-bottom-right-panel", "git");
   const [showBottom, setShowBottom] = usePersistedState("cw-show-bottom", false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("cw-sidebar-collapsed", false);
-  const [selectedProject, setSelectedProject] = usePersistedState<string | null>("cw-selected-project", null);
   const { project: sharedProject, setProject: setSharedProject } = useSelectedProject();
+  const selectedProjectPath = sharedProject?.path || null;
 
   const handleSelectProject = (project: any) => {
-    setSelectedProject(project.path);
     setSharedProject(projectDescriptorFromSidebar(project));
   };
 
@@ -1800,7 +1819,7 @@ export default function ClaudeWorkbench() {
       <div className="flex-1 flex min-h-0">
         <ProjectSidebar
           onSelectProject={handleSelectProject}
-          selectedProjectPath={selectedProject}
+          selectedProjectPath={selectedProjectPath}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         />

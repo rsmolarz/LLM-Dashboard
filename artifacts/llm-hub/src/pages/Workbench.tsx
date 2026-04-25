@@ -43,13 +43,14 @@ function ShellPanel() {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { project } = useSelectedProject();
 
   const shellMutation = useMutation({
     mutationFn: async (command: string) => {
       const res = await fetch(`/api/workbench/shell`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command }),
+        body: JSON.stringify({ command, ...(project ? { project } : {}) }),
         credentials: "include",
       });
       return res.json();
@@ -145,19 +146,22 @@ function ShellPanel() {
 function FileExplorerPanel() {
   const [currentPath, setCurrentPath] = usePersistedState("wb-file-path", ".");
   const [selectedFile, setSelectedFile] = usePersistedState<string | null>("wb-file-selected", null);
+  const { project } = useSelectedProject();
+  const projectKey = project ? JSON.stringify(project) : "";
+  const projectQuery = project ? `&project=${encodeURIComponent(JSON.stringify(project))}` : "";
 
   const { data, isLoading, refetch } = useQuery<any>({
-    queryKey: ["workbench-files", currentPath],
+    queryKey: ["workbench-files", currentPath, projectKey],
     queryFn: async () => {
-      const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}`, { credentials: "include" });
+      const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(currentPath)}${projectQuery}`, { credentials: "include" });
       return res.json();
     },
   });
 
   const { data: fileContent, isLoading: contentLoading } = useQuery<any>({
-    queryKey: ["workbench-file-content", selectedFile],
+    queryKey: ["workbench-file-content", selectedFile, projectKey],
     queryFn: async () => {
-      const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}`, { credentials: "include" });
+      const res = await fetch(`/api/workbench/file-content?path=${encodeURIComponent(selectedFile!)}${projectQuery}`, { credentials: "include" });
       return res.json();
     },
     enabled: !!selectedFile,
@@ -1317,7 +1321,7 @@ function SSHPanel() {
       setAiStreaming(false);
       setAiAbort(null);
     }
-  }, [aiInput, aiStreaming, aiMessages, host, port, username, authType, password, privateKey]);
+  }, [aiInput, aiStreaming, aiMessages, host, port, username, authType, password, privateKey, aiModel, sshSelectedProject, aiIncludeProjectContext, aiAttachedFiles]);
 
   useEffect(() => {
     if (aiScrollRef.current) aiScrollRef.current.scrollTo({ top: aiScrollRef.current.scrollHeight });
@@ -1894,11 +1898,10 @@ export default function Workbench() {
   const [bottomRightPanel, setBottomRightPanel] = usePersistedState<PanelId>("wb-bottom-right-panel", "git");
   const [showBottom, setShowBottom] = usePersistedState("wb-show-bottom", false);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("wb-sidebar-collapsed", false);
-  const [selectedProject, setSelectedProject] = usePersistedState<string | null>("wb-selected-project", null);
   const { project: sharedProject, setProject: setSharedProject } = useSelectedProject();
+  const selectedProjectPath = sharedProject?.path || null;
 
   const handleSelectProject = (project: any) => {
-    setSelectedProject(project.path);
     setSharedProject(projectDescriptorFromSidebar(project));
   };
 
@@ -1933,7 +1936,7 @@ export default function Workbench() {
       <div className="flex-1 flex min-h-0">
         <ProjectSidebar
           onSelectProject={handleSelectProject}
-          selectedProjectPath={selectedProject}
+          selectedProjectPath={selectedProjectPath}
           collapsed={sidebarCollapsed}
           onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
         />
