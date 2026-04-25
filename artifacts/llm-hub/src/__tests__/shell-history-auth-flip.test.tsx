@@ -22,6 +22,7 @@ vi.mock("@/hooks/useSelectedProject", () => ({
 vi.mock("@/components/workbench/ScratchQuotaBar", () => ({
   ScratchQuotaBar: () => null,
   parseScratchQuota: () => null,
+  broadcastScratchQuota: () => undefined,
 }));
 
 vi.mock("@/components/workbench/SandboxNotices", () => ({
@@ -74,8 +75,7 @@ vi.mock("@/components/workbench/WorkbenchErrorView", () => ({
 }));
 
 import { useAuth } from "@workspace/replit-auth-web";
-import { ShellPanel as WbShellPanel } from "@/pages/Workbench";
-import { ShellPanel as CwShellPanel } from "@/pages/ClaudeWorkbench";
+import { ShellPanel } from "@/components/workbench/ShellPanel";
 
 const mockedUseAuth = useAuth as unknown as Mock;
 
@@ -145,25 +145,31 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
 });
 
-// The Workbench and ClaudeWorkbench ShellPanels share the exact same
-// auth-flip hydrate effect (only their localStorage keys differ). Run
-// the privacy-critical assertions against both so a regression in
-// either one trips the test.
+// The Workbench and ClaudeWorkbench surfaces now render the same
+// shared ShellPanel component, parameterised by `storagePrefix` (and
+// the standard Workbench additionally opts in to `surfaceQuotaExceeded`).
+// Only the localStorage keys differ between the two surfaces, so we
+// parameterise the privacy-critical assertions over both prefixes
+// to catch regressions in either tab.
 const variants: Array<{
   label: string;
-  Component: typeof WbShellPanel;
+  storagePrefix: "wb" | "cw";
+  surfaceQuotaExceeded?: boolean;
+  variant?: "default" | "claude";
   cmdKey: string;
   histKey: string;
 }> = [
   {
     label: "Workbench",
-    Component: WbShellPanel,
+    storagePrefix: "wb",
+    surfaceQuotaExceeded: true,
     cmdKey: "wb-shell-cmds",
     histKey: "wb-shell-history",
   },
   {
     label: "ClaudeWorkbench",
-    Component: CwShellPanel,
+    storagePrefix: "cw",
+    variant: "claude",
     cmdKey: "cw-shell-cmds",
     histKey: "cw-shell-history",
   },
@@ -171,7 +177,14 @@ const variants: Array<{
 
 describe.each(variants)(
   "$label ShellPanel sign-in / sign-out hydrate",
-  ({ Component, cmdKey, histKey }) => {
+  ({ storagePrefix, surfaceQuotaExceeded, variant, cmdKey, histKey }) => {
+    const Component = (): ReactElement => (
+      <ShellPanel
+        storagePrefix={storagePrefix}
+        {...(surfaceQuotaExceeded ? { surfaceQuotaExceeded: true } : {})}
+        {...(variant ? { variant } : {})}
+      />
+    );
     it("hydrates the saved up-arrow / sidebar history when the user signs in mid-session", async () => {
       // Start signed-out. The mount-time silent hydrate hits the API
       // first; the server politely refuses with 401 so the local
