@@ -403,7 +403,7 @@ function execSSH(config: SSHConfig, command: string): Promise<{ stdout: string; 
   });
 }
 
-router.post("/ssh/ai-chat", async (req, res): Promise<void> => {
+router.post("/ssh/ai-chat", requireAuth, async (req, res): Promise<void> => {
   const config = getSSHConfig(req.body);
   const { prompt, messages: history, modelOverride, project: projectDescriptor, includeProjectContext } = req.body;
 
