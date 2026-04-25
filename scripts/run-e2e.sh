@@ -4,16 +4,27 @@
 # Playwright suite — see tests/e2e/README.md.
 #
 # Responsibilities:
-#   1. Make sure Playwright's Chromium binary is on disk. The first cold
+#   1. Bring the workspace Postgres up to the current Drizzle schema so
+#      the suite's setup steps (e.g. `DELETE /api/workbench/shell-history`)
+#      don't 500 against a stale DB. Done via `pnpm --filter @workspace/db
+#      push:auto`, a non-interactive wrapper around drizzle-kit's push API
+#      (see lib/db/scripts/push-auto.mts). Plain `drizzle-kit push` can't
+#      be used here because it has interactive prompts (rename detection,
+#      unique-constraint truncation) that hang under piped stdin in a
+#      fresh task agent environment.
+#   2. Make sure Playwright's Chromium binary is on disk. The first cold
 #      run downloads it into `~/.cache/ms-playwright`; every subsequent
 #      run reuses the cached copy so a clean re-run stays well under
 #      ~2 min on the validation hook.
-#   2. Export the Nix LD_LIBRARY_PATH that Chromium needs (libnss3 etc.)
+#   3. Export the Nix LD_LIBRARY_PATH that Chromium needs (libnss3 etc.)
 #      when running on the Replit container, so we don't fail with
 #      "error while loading shared libraries".
-#   3. Hand off to `playwright test`, which then boots the api-server +
+#   4. Hand off to `playwright test`, which then boots the api-server +
 #      vite dev stack itself via the `webServer` config.
 set -euo pipefail
+
+echo "[e2e] applying current Drizzle schema to the workspace DB"
+pnpm --filter @workspace/db run push:auto
 
 # Forward Replit's curated LD_LIBRARY_PATH if the caller hasn't set one.
 # Without this Chromium fails to start on the Nix-based dev container
