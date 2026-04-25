@@ -9,6 +9,11 @@ import router from "./routes";
 
 const app: Express = express();
 
+// Required so that req.protocol / req.secure / x-forwarded-* headers are
+// trusted when running behind the Replit (or any) HTTPS reverse proxy. Needed
+// for the MedInvest OAuth callback to compute the correct origin.
+app.set("trust proxy", 1);
+
 app.use(cors({ credentials: true, origin: true }));
 app.use(cookieParser());
 app.use(express.json({ limit: "20mb" }));

@@ -35,7 +35,14 @@ async function refreshIfExpired(
   const now = Math.floor(Date.now() / 1000);
   if (!session.expires_at || now <= session.expires_at) return session;
 
-  if (!session.refresh_token) return null;
+  // No refresh token: this is a MedInvest DID session (or any provider that
+  // doesn't issue refresh tokens). The access token is only used during the
+  // OAuth callback to fetch userinfo — once the user record exists in our
+  // DB, we no longer need it. The session row in the DB has its own 7-day
+  // expiry, so just keep the session alive without refreshing the token.
+  if (!session.refresh_token) {
+    return session;
+  }
 
   try {
     const config = await getOidcConfig();

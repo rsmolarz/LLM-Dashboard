@@ -17,13 +17,13 @@ import {
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 
-const MEDINVEST_BASE = process.env.MEDINVEST_BASE_URL || "https://did-login.replit.app";
+const MEDINVEST_BASE = (process.env.MEDINVEST_BASE_URL || "https://did-login.replit.app").trim();
 const MEDINVEST_AUTHORIZE_URL = `${MEDINVEST_BASE}/oauth/authorize`;
-const MEDINVEST_TOKEN_URL = `${MEDINVEST_BASE}/oauth/token`;
-const MEDINVEST_USERINFO_URL = `${MEDINVEST_BASE}/oauth/userinfo`;
-const MEDINVEST_CLIENT_ID = process.env.MEDINVEST_CLIENT_ID || "";
-const MEDINVEST_CLIENT_SECRET = process.env.MEDINVEST_CLIENT_SECRET || "";
-const MEDINVEST_REDIRECT_URI = process.env.MEDINVEST_REDIRECT_URI || "";
+const MEDINVEST_TOKEN_URL = `${MEDINVEST_BASE}/api/oauth/token`;
+const MEDINVEST_USERINFO_URL = `${MEDINVEST_BASE}/api/oauth/userinfo`;
+const MEDINVEST_CLIENT_ID = (process.env.MEDINVEST_CLIENT_ID || "").trim();
+const MEDINVEST_CLIENT_SECRET = (process.env.MEDINVEST_CLIENT_SECRET || "").trim();
+const MEDINVEST_REDIRECT_URI = (process.env.MEDINVEST_REDIRECT_URI || "").trim();
 
 const router: IRouter = Router();
 
@@ -131,11 +131,17 @@ router.get("/auth/medinvest/login", async (req: Request, res: Response) => {
   setOidcCookie(res, "mi_state", state);
   setOidcCookie(res, "mi_return_to", returnTo);
 
+  if (!MEDINVEST_CLIENT_ID || !MEDINVEST_CLIENT_SECRET) {
+    console.error("[medinvest-auth] Missing MEDINVEST_CLIENT_ID or MEDINVEST_CLIENT_SECRET env vars");
+    res.redirect("/?auth_error=missing_credentials");
+    return;
+  }
+
   const params = new URLSearchParams({
     client_id: MEDINVEST_CLIENT_ID,
     redirect_uri: callbackUrl,
     response_type: "code",
-    scope: "did:read profile:read",
+    scope: "openid profile email",
     state,
   });
 
@@ -151,8 +157,10 @@ router.get("/auth/medinvest/callback", async (req: Request, res: Response) => {
   const error = req.query.error as string;
 
   if (error) {
-    console.error("[medinvest-auth] OAuth error:", error, req.query.error_description);
-    res.redirect("/?auth_error=" + encodeURIComponent(error));
+    const desc = req.query.error_description as string | undefined;
+    console.error("[medinvest-auth] OAuth provider returned error:", error, desc);
+    const detail = desc ? `${error}: ${desc}` : error;
+    res.redirect("/?auth_error=" + encodeURIComponent(detail));
     return;
   }
 
@@ -160,9 +168,19 @@ router.get("/auth/medinvest/callback", async (req: Request, res: Response) => {
   const codeVerifier = req.cookies?.mi_code_verifier;
   const returnTo = getSafeReturnTo(req.cookies?.mi_return_to);
 
-  if (!code || !state || state !== expectedState) {
-    console.error("[medinvest-auth] State mismatch or missing code");
-    res.redirect("/api/login");
+  if (!code) {
+    console.error("[medinvest-auth] Missing authorization code in callback");
+    res.redirect("/?auth_error=missing_code");
+    return;
+  }
+  if (!expectedState) {
+    console.error("[medinvest-auth] State cookie missing on callback (cookie may have been blocked or expired); ensure third-party cookies are allowed and that the redirect_uri host matches the host that started the login");
+    res.redirect("/?auth_error=state_cookie_missing");
+    return;
+  }
+  if (!state || state !== expectedState) {
+    console.error("[medinvest-auth] State mismatch:", { got: state, expected: expectedState });
+    res.redirect("/?auth_error=state_mismatch");
     return;
   }
 
@@ -184,15 +202,19 @@ router.get("/auth/medinvest/callback", async (req: Request, res: Response) => {
 
     const tokenRes = await fetch(MEDINVEST_TOKEN_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams(tokenBody).toString(),
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify(tokenBody),
       signal: AbortSignal.timeout(15000),
     });
 
     if (!tokenRes.ok) {
       const errBody = await tokenRes.text();
       console.error("[medinvest-auth] Token exchange failed:", tokenRes.status, errBody);
-      res.redirect("/?auth_error=token_exchange_failed");
+      const safeBody = errBody.slice(0, 200).replace(/[\r\n]+/g, " ");
+      res.redirect("/?auth_error=" + encodeURIComponent(`token_exchange_failed_${tokenRes.status}: ${safeBody}`));
       return;
     }
 
@@ -292,13 +314,18 @@ router.post(
 
       const tokenRes = await fetch(MEDINVEST_TOKEN_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams(tokenBody).toString(),
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(tokenBody),
         signal: AbortSignal.timeout(15000),
       });
 
       if (!tokenRes.ok) {
-        res.status(401).json({ error: "Token exchange failed" });
+        const errBody = await tokenRes.text();
+        console.error("[medinvest-mobile] Token exchange failed:", tokenRes.status, errBody);
+        res.status(401).json({ error: "Token exchange failed", status: tokenRes.status });
         return;
       }
 
