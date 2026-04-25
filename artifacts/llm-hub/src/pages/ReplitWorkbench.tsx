@@ -46,6 +46,16 @@ interface CloneStatus {
   lastReapply: ReapplyResult | null;
 }
 
+const AUTO_PULL_ATTEMPTS = new Set<string>();
+const AUTO_PULL_ATTEMPTS_MAX = 200;
+function rememberAutoPullAttempt(key: string) {
+  if (AUTO_PULL_ATTEMPTS.size >= AUTO_PULL_ATTEMPTS_MAX) {
+    const oldest = AUTO_PULL_ATTEMPTS.values().next().value;
+    if (oldest !== undefined) AUTO_PULL_ATTEMPTS.delete(oldest);
+  }
+  AUTO_PULL_ATTEMPTS.add(key);
+}
+
 function formatAge(ms: number | null): string {
   if (ms === null || ms < 0) return "unknown";
   const sec = Math.floor(ms / 1000);
@@ -321,7 +331,7 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
     }
   }, [project]);
 
-  const pullLatest = useCallback(async (opts: { discardLocal?: boolean; stashAndReapply?: boolean } = {}) => {
+  const pullLatest = useCallback(async (opts: { discardLocal?: boolean; stashAndReapply?: boolean; auto?: boolean } = {}) => {
     const { discardLocal = false, stashAndReapply = false } = opts;
     setStatus(s => ({ ...s, pullPending: true, error: null, lastReapply: null }));
     setDirtyPrompt(null);
@@ -354,20 +364,21 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
         return;
       }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const prefix = opts.auto ? "Auto-pull — " : "";
       let summary: string;
       if (data.stashed) {
         const reCount = data.reappliedFiles?.length || 0;
         const cfCount = data.conflicts?.length || 0;
         const parts: string[] = [];
-        parts.push(data.pulled ? `Pulled ${data.changedFiles?.length || 0} changed file(s)` : "Already up to date");
+        parts.push(data.pulled ? `${prefix}Pulled ${data.changedFiles?.length || 0} changed file(s)` : `${prefix}Already up to date`);
         parts.push(`re-applied ${reCount} stashed file(s)`);
         if (cfCount > 0) parts.push(`${cfCount} conflict(s)`);
         if (data.stashKept) parts.push(`stash kept as ${data.stashRef}`);
         summary = parts.join(" · ") + ".";
       } else {
         summary = data.pulled
-          ? `Pulled ${data.changedFiles?.length || 0} changed file(s)${data.discardedDirty ? " (discarded local edits)" : ""}.`
-          : "Already up to date.";
+          ? `${prefix}Pulled ${data.changedFiles?.length || 0} changed file(s)${data.discardedDirty ? " (discarded local edits)" : ""}.`
+          : `${prefix}Already up to date.`;
       }
       const lastReapply: ReapplyResult | null = data.stashed
         ? {
@@ -387,7 +398,8 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
         lastReapply,
       }));
     } catch (e: any) {
-      setStatus(s => ({ ...s, pullPending: false, error: e.message }));
+      const prefix = opts.auto ? "Auto-pull failed: " : "";
+      setStatus(s => ({ ...s, pullPending: false, error: `${prefix}${e.message}` }));
     }
   }, [project]);
 
@@ -399,6 +411,21 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
     setFileEdits([]);
     refreshInfo();
   }, [project.path, setMessages, refreshInfo]);
+
+  useEffect(() => {
+    const info = status.info;
+    if (!info || !info.exists || !info.stale || info.dirty) return;
+    if (!user) return;
+    if (status.loading || status.pullPending) return;
+    if (info.lastFetchedAt === null) return;
+    const key = `${project.path}:${info.lastFetchedAt}`;
+    if (AUTO_PULL_ATTEMPTS.has(key)) return;
+    const t = setTimeout(() => {
+      rememberAutoPullAttempt(key);
+      pullLatest({ auto: true });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [status.info, status.loading, status.pullPending, user, project.path, pullLatest]);
 
   const handleSubmit = useCallback(async () => {
     if (!input.trim() || streaming) return;
