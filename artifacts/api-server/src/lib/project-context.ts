@@ -143,6 +143,159 @@ export async function ensureCloned(descriptor: ProjectDescriptor): Promise<{ loc
   return { localPath: dest, cloned: true };
 }
 
+function runGit(cwd: string, args: string[], timeoutMs = 60000): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    execFile("git", args, { cwd, timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+      if (err) reject(new Error((stderr || err.message || "git failed").trim()));
+      else resolve({ stdout: stdout || "", stderr: stderr || "" });
+    });
+  });
+}
+
+export interface CloneInfo {
+  exists: boolean;
+  localPath: string | null;
+  lastFetchedAt: number | null;
+  ageMs: number | null;
+  stale: boolean;
+  dirty: boolean;
+  dirtyFiles: string[];
+  branch: string | null;
+}
+
+const STALE_THRESHOLD_MS = 60 * 60 * 1000;
+
+export async function getCloneInfo(descriptor: ProjectDescriptor): Promise<CloneInfo> {
+  if (descriptor.origin !== "replit") {
+    throw new Error("getCloneInfo only valid for replit projects");
+  }
+  const dest = cloneCacheDir(descriptor);
+  const gitDir = path.join(dest, ".git");
+  if (!fs.existsSync(gitDir)) {
+    return {
+      exists: false,
+      localPath: null,
+      lastFetchedAt: null,
+      ageMs: null,
+      stale: false,
+      dirty: false,
+      dirtyFiles: [],
+      branch: null,
+    };
+  }
+
+  let lastFetchedAt: number | null = null;
+  for (const candidate of ["FETCH_HEAD", "HEAD"]) {
+    try {
+      const st = fs.statSync(path.join(gitDir, candidate));
+      const t = st.mtimeMs;
+      if (t && (lastFetchedAt === null || t > lastFetchedAt)) lastFetchedAt = t;
+    } catch {}
+  }
+
+  let dirtyFiles: string[] = [];
+  try {
+    const { stdout } = await runGit(dest, ["status", "--porcelain"], 15000);
+    dirtyFiles = stdout.split("\n").map(l => l.slice(3).trim()).filter(Boolean).slice(0, 50);
+  } catch {}
+
+  let branch: string | null = null;
+  try {
+    const { stdout } = await runGit(dest, ["rev-parse", "--abbrev-ref", "HEAD"], 10000);
+    const b = stdout.trim();
+    branch = b && b !== "HEAD" ? b : null;
+  } catch {}
+
+  const ageMs = lastFetchedAt ? Date.now() - lastFetchedAt : null;
+  return {
+    exists: true,
+    localPath: dest,
+    lastFetchedAt,
+    ageMs,
+    stale: ageMs !== null && ageMs > STALE_THRESHOLD_MS,
+    dirty: dirtyFiles.length > 0,
+    dirtyFiles,
+    branch,
+  };
+}
+
+export interface PullResult {
+  localPath: string;
+  pulled: boolean;
+  fromRev: string | null;
+  toRev: string | null;
+  changedFiles: string[];
+  preservedDirty: boolean;
+  discardedDirty: boolean;
+  info: CloneInfo;
+}
+
+export async function pullLatest(
+  descriptor: ProjectDescriptor,
+  opts: { discardLocal?: boolean } = {}
+): Promise<PullResult> {
+  if (descriptor.origin !== "replit") {
+    throw new Error("pullLatest only valid for replit projects");
+  }
+  const dest = cloneCacheDir(descriptor);
+  if (!fs.existsSync(path.join(dest, ".git"))) {
+    throw new Error("Project is not cloned yet. Use 'Pull files for editing' first.");
+  }
+
+  const before = await getCloneInfo(descriptor);
+  if (before.dirty && !opts.discardLocal) {
+    const err: any = new Error(
+      `Local changes would be overwritten in ${before.dirtyFiles.length} file(s). Commit, save, or pass discardLocal=true to discard.`
+    );
+    err.code = "DIRTY_WORKING_TREE";
+    err.dirtyFiles = before.dirtyFiles;
+    throw err;
+  }
+
+  let fromRev: string | null = null;
+  try {
+    const { stdout } = await runGit(dest, ["rev-parse", "HEAD"], 10000);
+    fromRev = stdout.trim() || null;
+  } catch {}
+
+  await runGit(dest, ["fetch", "--depth", "1", "origin", "HEAD"], 120000);
+
+  if (before.dirty && opts.discardLocal) {
+    try {
+      await runGit(dest, ["reset", "--hard", "HEAD"], 30000);
+      await runGit(dest, ["clean", "-fd"], 30000);
+    } catch {}
+  }
+
+  await runGit(dest, ["reset", "--hard", "FETCH_HEAD"], 30000);
+
+  let toRev: string | null = null;
+  try {
+    const { stdout } = await runGit(dest, ["rev-parse", "HEAD"], 10000);
+    toRev = stdout.trim() || null;
+  } catch {}
+
+  let changedFiles: string[] = [];
+  if (fromRev && toRev && fromRev !== toRev) {
+    try {
+      const { stdout } = await runGit(dest, ["diff", "--name-only", fromRev, toRev], 15000);
+      changedFiles = stdout.split("\n").map(s => s.trim()).filter(Boolean).slice(0, 200);
+    } catch {}
+  }
+
+  const info = await getCloneInfo(descriptor);
+  return {
+    localPath: dest,
+    pulled: fromRev !== toRev,
+    fromRev,
+    toRev,
+    changedFiles,
+    preservedDirty: !before.dirty,
+    discardedDirty: before.dirty && !!opts.discardLocal,
+    info,
+  };
+}
+
 export async function resolveDescriptor(descriptor: ProjectDescriptor | undefined | null): Promise<ResolvedProject | null> {
   if (!descriptor || !descriptor.origin) return null;
 

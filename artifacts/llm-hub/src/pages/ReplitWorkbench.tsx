@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Cloud, ExternalLink, GitBranch, Loader2, RefreshCw, Send, Bot, User, Trash2, AlertTriangle, Folder, FileText, ChevronRight } from "lucide-react";
+import { Cloud, ExternalLink, GitBranch, Loader2, RefreshCw, Send, Bot, User, Trash2, AlertTriangle, Folder, FileText, ChevronRight, Download, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import ProjectSidebar from "@/components/workbench/ProjectSidebar";
 import { FileEditCard, type FileEdit } from "@/components/workbench/FileEditCard";
@@ -15,11 +15,37 @@ interface ChatMessage {
   streaming?: boolean;
 }
 
+interface CloneInfo {
+  exists: boolean;
+  localPath: string | null;
+  lastFetchedAt: number | null;
+  ageMs: number | null;
+  stale: boolean;
+  dirty: boolean;
+  dirtyFiles: string[];
+  branch: string | null;
+}
+
 interface CloneStatus {
   localPath: string | null;
   cloned: boolean;
   loading: boolean;
   error: string | null;
+  info: CloneInfo | null;
+  lastPullSummary: string | null;
+  pullPending: boolean;
+}
+
+function formatAge(ms: number | null): string {
+  if (ms === null || ms < 0) return "unknown";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
 }
 
 interface ListEntry {
@@ -182,7 +208,8 @@ function FileTree({ project, status }: { project: SelectedProject; status: Clone
 
 function CloneAndChat({ project }: { project: SelectedProject }) {
   const { user } = useAuth();
-  const [status, setStatus] = useState<CloneStatus>({ localPath: null, cloned: false, loading: false, error: null });
+  const [status, setStatus] = useState<CloneStatus>({ localPath: null, cloned: false, loading: false, error: null, info: null, lastPullSummary: null, pullPending: false });
+  const [dirtyPrompt, setDirtyPrompt] = useState<{ files: string[]; message: string } | null>(null);
   const [messages, setMessages] = usePersistedState<ChatMessage[]>(`replit-wb-chat-${project.path}`, []);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -208,35 +235,80 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
     }
   }, []);
 
-  const checkOrClone = useCallback(async (forceClone = false) => {
+  const refreshInfo = useCallback(async () => {
+    try {
+      const res = await fetch("/api/project-context/clone-info", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ project }),
+      });
+      if (!res.ok) return;
+      const info: CloneInfo = await res.json();
+      setStatus(s => ({ ...s, info, localPath: info.exists ? info.localPath : s.localPath }));
+    } catch {}
+  }, [project]);
+
+  const ensureClone = useCallback(async () => {
     setStatus(s => ({ ...s, loading: true, error: null }));
     try {
-      if (forceClone || !status.localPath) {
-        const res = await fetch("/api/project-context/ensure-clone", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ project }),
-        });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          throw new Error(d.error || `HTTP ${res.status}`);
-        }
-        const data = await res.json();
-        setStatus({ localPath: data.localPath, cloned: data.cloned, loading: false, error: null });
-        return;
+      const res = await fetch("/api/project-context/ensure-clone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ project }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `HTTP ${res.status}`);
       }
+      const data = await res.json();
+      setStatus(s => ({ ...s, localPath: data.localPath, cloned: data.cloned, loading: false, error: null, info: data.info ?? s.info, lastPullSummary: data.cloned ? "Cloned fresh copy." : null }));
     } catch (e: any) {
       setStatus(s => ({ ...s, loading: false, error: e.message }));
     }
-  }, [project, status.localPath]);
+  }, [project]);
+
+  const pullLatest = useCallback(async (discardLocal = false) => {
+    setStatus(s => ({ ...s, pullPending: true, error: null }));
+    setDirtyPrompt(null);
+    try {
+      const res = await fetch("/api/project-context/pull", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ project, discardLocal }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data.code === "DIRTY_WORKING_TREE") {
+        setDirtyPrompt({ files: data.dirtyFiles || [], message: data.error || "Local changes would be overwritten." });
+        setStatus(s => ({ ...s, pullPending: false }));
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const summary = data.pulled
+        ? `Pulled ${data.changedFiles?.length || 0} changed file(s)${data.discardedDirty ? " (discarded local edits)" : ""}.`
+        : "Already up to date.";
+      setStatus(s => ({
+        ...s,
+        pullPending: false,
+        info: data.info || s.info,
+        localPath: data.localPath || s.localPath,
+        lastPullSummary: summary,
+      }));
+    } catch (e: any) {
+      setStatus(s => ({ ...s, pullPending: false, error: e.message }));
+    }
+  }, [project]);
 
   useEffect(() => {
-    setStatus({ localPath: null, cloned: false, loading: false, error: null });
+    setStatus({ localPath: null, cloned: false, loading: false, error: null, info: null, lastPullSummary: null, pullPending: false });
+    setDirtyPrompt(null);
     setMessages([]);
     setToolEvents([]);
     setFileEdits([]);
-  }, [project.path, setMessages]);
+    refreshInfo();
+  }, [project.path, setMessages, refreshInfo]);
 
   const handleSubmit = useCallback(async () => {
     if (!input.trim() || streaming) return;
@@ -319,28 +391,125 @@ function CloneAndChat({ project }: { project: SelectedProject }) {
     }
   }, [input, streaming, messages, project, setMessages]);
 
+  const cloned = !!status.localPath || !!status.info?.exists;
+  const info = status.info;
+  const busy = status.loading || status.pullPending;
+
   return (
     <div className="flex flex-col h-full bg-[#1e1e2e]">
       <div className="px-3 py-2 bg-[#181825] border-b border-[#313244] flex items-center gap-3 flex-wrap">
         <GitBranch className="h-3.5 w-3.5 text-[#a6e3a1]" />
         <span className="text-xs text-[#cdd6f4] font-mono">{project.name || project.path}</span>
-        {status.localPath ? (
+        {cloned ? (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#a6e3a1]/15 text-[#a6e3a1] border border-[#a6e3a1]/30">
-            cloned · {status.localPath.split("/").slice(-3).join("/")}
+            cloned{status.localPath ? ` · ${status.localPath.split("/").slice(-3).join("/")}` : ""}
           </span>
         ) : (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#fab387]/15 text-[#fab387] border border-[#fab387]/30">not cloned</span>
         )}
-        <button
-          onClick={() => checkOrClone(true)}
-          disabled={status.loading || !user}
-          className="ml-auto px-2 py-1 rounded text-[11px] bg-[#89b4fa] text-[#1e1e2e] hover:bg-[#89b4fa]/80 flex items-center gap-1 disabled:opacity-50"
-          title={!user ? "Sign in required" : "Clone repository"}
-        >
-          {status.loading && <Loader2 className="h-3 w-3 animate-spin" />}
-          {status.localPath ? "Re-clone" : "Pull files for editing"}
-        </button>
+        {cloned && info?.lastFetchedAt && (
+          <span
+            className={cn(
+              "text-[10px] px-1.5 py-0.5 rounded border flex items-center gap-1",
+              info.stale
+                ? "bg-[#fab387]/15 text-[#fab387] border-[#fab387]/30"
+                : "bg-[#313244] text-[#a6adc8] border-[#313244]"
+            )}
+            title={new Date(info.lastFetchedAt).toLocaleString()}
+          >
+            <Clock className="h-3 w-3" />
+            updated {formatAge(info.ageMs)}
+          </span>
+        )}
+        {cloned && info?.dirty && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#f9e2af]/15 text-[#f9e2af] border border-[#f9e2af]/30" title={info.dirtyFiles.join("\n")}>
+            {info.dirtyFiles.length} local edit(s)
+          </span>
+        )}
+        <div className="ml-auto flex items-center gap-1">
+          {cloned ? (
+            <>
+              <button
+                onClick={() => pullLatest(false)}
+                disabled={busy || !user}
+                className="px-2 py-1 rounded text-[11px] bg-[#89b4fa] text-[#1e1e2e] hover:bg-[#89b4fa]/80 flex items-center gap-1 disabled:opacity-50"
+                title={!user ? "Sign in required" : "git fetch && reset --hard FETCH_HEAD"}
+              >
+                {status.pullPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+                Pull latest
+              </button>
+              <button
+                onClick={refreshInfo}
+                disabled={busy}
+                className="p-1 rounded text-[11px] text-[#a6adc8] hover:text-[#cdd6f4] hover:bg-[#313244] disabled:opacity-50"
+                title="Re-check freshness"
+              >
+                <RefreshCw className="h-3 w-3" />
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={ensureClone}
+              disabled={busy || !user}
+              className="px-2 py-1 rounded text-[11px] bg-[#89b4fa] text-[#1e1e2e] hover:bg-[#89b4fa]/80 flex items-center gap-1 disabled:opacity-50"
+              title={!user ? "Sign in required" : "Clone repository"}
+            >
+              {status.loading && <Loader2 className="h-3 w-3 animate-spin" />}
+              Pull files for editing
+            </button>
+          )}
+        </div>
       </div>
+      {cloned && info?.stale && !status.pullPending && !dirtyPrompt && (
+        <div className="px-3 py-1.5 bg-[#fab387]/10 border-b border-[#fab387]/30 text-[11px] text-[#fab387] flex items-center gap-2">
+          <Clock className="h-3.5 w-3.5 shrink-0" />
+          <span>Local clone hasn't been refreshed in {formatAge(info.ageMs)}. It may be out of date with the upstream Repl.</span>
+          <button
+            onClick={() => pullLatest(false)}
+            disabled={busy || !user}
+            className="ml-auto px-2 py-0.5 rounded bg-[#fab387] text-[#1e1e2e] hover:bg-[#fab387]/80 disabled:opacity-50"
+          >
+            Pull now
+          </button>
+        </div>
+      )}
+      {dirtyPrompt && (
+        <div className="px-3 py-2 bg-[#f9e2af]/10 border-b border-[#f9e2af]/30 text-[11px] text-[#f9e2af] flex flex-col gap-1.5">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="font-medium">Pull blocked — uncommitted local changes detected.</div>
+              <div className="text-[10px] text-[#f9e2af]/80 mt-0.5">{dirtyPrompt.message}</div>
+              {dirtyPrompt.files.length > 0 && (
+                <ul className="mt-1 ml-3 list-disc text-[10px] font-mono text-[#cdd6f4] max-h-20 overflow-y-auto">
+                  {dirtyPrompt.files.slice(0, 12).map(f => <li key={f}>{f}</li>)}
+                  {dirtyPrompt.files.length > 12 && <li className="list-none italic">…and {dirtyPrompt.files.length - 12} more</li>}
+                </ul>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            <button
+              onClick={() => pullLatest(true)}
+              disabled={status.pullPending}
+              className="px-2 py-0.5 rounded bg-[#f38ba8] text-[#1e1e2e] hover:bg-[#f38ba8]/80 text-[11px] disabled:opacity-50"
+            >
+              Discard local & pull
+            </button>
+            <button
+              onClick={() => setDirtyPrompt(null)}
+              className="px-2 py-0.5 rounded bg-[#313244] text-[#cdd6f4] hover:bg-[#313244]/70 text-[11px]"
+            >
+              Keep local edits
+            </button>
+          </div>
+        </div>
+      )}
+      {status.lastPullSummary && !dirtyPrompt && !status.error && (
+        <div className="px-3 py-1 bg-[#a6e3a1]/10 border-b border-[#a6e3a1]/30 text-[11px] text-[#a6e3a1]">
+          {status.lastPullSummary}
+        </div>
+      )}
       {status.error && (
         <div className="px-3 py-1.5 bg-[#f38ba8]/10 border-b border-[#f38ba8]/30 text-[11px] text-[#f38ba8]">
           {status.error}

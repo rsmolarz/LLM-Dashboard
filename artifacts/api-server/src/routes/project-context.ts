@@ -8,6 +8,8 @@ import {
   writeFile,
   execCommand,
   getSummary,
+  getCloneInfo,
+  pullLatest,
   type ProjectDescriptor,
 } from "../lib/project-context";
 
@@ -125,8 +127,39 @@ router.post("/ensure-clone", requireAuth, async (req, res): Promise<void> => {
   if (desc.origin !== "replit") { res.status(400).json({ error: "ensure-clone only valid for replit projects" }); return; }
   try {
     const r = await ensureCloned(desc);
+    let info = null;
+    try { info = await getCloneInfo(desc); } catch {}
+    res.json({ ...r, info });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/clone-info", async (req, res): Promise<void> => {
+  const desc = parseDescriptor(req.body);
+  if (!desc) { res.status(400).json({ error: "project descriptor required" }); return; }
+  if (desc.origin !== "replit") { res.status(400).json({ error: "clone-info only valid for replit projects" }); return; }
+  try {
+    const info = await getCloneInfo(desc);
+    res.json(info);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post("/pull", requireAuth, async (req, res): Promise<void> => {
+  const desc = parseDescriptor(req.body);
+  if (!desc) { res.status(400).json({ error: "project descriptor required" }); return; }
+  if (desc.origin !== "replit") { res.status(400).json({ error: "pull only valid for replit projects" }); return; }
+  const discardLocal = req.body?.discardLocal === true;
+  try {
+    const r = await pullLatest(desc, { discardLocal });
     res.json(r);
   } catch (err: any) {
+    if (err?.code === "DIRTY_WORKING_TREE") {
+      res.status(409).json({ error: err.message, code: "DIRTY_WORKING_TREE", dirtyFiles: err.dirtyFiles || [] });
+      return;
+    }
     res.status(500).json({ error: err.message });
   }
 });
