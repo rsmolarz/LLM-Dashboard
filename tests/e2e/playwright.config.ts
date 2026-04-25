@@ -1,16 +1,22 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// E2E tests assume the dev stack (api-server + llm-hub vite dev server) is
-// already running and that `WORKBENCH_E2E_AUTH=1` is exported in the
-// api-server's environment so the dev-only `/api/__test__/login` endpoint
-// will mint a fixture-user session. See README.md for instructions.
+// E2E tests boot a self-contained stack via Playwright's `webServer`
+// block: a dedicated llm-hub Vite dev server and a dedicated api-server
+// instance that proxies it. The api-server is launched with
+// `WORKBENCH_E2E_AUTH=1` scoped to that subprocess only, so the
+// dev-only `POST /api/__test__/login` endpoint is reachable for the
+// duration of the test run and nowhere else. This avoids exporting
+// the env var into the shared dev workflow (which would otherwise
+// leave the fixture-login endpoint live for any local dev request).
 //
-// The api-server's dev workflow listens on port 8080 and proxies the
-// llm-hub vite dev server, so a single base URL covers both the static
-// React routes (`/workbench`, `/claude-workbench`) and the JSON API
-// (`/api/...`). Override with `PLAYWRIGHT_BASE_URL` when pointing at a
-// preview deploy or a stack on a non-default port.
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL?.trim() || "http://127.0.0.1:8080";
+// Override `PLAYWRIGHT_BASE_URL` to point tests at an already-running
+// stack (e.g. a preview deploy). When that env var is set the
+// `webServer` block is skipped so we don't try to bind the test ports.
+const TEST_API_PORT = process.env.PLAYWRIGHT_API_PORT?.trim() || "8095";
+const TEST_VITE_PORT = process.env.PLAYWRIGHT_VITE_PORT?.trim() || "18238";
+
+const externalBaseUrl = process.env.PLAYWRIGHT_BASE_URL?.trim();
+const BASE_URL = externalBaseUrl || `http://127.0.0.1:${TEST_API_PORT}`;
 
 export default defineConfig({
   testDir: "./specs",
@@ -28,6 +34,43 @@ export default defineConfig({
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },
+  webServer: externalBaseUrl
+    ? undefined
+    : [
+        {
+          // Dedicated Vite dev server for the llm-hub React routes that
+          // the api-server proxies in development. Bound to its own port
+          // so it never collides with the user's `artifacts/llm-hub: web`
+          // workflow if they happen to be running it concurrently.
+          command: "pnpm --filter @workspace/llm-hub run dev",
+          env: {
+            PORT: TEST_VITE_PORT,
+            BASE_PATH: "/",
+          },
+          url: `http://127.0.0.1:${TEST_VITE_PORT}/`,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+        {
+          // Dedicated api-server. `WORKBENCH_E2E_AUTH=1` is scoped to
+          // this subprocess only — it does not leak into the user's
+          // shell or the long-running dev workflow. `VITE_DEV_PORT`
+          // points the proxy at the test Vite instance above.
+          command: "pnpm --filter @workspace/api-server run dev",
+          env: {
+            PORT: TEST_API_PORT,
+            VITE_DEV_PORT: TEST_VITE_PORT,
+            WORKBENCH_E2E_AUTH: "1",
+          },
+          url: `http://127.0.0.1:${TEST_API_PORT}/api/healthz`,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      ],
   projects: [
     {
       name: "chromium",
