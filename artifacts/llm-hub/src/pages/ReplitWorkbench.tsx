@@ -76,7 +76,22 @@ interface ListEntry {
 
 function ReplitIframe({ project }: { project: SelectedProject }) {
   const url = project.url || `https://replit.com/@${project.path}`;
-  const [iframeError, setIframeError] = useState(false);
+  const isEditorUrl = /(^|\/\/)replit\.com(\/|$)/i.test(url);
+  const [iframeError, setIframeError] = useState(isEditorUrl);
+  const [iframeLoaded, setIframeLoaded] = useState(false);
+
+  useEffect(() => {
+    setIframeError(isEditorUrl);
+    setIframeLoaded(false);
+  }, [url, isEditorUrl]);
+
+  useEffect(() => {
+    if (iframeError || iframeLoaded) return;
+    const t = setTimeout(() => {
+      if (!iframeLoaded) setIframeError(true);
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [iframeError, iframeLoaded]);
 
   return (
     <div className="flex flex-col h-full bg-[#1e1e2e]">
@@ -96,7 +111,11 @@ function ReplitIframe({ project }: { project: SelectedProject }) {
         {iframeError ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-[#a6adc8] text-sm gap-3 p-6">
             <AlertTriangle className="h-8 w-8 text-[#fab387]" />
-            <p className="font-medium text-[#cdd6f4]">Replit blocks embedding in iframes.</p>
+            <p className="font-medium text-[#cdd6f4]">
+              {isEditorUrl
+                ? "The Replit editor can't be embedded in another page."
+                : "This page refused to load in an iframe."}
+            </p>
             <a
               href={url}
               target="_blank"
@@ -116,6 +135,7 @@ function ReplitIframe({ project }: { project: SelectedProject }) {
             title={project.name || project.path}
             className="absolute inset-0 w-full h-full border-0"
             sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+            onLoad={() => setIframeLoaded(true)}
             onError={() => setIframeError(true)}
           />
         )}
