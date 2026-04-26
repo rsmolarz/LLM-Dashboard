@@ -13,14 +13,16 @@ paths = ["/api", "/"]
 run = "pnpm --filter @workspace/api-server run dev"
 
 [services.production]
-# The first step is a deploy gate: it verifies the Workbench OS-level
-# sandbox (bwrap / firejail / nsjail) actually contains writes on the
-# deploy host. If the host has lost `bwrap` or unprivileged user
-# namespaces are disabled, the Workbench shell would silently fall
-# back to path-validation-only protection — failing this step stops
-# the deploy with a clear log line pointing at
-# artifacts/api-server/scripts/sandbox-smoke-test.ts.
-build = "echo '[deploy-gate] running Workbench OS-sandbox gate (artifacts/api-server/scripts/sandbox-smoke-test.ts)' && (pnpm --filter @workspace/api-server run smoke:sandbox || (echo '[deploy-gate] FAIL: Workbench OS-sandbox gate failed — aborting deploy. See artifacts/api-server/scripts/sandbox-smoke-test.ts.' >&2; exit 1)) && pnpm --filter @workspace/llm-hub run build && pnpm --filter @workspace/api-server run build"
+# Build the frontend and the API server. Workbench sandbox posture is
+# verified at runtime, not build time: the build host and the deploy
+# host are different machines, so a build-time `bwrap` probe doesn't
+# reflect production. The api-server already logs the detected sandbox
+# helper at boot, exposes it on the admin /api/monitor/sandbox
+# endpoint, and emits a `sandbox_degraded` SSE alert from
+# /api/health/events when production is on the path-validation-only
+# fallback. See artifacts/api-server/scripts/sandbox-smoke-test.ts to
+# probe a host manually.
+build = "pnpm --filter @workspace/llm-hub run build && pnpm --filter @workspace/api-server run build"
 
 [services.production.run]
 args = ["node", "artifacts/api-server/dist/index.cjs"]
