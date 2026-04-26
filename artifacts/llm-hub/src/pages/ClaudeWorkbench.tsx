@@ -5,7 +5,7 @@ import {
   Key, Activity, ChevronRight, ChevronDown, File, Folder,
   RefreshCw, Play, Search, Copy, Loader2, Server,
   Clock, HardDrive, Cpu, AlertTriangle,
-  CheckCircle2, XCircle, FileCode, GitCommit, Trash2,
+  CheckCircle2, XCircle, FileCode, Trash2,
   Sparkles, Send, Square, User, Bot, ExternalLink,
   Globe, Lock, Code2, PanelLeftClose, PanelLeft,
   Puzzle, Power, Zap, Brain, ChevronUp, Bug, ChevronLeft,
@@ -24,6 +24,7 @@ import { ScratchQuotaBadge } from "@/components/workbench/ScratchQuotaBar";
 import { ScratchPanel } from "@/components/workbench/ScratchPanel";
 import { ShellPanel as SharedShellPanel } from "@/components/workbench/ShellPanel";
 import { FileExplorerPanel as SharedFileExplorerPanel } from "@/components/workbench/FileExplorerPanel";
+import { GitPanel as SharedGitPanel } from "@/components/workbench/GitPanel";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 
@@ -60,97 +61,6 @@ function PreviewPanel() {
         <button className="h-7 px-2 rounded border border-[#313244] hover:bg-[#313244]" onClick={() => setCurrentUrl(currentUrl + "?" + Date.now())}><RefreshCw className="h-3 w-3 text-[#cdd6f4]" /></button>
       </div>
       <div className="flex-1"><iframe src={currentUrl} className="w-full h-full border-0" title="Preview" /></div>
-    </div>
-  );
-}
-
-function GitPanel() {
-  const { data, isLoading, error, refetch } = useQuery<any, PanelQueryError>({
-    queryKey: ["wb-git-status"],
-    queryFn: async () => {
-      let res: Response;
-      try {
-        res = await fetch(`/api/workbench/git-status`, { credentials: "include" });
-      } catch (err: unknown) {
-        const reason = err instanceof Error ? err.message : "Network error";
-        throw new PanelQueryError(reason, "NETWORK_ERROR");
-      }
-      const body = await res.json().catch(() => ({} as Record<string, unknown>));
-      if (!res.ok) {
-        const reason = typeof body?.error === "string"
-          ? body.error
-          : `Failed to load git status (HTTP ${res.status})`;
-        const code = typeof body?.code === "string" ? body.code : `HTTP_${res.status}`;
-        throw new PanelQueryError(reason, code);
-      }
-      return body;
-    },
-    retry: false,
-  });
-  const queryError = asPanelQueryError(error);
-  const dataError = (data as { error?: string; code?: string } | undefined) ?? undefined;
-  const errorMessage = queryError?.message ?? dataError?.error ?? null;
-  const errorCode = queryError?.code ?? dataError?.code ?? null;
-
-  const gitMutation = useMutation({
-    mutationFn: async (command: string) => { const res = await fetch(`/api/workbench/git`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ command }), credentials: "include" }); return res.json(); },
-    onSuccess: () => refetch(),
-  });
-
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[#313244]">
-        <div className="flex items-center gap-2">
-          <GitBranch className="h-3.5 w-3.5 text-[#fab387]" />
-          <span className="text-xs font-medium text-[#cdd6f4]">Git</span>
-          {data?.currentBranch && <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#313244] text-[#a6adc8]">{data.currentBranch}</span>}
-        </div>
-        <div className="flex items-center gap-1">
-          <button className="px-2 py-0.5 text-[10px] rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => gitMutation.mutate("git pull")} disabled={gitMutation.isPending}>Pull</button>
-          <button className="px-2 py-0.5 text-[10px] rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => gitMutation.mutate("git fetch")} disabled={gitMutation.isPending}>Fetch</button>
-          <button className="p-1 rounded hover:bg-[#313244] text-[#6c7086]" onClick={() => refetch()}><RefreshCw className="h-3 w-3" /></button>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {isLoading ? <div className="p-3 space-y-2">{[1,2,3].map(i => <div key={i} className="h-6 w-full bg-[#313244] rounded animate-pulse" />)}</div> :
-        errorMessage ? (
-          <PanelLoadError what="git status" message={errorMessage} code={errorCode} onRetry={() => refetch()} />
-        ) :
-        <div className="p-2 space-y-3">
-          {data?.changes?.length > 0 && (
-            <div>
-              <h4 className="text-xs font-medium text-[#6c7086] mb-1 px-1">Changes ({data.changes.length})</h4>
-              {data.changes.map((c: any, i: number) => (
-                <div key={i} className="flex items-center gap-1.5 px-1 py-0.5 text-xs hover:bg-[#313244] rounded">
-                  <span className={cn("text-[9px] px-1 rounded border",
-                    c.status === "M" ? "text-[#f9e2af] border-[#f9e2af]/30" :
-                    c.status === "A" || c.status === "??" ? "text-[#a6e3a1] border-[#a6e3a1]/30" :
-                    c.status === "D" ? "text-[#f38ba8] border-[#f38ba8]/30" : "text-[#6c7086] border-[#313244]"
-                  )}>{c.status}</span>
-                  <span className="truncate font-mono text-[11px] text-[#a6adc8]">{c.file}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {data?.changes?.length === 0 && <div className="text-xs text-center text-[#585b70] py-2">Working tree clean</div>}
-          <div className="h-px bg-[#313244]" />
-          <div>
-            <h4 className="text-xs font-medium text-[#6c7086] mb-1 px-1">Recent Commits</h4>
-            {data?.commits?.slice(0, 15).map((c: any, i: number) => (
-              <div key={i} className="flex items-start gap-1.5 px-1 py-1 text-xs hover:bg-[#313244] rounded">
-                <GitCommit className="h-3 w-3 mt-0.5 text-[#585b70] shrink-0" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[11px] text-[#a6adc8]">{c.message}</p>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-[#585b70] font-mono">{c.hash?.substring(0, 7)}</span>
-                    <span className="text-[10px] text-[#585b70]">{c.date}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>}
-      </div>
     </div>
   );
 }
@@ -2021,7 +1931,7 @@ const PANELS = [
   { id: "upload", label: "Upload", icon: Upload, component: () => <div className="p-3 h-full overflow-auto"><UploadArea catppuccin={true} /></div> },
   { id: "files", label: "Files", icon: FolderTree, component: () => <SharedFileExplorerPanel storagePrefix="cw" variant="claude" /> },
   { id: "preview", label: "Preview", icon: Eye, component: PreviewPanel },
-  { id: "git", label: "Git", icon: GitBranch, component: GitPanel },
+  { id: "git", label: "Git", icon: GitBranch, component: () => <SharedGitPanel storagePrefix="cw" variant="claude" /> },
   { id: "activity", label: "Activity", icon: Bot, component: AgentActivityPanel },
   { id: "database", label: "Database", icon: Database, component: DatabasePanel },
   { id: "security", label: "Security", icon: Shield, component: SecurityPanel },
