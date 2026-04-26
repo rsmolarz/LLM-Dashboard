@@ -1609,3 +1609,241 @@ test("DELETE /api/files refuses project descriptors with INVALID_INPUT", async (
   assert.equal(r.status, 400);
   assert.equal(r.body.code, "INVALID_INPUT");
 });
+
+// =============================================================================
+// writeUserScratchFile + POST /api/files/upload — exercised by the
+// workbench file-explorer's drag-drop / toolbar upload affordance.
+// =============================================================================
+
+test("writeUserScratchFile writes a real file into scratch", () => {
+  const userId = trackUser(`upload-helper-${randomBytes(4).toString("hex")}`);
+  const r = userWs.writeUserScratchFile(userId, "hello.txt", Buffer.from("hi there"));
+  assert.equal(r.writtenPath, "hello.txt");
+  assert.equal(r.bytesWritten, 8);
+  const dir = userWs.getUserScratchDir(userId);
+  assert.equal(fs.readFileSync(path.join(dir, "hello.txt"), "utf8"), "hi there");
+});
+
+test("writeUserScratchFile refuses an existing entry without overwrite (EEXIST)", () => {
+  const userId = trackUser(`upload-eexist-${randomBytes(4).toString("hex")}`);
+  userWs.writeUserScratchFile(userId, "dup.txt", Buffer.from("a"));
+  assert.throws(
+    () => userWs.writeUserScratchFile(userId, "dup.txt", Buffer.from("b")),
+    (err: any) => err?.code === "EEXIST",
+  );
+});
+
+test("writeUserScratchFile with overwrite replaces an existing private file", () => {
+  const userId = trackUser(`upload-ow-${randomBytes(4).toString("hex")}`);
+  userWs.writeUserScratchFile(userId, "f.txt", Buffer.from("old"));
+  const r = userWs.writeUserScratchFile(userId, "f.txt", Buffer.from("new!"), { overwrite: true });
+  assert.equal(r.bytesWritten, 4);
+  const dir = userWs.getUserScratchDir(userId);
+  assert.equal(fs.readFileSync(path.join(dir, "f.txt"), "utf8"), "new!");
+});
+
+test("writeUserScratchFile refuses overwriting a top-level mirror symlink (ESYMLINK)", () => {
+  const userId = trackUser(`upload-syml-${randomBytes(4).toString("hex")}`);
+  userWs.ensureUserScratchDir(userId);
+  // package.json is a top-level symlink to the host workspace; even
+  // with overwrite=true we must refuse so a host file can't be
+  // clobbered through the mirror.
+  assert.throws(
+    () => userWs.writeUserScratchFile(userId, "package.json", Buffer.from("x"), { overwrite: true }),
+    (err: any) => err?.code === "ESYMLINK",
+  );
+  // Host file must be untouched.
+  assert.ok(fs.existsSync(path.join(PROJECT_ROOT, "package.json")));
+});
+
+test("writeUserScratchFile refuses path traversal (ESCAPE)", () => {
+  const userId = trackUser(`upload-escape-${randomBytes(4).toString("hex")}`);
+  assert.throws(
+    () => userWs.writeUserScratchFile(userId, "../escape.txt", Buffer.from("x")),
+    (err: any) => err?.code === "ESCAPE",
+  );
+});
+
+test("writeUserScratchFile refuses uploading into a shared subfolder (ESCAPE)", () => {
+  const userId = trackUser(`upload-shared-${randomBytes(4).toString("hex")}`);
+  userWs.ensureUserScratchDir(userId);
+  // package.json is a top-level shared symlink; placing a child
+  // inside it would resolve through the symlink into the host.
+  assert.throws(
+    () => userWs.writeUserScratchFile(userId, "package.json/leaked.txt", Buffer.from("x")),
+    (err: any) => err?.code === "ESCAPE",
+  );
+});
+
+test("writeUserScratchFile refuses overwriting a directory (EISDIR)", () => {
+  const userId = trackUser(`upload-isdir-${randomBytes(4).toString("hex")}`);
+  const dir = userWs.ensureUserScratchDir(userId);
+  fs.mkdirSync(path.join(dir, "adir"));
+  assert.throws(
+    () => userWs.writeUserScratchFile(userId, "adir", Buffer.from("x"), { overwrite: true }),
+    (err: any) => err?.code === "EISDIR",
+  );
+});
+
+test("writeUserScratchFile refuses an upload that would exceed the per-user quota (QUOTA_EXCEEDED)", () => {
+  const userId = trackUser(`upload-quota-${randomBytes(4).toString("hex")}`);
+  userWs.__testing__.setUserQuotaBytes(64);
+  try {
+    userWs.ensureUserScratchDir(userId);
+    assert.throws(
+      () => userWs.writeUserScratchFile(userId, "big.bin", Buffer.alloc(200)),
+      (err: any) => err?.code === "QUOTA_EXCEEDED" && err?.quota?.capBytes === 64,
+    );
+  } finally {
+    userWs.__testing__.setUserQuotaBytes(null);
+  }
+});
+
+async function uploadFiles(
+  userId: string | null,
+  targetPath: string | null,
+  parts: Array<{ name: string; bytes: Buffer }>,
+  opts?: { project?: string },
+): Promise<{ status: number; body: any }> {
+  // Build a minimal multipart/form-data body by hand — node's fetch
+  // supports FormData + Blob, so we lean on that to avoid pulling
+  // an extra polyfill into the test deps.
+  const fd = new FormData();
+  if (targetPath !== null) fd.append("path", targetPath);
+  if (opts?.project) fd.append("project", opts.project);
+  for (const p of parts) {
+    fd.append("files", new Blob([p.bytes]), p.name);
+  }
+  const headers: Record<string, string> = {};
+  if (userId) headers["x-test-user"] = userId;
+  const res = await fetch(`${serverUrl}/api/files/upload`, {
+    method: "POST",
+    headers,
+    body: fd,
+  });
+  const text = await res.text();
+  let parsed: any = {};
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { _raw: text }; }
+  return { status: res.status, body: parsed };
+}
+
+test("POST /api/files/upload requires auth", async () => {
+  const r = await uploadFiles(null, ".", [{ name: "x.txt", bytes: Buffer.from("hi") }]);
+  assert.equal(r.status, 401);
+});
+
+test("POST /api/files/upload writes a single file at the scratch root", async () => {
+  const userId = trackUser(`upload-root-${randomBytes(4).toString("hex")}`);
+  const r = await uploadFiles(userId, ".", [{ name: "drop.txt", bytes: Buffer.from("hello") }]);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.uploaded, 1);
+  assert.equal(r.body.files[0].writtenPath, "drop.txt");
+  assert.equal(r.body.files[0].bytesWritten, 5);
+  const dir = userWs.getUserScratchDir(userId);
+  assert.equal(fs.readFileSync(path.join(dir, "drop.txt"), "utf8"), "hello");
+});
+
+test("POST /api/files/upload writes into a nested private directory", async () => {
+  const userId = trackUser(`upload-nested-${randomBytes(4).toString("hex")}`);
+  // Create the parent directory first via the create route — uploads
+  // do NOT implicitly mkdir-p (matches createUserScratchEntry).
+  await postFile(userId, { path: "nested", type: "directory" });
+  const r = await uploadFiles(userId, "nested", [{ name: "inner.bin", bytes: Buffer.from([1, 2, 3]) }]);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.files[0].writtenPath, path.join("nested", "inner.bin"));
+  const dir = userWs.getUserScratchDir(userId);
+  assert.deepEqual(
+    Array.from(fs.readFileSync(path.join(dir, "nested", "inner.bin"))),
+    [1, 2, 3],
+  );
+});
+
+test("POST /api/files/upload accepts a multi-file batch", async () => {
+  const userId = trackUser(`upload-batch-${randomBytes(4).toString("hex")}`);
+  const r = await uploadFiles(userId, ".", [
+    { name: "a.txt", bytes: Buffer.from("a") },
+    { name: "b.txt", bytes: Buffer.from("bb") },
+  ]);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.uploaded, 2);
+  const dir = userWs.getUserScratchDir(userId);
+  assert.equal(fs.readFileSync(path.join(dir, "a.txt"), "utf8"), "a");
+  assert.equal(fs.readFileSync(path.join(dir, "b.txt"), "utf8"), "bb");
+});
+
+test("POST /api/files/upload refuses with no files (EARG)", async () => {
+  const userId = trackUser(`upload-empty-${randomBytes(4).toString("hex")}`);
+  const r = await uploadFiles(userId, ".", []);
+  assert.equal(r.status, 400);
+  assert.equal((r.body as { code?: string }).code, "EARG");
+});
+
+test("POST /api/files/upload refuses project descriptors with INVALID_INPUT", async () => {
+  const userId = trackUser(`upload-proj-${randomBytes(4).toString("hex")}`);
+  const r = await uploadFiles(
+    userId,
+    ".",
+    [{ name: "x.txt", bytes: Buffer.from("x") }],
+    { project: "p1" },
+  );
+  assert.equal(r.status, 400);
+  assert.equal((r.body as { code?: string }).code, "INVALID_INPUT");
+});
+
+test("POST /api/files/upload refuses uploading into a shared subfolder (ESCAPE)", async () => {
+  const userId = trackUser(`upload-route-shared-${randomBytes(4).toString("hex")}`);
+  userWs.ensureUserScratchDir(userId);
+  // Target dir is the top-level mirror symlink "package.json" — a
+  // file that exists in the host workspace as a regular file. The
+  // server's `path` resolver normalises it the same way the listing
+  // does; the shared-subfolder write must be blocked by the same
+  // intermediate-symlink check that protects the create route.
+  const r = await uploadFiles(userId, "package.json", [
+    { name: "leaked.txt", bytes: Buffer.from("x") },
+  ]);
+  assert.equal(r.status, 400, JSON.stringify(r.body));
+  assert.equal((r.body as { code?: string }).code, "ESCAPE");
+  // Host file must be untouched.
+  assert.ok(fs.existsSync(path.join(PROJECT_ROOT, "package.json")));
+});
+
+test("POST /api/files/upload refuses an over-quota upload with QUOTA_EXCEEDED → 413", async () => {
+  const userId = trackUser(`upload-route-quota-${randomBytes(4).toString("hex")}`);
+  userWs.__testing__.setUserQuotaBytes(64);
+  try {
+    const r = await uploadFiles(userId, ".", [{ name: "big.bin", bytes: Buffer.alloc(200) }]);
+    assert.equal(r.status, 413, JSON.stringify(r.body));
+    assert.equal((r.body as { code?: string }).code, "QUOTA_EXCEEDED");
+    const q = (r.body as { quota?: { capBytes?: number } }).quota;
+    assert.equal(q?.capBytes, 64);
+    // The over-quota file must NOT have been written to disk.
+    const dir = userWs.getUserScratchDir(userId);
+    assert.ok(!fs.existsSync(path.join(dir, "big.bin")));
+  } finally {
+    userWs.__testing__.setUserQuotaBytes(null);
+  }
+});
+
+test("POST /api/files/upload refuses re-uploading an existing file (EEXIST → 409)", async () => {
+  const userId = trackUser(`upload-route-eexist-${randomBytes(4).toString("hex")}`);
+  await uploadFiles(userId, ".", [{ name: "once.txt", bytes: Buffer.from("first") }]);
+  const r = await uploadFiles(userId, ".", [{ name: "once.txt", bytes: Buffer.from("second") }]);
+  assert.equal(r.status, 409, JSON.stringify(r.body));
+  assert.equal((r.body as { code?: string }).code, "EEXIST");
+  // Original file content must be untouched.
+  const dir = userWs.getUserScratchDir(userId);
+  assert.equal(fs.readFileSync(path.join(dir, "once.txt"), "utf8"), "first");
+});
+
+test("POST /api/files/upload isolates per-user scratch — user A cannot drop into user B's dir", async () => {
+  const userA = trackUser(`upload-iso-a-${randomBytes(4).toString("hex")}`);
+  const userB = trackUser(`upload-iso-b-${randomBytes(4).toString("hex")}`);
+  await uploadFiles(userA, ".", [{ name: "mine.txt", bytes: Buffer.from("A") }]);
+  // userB should land in their OWN scratch root, not userA's, even if
+  // the file name collides — different scratch dirs by construction.
+  await uploadFiles(userB, ".", [{ name: "mine.txt", bytes: Buffer.from("B") }]);
+  const dirA = userWs.getUserScratchDir(userA);
+  const dirB = userWs.getUserScratchDir(userB);
+  assert.equal(fs.readFileSync(path.join(dirA, "mine.txt"), "utf8"), "A");
+  assert.equal(fs.readFileSync(path.join(dirB, "mine.txt"), "utf8"), "B");
+});

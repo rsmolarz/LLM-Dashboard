@@ -15,6 +15,8 @@ import {
   createInput,
   createSubmit,
   writeErrorBanner,
+  uploadButton,
+  uploadFilesViaUI,
 } from "./helpers/file-explorer";
 
 /**
@@ -126,6 +128,86 @@ test.describe("Workbench file explorer CRUD", () => {
     // the existing scratch-delete semantics.
     await deleteViaUI(page, dirName);
     await expect(fileRow(page, dirName)).toHaveCount(0);
+  });
+
+  test("uploads a file via the toolbar Upload button and lists the new row", async ({ page }) => {
+    const tag = randomBytes(4).toString("hex");
+    const name = `upload-${tag}.txt`;
+    const body = `hello-from-upload-${tag}`;
+
+    await page.goto("/workbench");
+    await expect(fileExplorerRoot(page)).toBeVisible();
+
+    // The Upload toolbar button is gated on `canWrite` (scratch mode,
+    // not in a shared subfolder). On the default panel mount we land
+    // at the scratch root, so the button must be available.
+    await expect(uploadButton(page)).toBeVisible();
+
+    await uploadFilesViaUI(page, [{ name, contents: body }]);
+
+    // Mutation onSuccess refetches the listing — the new row should
+    // appear without any manual refresh.
+    await expect(fileRow(page, name)).toBeVisible({ timeout: 10_000 });
+
+    // Selecting the row should display the bytes we uploaded; this
+    // is the most direct end-to-end signal that the multipart route
+    // wrote the right contents (not just an empty placeholder).
+    await fileRow(page, name).click();
+    await expect(selectedFileHeader(page, name)).toBeVisible();
+    await expect(fileContentBody(page)).toContainText(body);
+
+    // Cleanup so a flaky retry doesn't run into EEXIST.
+    await deleteViaUI(page, name);
+  });
+
+  test("uploads a multi-file batch and lists every new row", async ({ page }) => {
+    const tag = randomBytes(4).toString("hex");
+    const a = `upload-a-${tag}.txt`;
+    const b = `upload-b-${tag}.bin`;
+
+    await page.goto("/workbench");
+    await expect(fileExplorerRoot(page)).toBeVisible();
+
+    await uploadFilesViaUI(page, [
+      { name: a, contents: "alpha" },
+      { name: b, contents: Buffer.from([1, 2, 3, 4]) },
+    ]);
+
+    await expect(fileRow(page, a)).toBeVisible({ timeout: 10_000 });
+    await expect(fileRow(page, b)).toBeVisible();
+
+    await refreshFileExplorer(page);
+    await deleteViaUI(page, a);
+    await deleteViaUI(page, b);
+  });
+
+  test("surfaces a duplicate-upload error in the inline write-error banner", async ({ page }) => {
+    const tag = randomBytes(4).toString("hex");
+    const name = `dup-upload-${tag}.txt`;
+
+    await page.goto("/workbench");
+    await expect(fileExplorerRoot(page)).toBeVisible();
+
+    // First upload succeeds and the row appears.
+    await uploadFilesViaUI(page, [{ name, contents: "first" }]);
+    await expect(fileRow(page, name)).toBeVisible({ timeout: 10_000 });
+
+    // Re-uploading the same name (no overwrite flag from the picker)
+    // hits the create-style EEXIST guard. The route returns 409 and
+    // the panel must surface it through the same write-error banner
+    // the +File flow uses, so the user sees a concrete reason
+    // instead of a silent failure.
+    await uploadFilesViaUI(page, [{ name, contents: "second" }]);
+    await expect(writeErrorBanner(page)).toBeVisible({ timeout: 10_000 });
+    await expect(writeErrorBanner(page)).toContainText(/already exists/i);
+
+    // The original row must still be there with its original bytes;
+    // the failed second upload must not have clobbered it.
+    await fileRow(page, name).click();
+    await expect(fileContentBody(page)).toContainText("first");
+
+    await refreshFileExplorer(page);
+    await deleteViaUI(page, name);
   });
 
   test("displays a clear error when creating a duplicate file name", async ({ page }) => {

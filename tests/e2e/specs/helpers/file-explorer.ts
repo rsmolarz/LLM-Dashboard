@@ -105,6 +105,41 @@ export function writeErrorBanner(page: Page): Locator {
   return page.getByTestId("file-explorer-write-error");
 }
 
+export function uploadButton(page: Page): Locator {
+  return page.getByTestId("file-explorer-upload");
+}
+
+export function uploadInput(page: Page): Locator {
+  return page.getByTestId("file-explorer-upload-input");
+}
+
+/**
+ * Drive the toolbar Upload affordance. Playwright's `setInputFiles`
+ * works on the hidden `<input type=file>` directly, which fires the
+ * same `onChange` handler the toolbar button would (we don't need to
+ * actually click the button — clicking `<input type=file>` opens the
+ * native picker, which Playwright cannot drive). The mutation
+ * onSuccess refetches the listing, so callers can immediately assert
+ * the new row appears.
+ *
+ * Each file is `{ name, contents }` where `contents` is either a
+ * string or a Buffer; `setInputFiles` fabricates a real File object
+ * with the right name + bytes so the multipart upload round-trips
+ * end-to-end through `/api/workbench/files/upload`.
+ */
+export async function uploadFilesViaUI(
+  page: Page,
+  files: Array<{ name: string; contents: string | Buffer; mimeType?: string }>,
+): Promise<void> {
+  await uploadInput(page).setInputFiles(
+    files.map((f) => ({
+      name: f.name,
+      mimeType: f.mimeType ?? "application/octet-stream",
+      buffer: typeof f.contents === "string" ? Buffer.from(f.contents) : f.contents,
+    })),
+  );
+}
+
 /**
  * Drive the `+File` toolbar: open the inline form, type the name,
  * submit, and wait for the form to close. The successful path also

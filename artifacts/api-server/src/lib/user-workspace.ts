@@ -1693,6 +1693,136 @@ export function renameUserScratchEntry(
   };
 }
 
+/**
+ * Write the bytes of an uploaded file into the user's scratch root.
+ * Backs the file-explorer's drag-drop / file-picker upload affordance,
+ * which is the third "real explorer" write surface alongside
+ * `createUserScratchEntry` (empty file/dir) and the shell route.
+ *
+ * Path safety mirrors `createUserScratchEntry`: the resolved target
+ * must stay inside the scratch dir, must not traverse through a
+ * symlink (so writes can't leak through the host-mirror view into the
+ * shared workspace), and the parent must already exist as a real
+ * directory. The destination itself must be either absent, or — only
+ * if `opts.overwrite` is set — an existing real (non-symlink, non-
+ * directory) file.
+ *
+ * Quota is checked using the *actual* uploaded byte count: unlike the
+ * shell route (where we can't predict how much a command will write
+ * and so only refuse when already over cap), an upload knows its
+ * size up front. We project `usedBytes - existingFileSize +
+ * contents.length` and refuse with `QUOTA_EXCEEDED` if it would
+ * exceed the cap. The thrown error carries a fully-populated quota
+ * snapshot so the UI can refresh its "X of Y used" widget without a
+ * round trip.
+ */
+export function writeUserScratchFile(
+  userId: string,
+  subPath: string,
+  contents: Buffer,
+  opts?: { overwrite?: boolean },
+): { writtenPath: string; bytesWritten: number; quota: UserQuotaInfo } {
+  if (typeof subPath !== "string" || subPath.length === 0) {
+    throw new ScratchPathError("scratch path is required", "EARG");
+  }
+  if (!Buffer.isBuffer(contents)) {
+    throw new ScratchPathError("contents must be a Buffer", "EARG");
+  }
+  const scratchDir = ensureUserScratchDir(userId);
+  const target = resolveWithinScratch(scratchDir, subPath);
+  if (!target) {
+    throw new ScratchPathError(
+      `scratch path escapes user scratch dir: ${subPath}`,
+      "ESCAPE",
+    );
+  }
+  if (target === scratchDir) {
+    throw new ScratchPathError(
+      "cannot write to the scratch root itself",
+      "EROOT",
+    );
+  }
+  if (hasIntermediateSymlink(scratchDir, target)) {
+    throw new ScratchPathError(
+      `scratch path traverses through a symlink: ${subPath}`,
+      "ESCAPE",
+    );
+  }
+  // Refuse early on a directory parent that is missing OR is a
+  // top-level mirror symlink — the latter is the "shared subfolder"
+  // case (e.g. uploading into `node_modules/` or `package.json`'s
+  // dirname when those are host symlinks). The intermediate-symlink
+  // check above catches `<symlink>/x.txt` where the target's parent
+  // would be the symlink itself; this guard is the explicit shared-
+  // subdir error message.
+  const parent = path.dirname(target);
+  let parentStat: fs.Stats | null = null;
+  try { parentStat = fs.lstatSync(parent); } catch {}
+  if (!parentStat) {
+    throw new ScratchPathError(
+      `parent directory does not exist: ${path.relative(scratchDir, parent) || "/"}`,
+      "ENOENT",
+    );
+  }
+  if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+    throw new ScratchPathError(
+      `parent is not a writeable directory in scratch: ${path.relative(scratchDir, parent) || "/"}`,
+      "ENOTDIR",
+    );
+  }
+
+  let existing: fs.Stats | null = null;
+  try { existing = fs.lstatSync(target); } catch {}
+  if (existing) {
+    if (existing.isSymbolicLink()) {
+      throw new ScratchPathError(
+        "cannot overwrite this entry; it is a symlink to the shared workspace",
+        "ESYMLINK",
+      );
+    }
+    if (existing.isDirectory()) {
+      throw new ScratchPathError(
+        `destination is a directory: ${subPath}`,
+        "EISDIR",
+      );
+    }
+    if (!opts?.overwrite) {
+      throw new ScratchPathError(
+        `entry already exists: ${subPath}`,
+        "EEXIST",
+      );
+    }
+  }
+
+  // Pre-flight quota check. We compute the projected post-write
+  // usage so a 100 MiB upload that would push the user past the cap
+  // is refused BEFORE we do any IO — `createUserScratchEntry`'s
+  // "already over cap" check would let it through (it's empty-file
+  // semantics) and then the file would get written to disk anyway.
+  const quota = getUserQuotaInfo(userId);
+  const existingSize = existing && existing.isFile() ? existing.size : 0;
+  const projectedUsed = quota.usedBytes - existingSize + contents.length;
+  if (projectedUsed > quota.capBytes) {
+    throw new ScratchPathError(
+      `Scratch disk quota exceeded (would use ${formatBytes(projectedUsed)} of ${formatBytes(quota.capBytes)} cap). Delete files in your scratch dir before uploading.`,
+      "QUOTA_EXCEEDED",
+      quota,
+    );
+  }
+
+  fs.writeFileSync(target, contents);
+  try {
+    const now = new Date();
+    fs.utimesSync(scratchDir, now, now);
+    fs.utimesSync(path.dirname(scratchDir), now, now);
+  } catch {}
+  return {
+    writtenPath: path.relative(scratchDir, target),
+    bytesWritten: contents.length,
+    quota: getUserQuotaInfo(userId),
+  };
+}
+
 // =============================================================================
 // Admin-by-hash variants
 // =============================================================================

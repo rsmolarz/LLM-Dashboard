@@ -11,7 +11,7 @@ import * as projectCtx from "../lib/project-context";
 import { unifiedDiff } from "../lib/file-diff";
 import { checkShellSafety, checkGitSafety, isGitCommand } from "../lib/command-safety";
 import { runSandboxed } from "../lib/command-sandbox";
-import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo, getUserScratchDir, materializeScratchFile, listUserScratchEntries, deleteUserScratchEntry, clearUserScratchDir, createUserScratchEntry, renameUserScratchEntry, type UserQuotaInfo } from "../lib/user-workspace";
+import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo, getUserScratchDir, materializeScratchFile, listUserScratchEntries, deleteUserScratchEntry, clearUserScratchDir, createUserScratchEntry, renameUserScratchEntry, writeUserScratchFile, type UserQuotaInfo } from "../lib/user-workspace";
 import { requireAuth } from "../middlewares/rateLimiter";
 import { randomBytes } from "crypto";
 
@@ -796,6 +796,125 @@ router.patch("/files", requireAuth, async (req, res): Promise<void> => {
   }
 });
 
+// Upload one or more files into the user's scratch dir. Backs the
+// file-explorer's drag-drop and toolbar upload affordance.
+//
+// Like the create/delete/rename routes above, this is scratch-only —
+// project descriptors are refused so the per-user containment +
+// quota guards in `writeUserScratchFile` are the only path uploads
+// can take. Multer caps each file at 100 MiB (see `upload` config
+// near the top of the file); the per-user quota check inside
+// `writeUserScratchFile` enforces the rest.
+//
+// Response shape: on success, returns 200 with `files: [...]` (one
+// entry per uploaded file). On the *first* per-file failure we
+// short-circuit with the matching scratch error status (so the UI's
+// existing write-error banner code can lift `error`/`code`/`quota`
+// from the body the same way it does for POST/PATCH/DELETE
+// /api/files). Already-written files in the same batch are kept on
+// disk; the file-explorer refetches the listing on every settled
+// upload so the user still sees the partial progress.
+router.post("/files/upload", requireAuth, upload.array("files", 50), async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  const files = (req.files as Express.Multer.File[] | undefined) || [];
+  // Always clean up the temp files multer wrote — even on a refusal
+  // path. Wrapped in a closure so every early `return` can defer to it.
+  const cleanupTemps = () => {
+    for (const f of files) {
+      try { fs.unlinkSync(f.path); } catch {}
+    }
+  };
+  try {
+    if (!userId) {
+      res.status(401).json({ error: "Authentication required (missing user id)", code: "AUTH_REQUIRED" });
+      return;
+    }
+    if (hasProjectDescriptor(req)) {
+      res.status(400).json({
+        error: "Inline upload is only supported on the per-user scratch workspace; use the project's own tooling to add files.",
+        code: "INVALID_INPUT",
+      });
+      return;
+    }
+    if (files.length === 0) {
+      res.status(400).json({ error: "No files uploaded", code: "EARG" });
+      return;
+    }
+    // Target dir defaults to the scratch root. Caller spells it the
+    // same way the file-explorer's `currentPath` does (e.g. "."
+    // for root, or "subdir" / "subdir/inner" for nested). The helper
+    // strips the leading dot/slash, so both forms reach the same
+    // resolved scratch path.
+    const targetDirRaw = typeof (req.body?.path) === "string" ? (req.body.path as string) : "";
+    const targetDir =
+      targetDirRaw === "" || targetDirRaw === "." ? "" : targetDirRaw.replace(/^[/\\]+/, "");
+
+    const uploaded: Array<{ writtenPath: string; bytesWritten: number; originalName: string }> = [];
+    let lastQuota: UserQuotaInfo | undefined;
+    for (const f of files) {
+      // multer's `originalname` is what the browser supplied. Strip
+      // any leading slashes and refuse names whose basename contains
+      // a path separator — the helper would also reject these via
+      // the ESCAPE / parent-dir checks, but a clearer message helps.
+      const name = (f.originalname || "").replace(/^[/\\]+/, "");
+      if (!name || name.includes("/") || name.includes("\\") || name === "." || name === "..") {
+        cleanupTemps();
+        res.status(400).json({
+          error: `Invalid upload filename: ${f.originalname}`,
+          code: "EARG",
+        });
+        return;
+      }
+      const subPath = targetDir ? `${targetDir}/${name}` : name;
+      let bytes: Buffer;
+      try {
+        bytes = fs.readFileSync(f.path);
+      } catch (err: unknown) {
+        cleanupTemps();
+        res.status(500).json({
+          error: `Failed to read uploaded temp file: ${errorMessageOf(err) || "unknown"}`,
+          code: "INTERNAL_ERROR",
+        });
+        return;
+      }
+      try {
+        const result = writeUserScratchFile(userId, subPath, bytes);
+        uploaded.push({
+          writtenPath: result.writtenPath,
+          bytesWritten: result.bytesWritten,
+          originalName: f.originalname,
+        });
+        lastQuota = result.quota;
+      } catch (err: unknown) {
+        cleanupTemps();
+        const code = scratchErrorCodeOf(err);
+        const message = errorMessageOf(err) || "Failed to write uploaded file";
+        const quota = scratchErrorQuotaOf(err);
+        res.status(scratchErrorStatus(code)).json({
+          error: message,
+          code: code || "INTERNAL_ERROR",
+          file: f.originalname,
+          uploaded,
+          ...(quota ? { quota } : {}),
+        });
+        return;
+      }
+    }
+    cleanupTemps();
+    res.json({
+      uploaded: uploaded.length,
+      files: uploaded,
+      ...(lastQuota ? { quota: lastQuota } : {}),
+    });
+  } catch (err: unknown) {
+    cleanupTemps();
+    res.status(500).json({
+      error: errorMessageOf(err) || "Upload failed",
+      code: "INTERNAL_ERROR",
+    });
+  }
+});
+
 router.get("/file-content", async (req, res): Promise<void> => {
   const filePath = req.query.path as string;
   const projectRaw = req.query.project as string | undefined;
@@ -1196,6 +1315,7 @@ function scratchErrorStatus(code: string | undefined): number {
     case "EROOT": return 400;
     case "ESYMLINK": return 400;
     case "ENOTDIR": return 400;
+    case "EISDIR": return 400;
     case "EARG": return 400;
     case "EEXIST": return 409;
     case "QUOTA_EXCEEDED": return 413;

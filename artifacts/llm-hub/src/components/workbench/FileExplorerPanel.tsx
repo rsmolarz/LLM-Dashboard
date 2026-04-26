@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
-  ChevronRight, Copy, File, FileCode, FilePlus, FilePlus2, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Trash2, X,
+  ChevronRight, Copy, File, FileCode, FilePlus, FilePlus2, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Trash2, Upload, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePersistedState } from "@/hooks/usePersistedState";
@@ -129,6 +129,12 @@ export function FileExplorerPanel({
   const [renameValue, setRenameValue] = useState("");
   const [pendingDeletePath, setPendingDeletePath] = useState<string | null>(null);
   const [writeError, setWriteError] = useState<string | null>(null);
+  // Drag-drop upload state. `dragDepth` tracks nested dragenter /
+  // dragleave events from child elements so the overlay only hides
+  // once the cursor has actually left the panel — relying on a single
+  // boolean flickers as the cursor moves between rows.
+  const [dragDepth, setDragDepth] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: [`${storagePrefix}-files`, currentPath, projectKey],
@@ -313,6 +319,67 @@ export function FileExplorerPanel({
     },
   });
 
+  // File upload — backs both the toolbar Upload button (which opens
+  // a hidden <input type=file>) and the drag-drop overlay below. We
+  // POST to /api/workbench/files/upload as multipart/form-data with
+  // the current dir as `path` so files land in whichever folder the
+  // user has open. The server enforces the per-user scratch quota
+  // and refuses uploads into a "shared" subfolder; both surface in
+  // the existing write-error banner via `setWriteError`.
+  const uploadMutation = useMutation<
+    { uploaded: number },
+    Error,
+    FileList | File[]
+  >({
+    mutationFn: async (filesArg) => {
+      const fileArray = Array.from(filesArg);
+      if (fileArray.length === 0) throw new Error("No files selected");
+      const fd = new FormData();
+      // Server defaults `""` to the scratch root — same convention
+      // the listing uses, so passing `currentPath` works at every
+      // depth (including `.` for the root).
+      fd.append("path", currentPath);
+      for (const f of fileArray) fd.append("files", f, f.name);
+      const res = await fetch(`/api/workbench/files/upload`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+      if (!res.ok) throw new Error(await readError(res, "Upload failed"));
+      return res.json();
+    },
+    onSuccess: () => {
+      setWriteError(null);
+      void refetch();
+    },
+    onError: (err) => {
+      setWriteError(err.message || "Upload failed");
+      // Refetch anyway: a partial-success batch (some files written
+      // before one failed) leaves real bytes on disk that the user
+      // should see in the listing.
+      void refetch();
+    },
+    onSettled: () => {
+      // Clear the input value so re-uploading the same file path
+      // (after a quota fix, etc.) re-triggers the change handler.
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    },
+  });
+
+  function openFilePicker() {
+    setCreateMode(null);
+    setRenameTarget(null);
+    setPendingDeletePath(null);
+    setWriteError(null);
+    fileInputRef.current?.click();
+  }
+
+  function handleFilesPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    uploadMutation.mutate(files);
+  }
+
   const items: FileItem[] = data?.items || [];
   const fileScope: FileScope = (data?.scope && typeof data.scope === "object") ? data.scope : {};
   const breadcrumbs = currentPath === "." ? ["root"] : ["root", ...currentPath.split("/").filter(Boolean)];
@@ -435,6 +502,31 @@ export function FileExplorerPanel({
               >
                 <FolderPlus className="h-3 w-3" />
               </button>
+              <button
+                type="button"
+                title="Upload files into this folder"
+                aria-label="Upload files"
+                data-testid="file-explorer-upload"
+                disabled={uploadMutation.isPending}
+                className={cn(
+                  "p-1 rounded text-[#6c7086] hover:text-[#cdd6f4] disabled:opacity-50 disabled:cursor-not-allowed",
+                  styles.refreshBtnHover,
+                )}
+                onClick={openFilePicker}
+              >
+                {uploadMutation.isPending
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <Upload className="h-3 w-3" />}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                aria-hidden
+                data-testid="file-explorer-upload-input"
+                onChange={handleFilesPicked}
+              />
             </>
           )}
           <button
@@ -447,7 +539,51 @@ export function FileExplorerPanel({
         </div>
       </div>
       <div className="flex flex-1 min-h-0">
-        <div className="w-1/3 border-r border-[#313244] overflow-y-auto">
+        <div
+          className="w-1/3 border-r border-[#313244] overflow-y-auto relative"
+          data-testid="file-explorer-list-pane"
+          onDragEnter={(e) => {
+            if (!canWrite || uploadMutation.isPending) return;
+            // Only react to file drags from the OS, not row text drags.
+            if (!e.dataTransfer?.types?.includes("Files")) return;
+            e.preventDefault();
+            setDragDepth((d) => d + 1);
+          }}
+          onDragOver={(e) => {
+            if (!canWrite || uploadMutation.isPending) return;
+            if (!e.dataTransfer?.types?.includes("Files")) return;
+            e.preventDefault();
+            // Show "copy" cursor — matches what users expect for an
+            // explorer drop target.
+            e.dataTransfer.dropEffect = "copy";
+          }}
+          onDragLeave={(e) => {
+            if (!canWrite || uploadMutation.isPending) return;
+            if (!e.dataTransfer?.types?.includes("Files")) return;
+            setDragDepth((d) => Math.max(0, d - 1));
+          }}
+          onDrop={(e) => {
+            if (!canWrite || uploadMutation.isPending) return;
+            if (!e.dataTransfer?.types?.includes("Files")) return;
+            e.preventDefault();
+            setDragDepth(0);
+            const files = e.dataTransfer.files;
+            if (files && files.length > 0) {
+              uploadMutation.mutate(files);
+            }
+          }}
+        >
+          {canWrite && dragDepth > 0 && (
+            <div
+              data-testid="file-explorer-drop-overlay"
+              className="absolute inset-0 z-10 flex items-center justify-center bg-[#1e1e2e]/80 border-2 border-dashed border-[#a6e3a1] pointer-events-none"
+            >
+              <div className="flex flex-col items-center gap-1 text-[#a6e3a1] text-xs font-medium">
+                <Upload className="h-5 w-5" />
+                <span>Drop to upload into this folder</span>
+              </div>
+            </div>
+          )}
           <div className="p-1">
             <ScratchModeBanner scope={fileScope} />
             {showCopyAffordance && copyError && copyError.path !== selectedFile && (
