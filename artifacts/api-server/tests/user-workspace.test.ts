@@ -1386,3 +1386,226 @@ test("POST /api/copy-to-scratch refuses when the user is over their disk quota",
     userWs.__testing__.setUserQuotaBytes(null);
   }
 });
+
+// =============================================================================
+// POST /api/files (inline create) — exercised by the workbench file
+// explorer's `+File`/`+Folder` toolbar buttons.
+// =============================================================================
+
+async function postFile(
+  userId: string | null,
+  body: any,
+): Promise<{ status: number; body: any }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (userId) headers["x-test-user"] = userId;
+  const res = await fetch(`${serverUrl}/api/files`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed: any = {};
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { _raw: text }; }
+  return { status: res.status, body: parsed };
+}
+
+async function deleteFile(
+  userId: string | null,
+  qs: string,
+): Promise<{ status: number; body: any }> {
+  const headers: Record<string, string> = {};
+  if (userId) headers["x-test-user"] = userId;
+  const res = await fetch(`${serverUrl}/api/files${qs}`, {
+    method: "DELETE",
+    headers,
+  });
+  const text = await res.text();
+  let parsed: any = {};
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { _raw: text }; }
+  return { status: res.status, body: parsed };
+}
+
+async function patchFile(
+  userId: string | null,
+  body: any,
+): Promise<{ status: number; body: any }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (userId) headers["x-test-user"] = userId;
+  const res = await fetch(`${serverUrl}/api/files`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed: any = {};
+  try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { _raw: text }; }
+  return { status: res.status, body: parsed };
+}
+
+test("POST /api/files requires auth", async () => {
+  const r = await postFile(null, { path: "x.txt", type: "file" });
+  assert.equal(r.status, 401);
+});
+
+test("POST /api/files creates a top-level scratch file (zero bytes)", async () => {
+  const userId = trackUser(`files-create-${randomBytes(4).toString("hex")}`);
+  const r = await postFile(userId, { path: "hello.txt", type: "file" });
+  assert.equal(r.status, 200, `expected 200, got ${r.status} ${JSON.stringify(r.body)}`);
+  assert.equal(r.body.createdPath, "hello.txt");
+  assert.equal(r.body.type, "file");
+  const dir = userWs.getUserScratchDir(userId);
+  const stat = fs.lstatSync(path.join(dir, "hello.txt"));
+  assert.ok(stat.isFile() && !stat.isSymbolicLink());
+  assert.equal(stat.size, 0);
+});
+
+test("POST /api/files creates a directory", async () => {
+  const userId = trackUser(`files-mkdir-${randomBytes(4).toString("hex")}`);
+  const r = await postFile(userId, { path: "newdir", type: "directory" });
+  assert.equal(r.status, 200);
+  assert.equal(r.body.type, "directory");
+  const dir = userWs.getUserScratchDir(userId);
+  assert.ok(fs.lstatSync(path.join(dir, "newdir")).isDirectory());
+});
+
+test("POST /api/files refuses path traversal (ESCAPE)", async () => {
+  const userId = trackUser(`files-escape-${randomBytes(4).toString("hex")}`);
+  const r = await postFile(userId, { path: "../escape.txt", type: "file" });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "ESCAPE");
+});
+
+test("POST /api/files refuses an existing entry (EEXIST → 409)", async () => {
+  const userId = trackUser(`files-eexist-${randomBytes(4).toString("hex")}`);
+  await postFile(userId, { path: "dup.txt", type: "file" });
+  const r = await postFile(userId, { path: "dup.txt", type: "file" });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, "EEXIST");
+});
+
+test("POST /api/files refuses creating through a top-level mirror symlink (ESCAPE)", async () => {
+  const userId = trackUser(`files-syml-${randomBytes(4).toString("hex")}`);
+  userWs.ensureUserScratchDir(userId);
+  // package.json is a symlink to the host workspace; trying to
+  // create a child path under it would let writes escape scratch.
+  const r = await postFile(userId, { path: "package.json/leaked.txt", type: "file" });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "ESCAPE");
+});
+
+test("POST /api/files refuses when the user is over their disk quota (QUOTA_EXCEEDED → 413)", async () => {
+  const userId = trackUser(`files-quota-${randomBytes(4).toString("hex")}`);
+  userWs.__testing__.setUserQuotaBytes(64);
+  try {
+    const dir = userWs.ensureUserScratchDir(userId);
+    fs.writeFileSync(path.join(dir, "big.bin"), Buffer.alloc(200));
+    const r = await postFile(userId, { path: "later.txt", type: "file" });
+    assert.equal(r.status, 413, `expected 413, got ${r.status} ${JSON.stringify(r.body)}`);
+    assert.equal(r.body.code, "QUOTA_EXCEEDED");
+  } finally {
+    userWs.__testing__.setUserQuotaBytes(null);
+  }
+});
+
+test("POST /api/files refuses project descriptors with INVALID_INPUT", async () => {
+  const userId = trackUser(`files-proj-${randomBytes(4).toString("hex")}`);
+  const r = await postFile(userId, { path: "x.txt", type: "file", project: { id: "p1" } });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "INVALID_INPUT");
+});
+
+test("POST /api/files refuses ?project= in the querystring (uniform contract with DELETE)", async () => {
+  const userId = trackUser(`files-proj-qs-${randomBytes(4).toString("hex")}`);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-test-user": userId,
+  };
+  const res = await fetch(`${serverUrl}/api/files?project=p1`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ path: "x.txt", type: "file" }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 400);
+  assert.equal(body.code, "INVALID_INPUT");
+});
+
+// =============================================================================
+// PATCH /api/files (inline rename)
+// =============================================================================
+
+test("PATCH /api/files renames a private scratch entry in place", async () => {
+  const userId = trackUser(`files-rename-${randomBytes(4).toString("hex")}`);
+  await postFile(userId, { path: "old.txt", type: "file" });
+  const r = await patchFile(userId, { path: "old.txt", newPath: "new.txt" });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.fromPath, "old.txt");
+  assert.equal(r.body.toPath, "new.txt");
+  const dir = userWs.getUserScratchDir(userId);
+  assert.ok(!fs.existsSync(path.join(dir, "old.txt")));
+  assert.ok(fs.existsSync(path.join(dir, "new.txt")));
+});
+
+test("PATCH /api/files refuses renaming a top-level mirror symlink (ESYMLINK)", async () => {
+  const userId = trackUser(`files-rename-syml-${randomBytes(4).toString("hex")}`);
+  userWs.ensureUserScratchDir(userId);
+  const r = await patchFile(userId, { path: "package.json", newPath: "renamed.json" });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "ESYMLINK");
+  // Host file must be untouched.
+  assert.ok(fs.existsSync(path.join(PROJECT_ROOT, "package.json")));
+});
+
+test("PATCH /api/files refuses overwriting an existing destination (EEXIST → 409)", async () => {
+  const userId = trackUser(`files-rename-eexist-${randomBytes(4).toString("hex")}`);
+  await postFile(userId, { path: "a.txt", type: "file" });
+  await postFile(userId, { path: "b.txt", type: "file" });
+  const r = await patchFile(userId, { path: "a.txt", newPath: "b.txt" });
+  assert.equal(r.status, 409);
+  assert.equal(r.body.code, "EEXIST");
+});
+
+test("PATCH /api/files refuses path traversal in the destination (ESCAPE)", async () => {
+  const userId = trackUser(`files-rename-escape-${randomBytes(4).toString("hex")}`);
+  await postFile(userId, { path: "stay.txt", type: "file" });
+  const r = await patchFile(userId, { path: "stay.txt", newPath: "../escape.txt" });
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "ESCAPE");
+});
+
+test("PATCH /api/files refuses ?project= in the querystring (uniform contract with DELETE)", async () => {
+  const userId = trackUser(`files-rename-proj-qs-${randomBytes(4).toString("hex")}`);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-test-user": userId,
+  };
+  const res = await fetch(`${serverUrl}/api/files?project=p1`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ path: "a.txt", newPath: "b.txt" }),
+  });
+  const body = await res.json();
+  assert.equal(res.status, 400);
+  assert.equal(body.code, "INVALID_INPUT");
+});
+
+// =============================================================================
+// DELETE /api/files (inline delete)
+// =============================================================================
+
+test("DELETE /api/files removes a private scratch file", async () => {
+  const userId = trackUser(`files-del-${randomBytes(4).toString("hex")}`);
+  await postFile(userId, { path: "trash.txt", type: "file" });
+  const r = await deleteFile(userId, `?path=${encodeURIComponent("trash.txt")}`);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.deletedPath, "trash.txt");
+  const dir = userWs.getUserScratchDir(userId);
+  assert.ok(!fs.existsSync(path.join(dir, "trash.txt")));
+});
+
+test("DELETE /api/files refuses project descriptors with INVALID_INPUT", async () => {
+  const userId = trackUser(`files-del-proj-${randomBytes(4).toString("hex")}`);
+  const r = await deleteFile(userId, `?path=foo.txt&project=p1`);
+  assert.equal(r.status, 400);
+  assert.equal(r.body.code, "INVALID_INPUT");
+});

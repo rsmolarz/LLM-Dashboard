@@ -11,7 +11,7 @@ import * as projectCtx from "../lib/project-context";
 import { unifiedDiff } from "../lib/file-diff";
 import { checkShellSafety, checkGitSafety, isGitCommand } from "../lib/command-safety";
 import { runSandboxed } from "../lib/command-sandbox";
-import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo, getUserScratchDir, materializeScratchFile, listUserScratchEntries, deleteUserScratchEntry, clearUserScratchDir } from "../lib/user-workspace";
+import { ensureUserScratchDir, userScratchSandboxEnv, checkScratchContainment, checkUserQuota, getUserQuotaInfo, getUserScratchDir, materializeScratchFile, listUserScratchEntries, deleteUserScratchEntry, clearUserScratchDir, createUserScratchEntry, renameUserScratchEntry, type UserQuotaInfo } from "../lib/user-workspace";
 import { requireAuth } from "../middlewares/rateLimiter";
 import { randomBytes } from "crypto";
 
@@ -627,6 +627,175 @@ router.get("/files", async (req, res): Promise<void> => {
   }
 });
 
+// Inline create / delete / rename for the workbench file explorer.
+// All three are scratch-only (no `project` descriptor support yet) so
+// the path-containment, intermediate-symlink, and quota guards from
+// `lib/user-workspace.ts` are the only paths writes can take. The UI
+// hides these affordances when a project descriptor is active.
+//
+// We refuse a `project` descriptor supplied via *either* the JSON body
+// (POST/PATCH) or the querystring (DELETE) so the contract is uniform
+// across verbs — clients can't accidentally route a write into project
+// mode by spelling the field in the "wrong" place.
+
+// Narrow `unknown` thrown values into the small subset of fields the
+// `/files` route handlers care about. Keeps catch-block typing strict
+// without leaking `any` into the request path.
+function errorMessageOf(err: unknown): string | undefined {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "object" && err !== null && "message" in err) {
+    const m = (err as { message?: unknown }).message;
+    if (typeof m === "string") return m;
+  }
+  return undefined;
+}
+
+function scratchErrorCodeOf(err: unknown): string | undefined {
+  if (typeof err === "object" && err !== null && "code" in err) {
+    const c = (err as { code?: unknown }).code;
+    if (typeof c === "string") return c;
+  }
+  return undefined;
+}
+
+function scratchErrorQuotaOf(err: unknown): UserQuotaInfo | undefined {
+  if (typeof err === "object" && err !== null && "quota" in err) {
+    const q = (err as { quota?: unknown }).quota;
+    // The library always attaches a fully-populated UserQuotaInfo on
+    // QUOTA_EXCEEDED — we just verify the shape so a malformed
+    // upstream payload can't poison the response body.
+    if (
+      q &&
+      typeof q === "object" &&
+      typeof (q as UserQuotaInfo).usedBytes === "number" &&
+      typeof (q as UserQuotaInfo).capBytes === "number" &&
+      typeof (q as UserQuotaInfo).remainingBytes === "number"
+    ) {
+      return q as UserQuotaInfo;
+    }
+  }
+  return undefined;
+}
+
+function hasProjectDescriptor(req: import("express").Request): boolean {
+  const body = (req.body || {}) as Record<string, unknown>;
+  if (body.project !== undefined && body.project !== null && body.project !== "") {
+    return true;
+  }
+  const queryProject = req.query.project;
+  if (typeof queryProject === "string" && queryProject.length > 0) {
+    return true;
+  }
+  if (Array.isArray(queryProject) && queryProject.length > 0) {
+    return true;
+  }
+  return false;
+}
+
+router.post("/files", requireAuth, async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required (missing user id)", code: "AUTH_REQUIRED" });
+    return;
+  }
+  if (hasProjectDescriptor(req)) {
+    res.status(400).json({
+      error: "Inline create is only supported on the per-user scratch workspace; use the project's own tooling to add files.",
+      code: "INVALID_INPUT",
+    });
+    return;
+  }
+  const body = (req.body || {}) as Record<string, unknown>;
+  const subPath = typeof body.path === "string" ? body.path : "";
+  const type = body.type === "directory" ? "directory" : body.type === "file" ? "file" : null;
+  if (!subPath) {
+    res.status(400).json({ error: "path is required", code: "EARG" });
+    return;
+  }
+  if (!type) {
+    res.status(400).json({ error: "type must be 'file' or 'directory'", code: "EARG" });
+    return;
+  }
+  try {
+    const result = createUserScratchEntry(userId, subPath, type);
+    res.json(result);
+  } catch (err: unknown) {
+    const code = scratchErrorCodeOf(err);
+    const message = errorMessageOf(err) || "Failed to create scratch entry";
+    const quota = scratchErrorQuotaOf(err);
+    res.status(scratchErrorStatus(code)).json({
+      error: message,
+      code: code || "INTERNAL_ERROR",
+      ...(quota ? { quota } : {}),
+    });
+  }
+});
+
+router.delete("/files", requireAuth, async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required (missing user id)", code: "AUTH_REQUIRED" });
+    return;
+  }
+  // The file explorer's project mode browses through projectCtx.listFiles
+  // which has no symmetric delete + scope guards. Refuse so we can't be
+  // surprised into deleting host bytes outside the per-user scratch.
+  if (hasProjectDescriptor(req)) {
+    res.status(400).json({
+      error: "Inline delete is only supported on the per-user scratch workspace; use the project's own tooling to remove files.",
+      code: "INVALID_INPUT",
+    });
+    return;
+  }
+  const subPath = typeof req.query.path === "string" ? req.query.path : "";
+  if (!subPath) {
+    res.status(400).json({ error: "path query param is required", code: "EARG" });
+    return;
+  }
+  try {
+    const result = deleteUserScratchEntry(userId, subPath);
+    res.json(result);
+  } catch (err: unknown) {
+    const code = scratchErrorCodeOf(err);
+    res.status(scratchErrorStatus(code)).json({
+      error: errorMessageOf(err) || "Failed to delete scratch entry",
+      code: code || "INTERNAL_ERROR",
+    });
+  }
+});
+
+router.patch("/files", requireAuth, async (req, res): Promise<void> => {
+  const userId = String((req.user as any)?.id || "");
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required (missing user id)", code: "AUTH_REQUIRED" });
+    return;
+  }
+  if (hasProjectDescriptor(req)) {
+    res.status(400).json({
+      error: "Inline rename is only supported on the per-user scratch workspace; use the project's own tooling to move files.",
+      code: "INVALID_INPUT",
+    });
+    return;
+  }
+  const body = (req.body || {}) as Record<string, unknown>;
+  const fromPath = typeof body.path === "string" ? body.path : "";
+  const toPath = typeof body.newPath === "string" ? body.newPath : "";
+  if (!fromPath || !toPath) {
+    res.status(400).json({ error: "both 'path' and 'newPath' are required", code: "EARG" });
+    return;
+  }
+  try {
+    const result = renameUserScratchEntry(userId, fromPath, toPath);
+    res.json(result);
+  } catch (err: unknown) {
+    const code = scratchErrorCodeOf(err);
+    res.status(scratchErrorStatus(code)).json({
+      error: errorMessageOf(err) || "Failed to rename scratch entry",
+      code: code || "INTERNAL_ERROR",
+    });
+  }
+});
+
 router.get("/file-content", async (req, res): Promise<void> => {
   const filePath = req.query.path as string;
   const projectRaw = req.query.project as string | undefined;
@@ -1028,6 +1197,8 @@ function scratchErrorStatus(code: string | undefined): number {
     case "ESYMLINK": return 400;
     case "ENOTDIR": return 400;
     case "EARG": return 400;
+    case "EEXIST": return 409;
+    case "QUOTA_EXCEEDED": return 413;
     case "ENOENT": return 404;
     default: return 500;
   }

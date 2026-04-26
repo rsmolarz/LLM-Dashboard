@@ -1,13 +1,11 @@
-import { type Locator, type Page, type APIRequestContext, expect } from "@playwright/test";
+import { type Locator, type Page, expect } from "@playwright/test";
 
 /**
- * Helpers for driving the workbench `FileExplorerPanel`. The panel is
- * the default occupant of the right slot on `/workbench` (key
- * `wb-right-panel: "files"`), so specs only need to login + navigate
- * there. The shell endpoint (`POST /api/workbench/shell`) is the
- * easiest way to mutate the user's per-fixture scratch dir from a
- * spec — we wrap the create / read / update / delete flow here so
- * the test reads top-down.
+ * Helpers for driving the workbench `FileExplorerPanel`. The panel
+ * is the default occupant of the right slot on `/workbench` (key
+ * `wb-right-panel: "files"`) and now exposes inline create / rename
+ * / delete affordances, so specs can drive the full CRUD flow
+ * through the UI without ever shelling out.
  *
  * Selector reminders:
  *   - File rows are nested `<button>` elements with the file name
@@ -18,8 +16,10 @@ import { type Locator, type Page, type APIRequestContext, expect } from "@playwr
  *     under a flex row at the top of the panel. The "root" crumb
  *     is unique per page and is the easiest anchor for asserting
  *     the panel mounted.
- *   - There is no public delete affordance in the UI, so we drive
- *     deletes through the shell endpoint.
+ *   - Mutating affordances (toolbar `+File`/`+Folder`, per-row
+ *     pencil/trash buttons, the inline create/rename forms, and
+ *     the write-error banner) all carry stable `data-testid`s so
+ *     specs don't have to chase tailwind class churn.
  */
 
 export function fileExplorerRoot(page: Page): Locator {
@@ -53,30 +53,117 @@ export function fileContentBody(page: Page): Locator {
   return page.locator("pre").first();
 }
 
+// =============================================================================
+// CRUD affordances (toolbar + per-row inline forms)
+// =============================================================================
+
+export function newFileButton(page: Page): Locator {
+  return page.getByTestId("file-explorer-new-file");
+}
+
+export function newFolderButton(page: Page): Locator {
+  return page.getByTestId("file-explorer-new-folder");
+}
+
+export function createForm(page: Page): Locator {
+  return page.getByTestId("file-explorer-create-form");
+}
+
+export function createInput(page: Page): Locator {
+  return page.getByTestId("file-explorer-create-input");
+}
+
+export function createSubmit(page: Page): Locator {
+  return page.getByTestId("file-explorer-create-submit");
+}
+
+export function renameForm(page: Page): Locator {
+  return page.getByTestId("file-explorer-rename-form");
+}
+
+export function renameInput(page: Page): Locator {
+  return page.getByTestId("file-explorer-rename-input");
+}
+
+export function renameSubmit(page: Page): Locator {
+  return page.getByTestId("file-explorer-rename-submit");
+}
+
+export function renameButton(page: Page, name: string): Locator {
+  return page.getByTestId(`file-explorer-rename-${name}`);
+}
+
+export function deleteButton(page: Page, name: string): Locator {
+  return page.getByTestId(`file-explorer-delete-${name}`);
+}
+
+export function deleteConfirmButton(page: Page, name: string): Locator {
+  return page.getByTestId(`file-explorer-delete-confirm-${name}`);
+}
+
+export function writeErrorBanner(page: Page): Locator {
+  return page.getByTestId("file-explorer-write-error");
+}
+
 /**
- * Run a short shell command in the user's scratch dir via the api-
- * server's `/api/workbench/shell` endpoint. Used by specs to set up
- * fixture files without going through the file explorer UI itself
- * (which has no inline create/delete affordance).
- *
- * The endpoint requires auth — pass an `APIRequestContext` that has
- * already been logged in via `loginAsFixtureUser`.
+ * Drive the `+File` toolbar: open the inline form, type the name,
+ * submit, and wait for the form to close. The successful path also
+ * auto-selects the newly-created file in the panel.
  */
-export async function runScratchShell(
-  request: APIRequestContext,
-  command: string,
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  const res = await request.post(`/api/workbench/shell`, {
-    data: { command },
-    headers: { "Content-Type": "application/json" },
-  });
-  expect(res.status(), `POST /api/workbench/shell ('${command}') should succeed`).toBe(200);
-  const body = await res.json();
-  return {
-    exitCode: typeof body.exitCode === "number" ? body.exitCode : -1,
-    stdout: typeof body.stdout === "string" ? body.stdout : "",
-    stderr: typeof body.stderr === "string" ? body.stderr : "",
-  };
+export async function createFileViaUI(page: Page, name: string): Promise<void> {
+  await newFileButton(page).click();
+  const input = createInput(page);
+  await expect(input).toBeVisible();
+  await input.fill(name);
+  await createSubmit(page).click();
+  // The mutation onSuccess closes the form; wait for that as the
+  // signal that the create round-tripped.
+  await expect(createForm(page)).toHaveCount(0, { timeout: 10_000 });
+}
+
+/**
+ * Drive the `+Folder` toolbar — same shape as `createFileViaUI`,
+ * but no auto-selection (directories are click-to-navigate).
+ */
+export async function createFolderViaUI(page: Page, name: string): Promise<void> {
+  await newFolderButton(page).click();
+  const input = createInput(page);
+  await expect(input).toBeVisible();
+  await input.fill(name);
+  await createSubmit(page).click();
+  await expect(createForm(page)).toHaveCount(0, { timeout: 10_000 });
+}
+
+/**
+ * Drive the per-row pencil button → inline rename form → submit.
+ * We hover the row first so the hover-only pencil button becomes
+ * visible (Playwright's `.click()` will scroll-and-click anyway,
+ * but hovering keeps the visual state in sync if the spec dumps
+ * a screenshot on failure).
+ */
+export async function renameViaUI(page: Page, fromName: string, toName: string): Promise<void> {
+  await fileRow(page, fromName).hover();
+  await renameButton(page, fromName).click();
+  const input = renameInput(page);
+  await expect(input).toBeVisible();
+  await input.fill(toName);
+  await renameSubmit(page).click();
+  await expect(renameForm(page)).toHaveCount(0, { timeout: 10_000 });
+}
+
+/**
+ * Drive the per-row trash button → confirm-prompt → confirm. The
+ * UI uses a two-click confirm to guard against fat-fingered
+ * deletes; both clicks happen here so callers don't have to repeat
+ * the testid.
+ */
+export async function deleteViaUI(page: Page, name: string): Promise<void> {
+  await fileRow(page, name).hover();
+  await deleteButton(page, name).click();
+  await deleteConfirmButton(page, name).click();
+  // The mutation onSuccess removes the row; wait on that signal so
+  // the spec can immediately assert against a stable DOM.
+  await expect(fileRow(page, name)).toHaveCount(0, { timeout: 10_000 });
 }
 
 /**

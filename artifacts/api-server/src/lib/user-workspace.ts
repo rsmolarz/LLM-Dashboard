@@ -1209,10 +1209,15 @@ function hasIntermediateSymlink(scratchDir: string, target: string): boolean {
 
 class ScratchPathError extends Error {
   code: string;
-  constructor(message: string, code: string) {
+  // `quota` is attached on QUOTA_EXCEEDED rejections so the route
+  // can surface the same snapshot the shell endpoint piggy-backs on
+  // its own quota responses. Optional everywhere else.
+  quota?: UserQuotaInfo;
+  constructor(message: string, code: string, quota?: UserQuotaInfo) {
     super(message);
     this.name = "ScratchPathError";
     this.code = code;
+    if (quota) this.quota = quota;
   }
 }
 
@@ -1489,6 +1494,203 @@ export function clearUserScratchDir(
   const scratchDir = ensureUserScratchDir(userId);
   const inner = clearScratchDirAt(scratchDir);
   return { removed: inner.removed, quota: getUserQuotaInfo(userId) };
+}
+
+/**
+ * Create a brand-new file or directory inside the user's scratch
+ * root. Used by the workbench file explorer's inline new-file /
+ * new-folder affordances so users don't have to drop into the shell
+ * for trivial CRUD.
+ *
+ * Path safety mirrors `deleteUserScratchEntry`: the resolved target
+ * must stay inside the user's scratch dir, must not traverse through
+ * a symlink (so users can't materialise a write into the shared
+ * host workspace via the symlink view), and the parent dir must
+ * already exist as a real directory (no implicit `mkdir -p` — the
+ * user navigated into it from the panel, so we know it's there).
+ *
+ * For files we write a zero-byte regular file; for directories we
+ * `mkdir` (no recursion). The pre-flight quota check matches the
+ * shell route — refuses to create when the user is already at or
+ * over their cap so the "create then immediately fail to write"
+ * footgun never fires.
+ */
+export function createUserScratchEntry(
+  userId: string,
+  subPath: string,
+  type: "file" | "directory",
+): { createdPath: string; type: "file" | "directory"; quota: UserQuotaInfo } {
+  if (type !== "file" && type !== "directory") {
+    throw new ScratchPathError("type must be 'file' or 'directory'", "EARG");
+  }
+  if (typeof subPath !== "string" || subPath.length === 0) {
+    throw new ScratchPathError("scratch path is required", "EARG");
+  }
+  const scratchDir = ensureUserScratchDir(userId);
+  const target = resolveWithinScratch(scratchDir, subPath);
+  if (!target) {
+    throw new ScratchPathError(
+      `scratch path escapes user scratch dir: ${subPath}`,
+      "ESCAPE",
+    );
+  }
+  if (target === scratchDir) {
+    throw new ScratchPathError(
+      "cannot create the scratch root itself",
+      "EROOT",
+    );
+  }
+  if (hasIntermediateSymlink(scratchDir, target)) {
+    throw new ScratchPathError(
+      `scratch path traverses through a symlink: ${subPath}`,
+      "ESCAPE",
+    );
+  }
+  // Pre-flight: refuse if the user is already over quota. An empty
+  // file / dir is ~0 bytes, but the user is going to want to put
+  // something in it next — failing fast keeps the UX honest.
+  const quotaCheck = checkUserQuota(userId);
+  if (quotaCheck.blocked) {
+    throw new ScratchPathError(
+      quotaCheck.reason || "Scratch disk quota exceeded",
+      "QUOTA_EXCEEDED",
+      quotaCheck.quota,
+    );
+  }
+  const parent = path.dirname(target);
+  let parentStat: fs.Stats | null = null;
+  try { parentStat = fs.lstatSync(parent); } catch {}
+  if (!parentStat) {
+    throw new ScratchPathError(
+      `parent directory does not exist: ${path.relative(scratchDir, parent) || "/"}`,
+      "ENOENT",
+    );
+  }
+  if (parentStat.isSymbolicLink() || !parentStat.isDirectory()) {
+    throw new ScratchPathError(
+      `parent is not a writeable directory in scratch: ${path.relative(scratchDir, parent) || "/"}`,
+      "ENOTDIR",
+    );
+  }
+  let existing: fs.Stats | null = null;
+  try { existing = fs.lstatSync(target); } catch {}
+  if (existing) {
+    throw new ScratchPathError(
+      `entry already exists: ${subPath}`,
+      "EEXIST",
+    );
+  }
+  if (type === "directory") {
+    fs.mkdirSync(target);
+  } else {
+    fs.writeFileSync(target, "");
+  }
+  try {
+    const now = new Date();
+    fs.utimesSync(scratchDir, now, now);
+    fs.utimesSync(path.dirname(scratchDir), now, now);
+  } catch {}
+  return {
+    createdPath: path.relative(scratchDir, target),
+    type,
+    quota: getUserQuotaInfo(userId),
+  };
+}
+
+/**
+ * Rename an existing private file or directory inside the user's
+ * scratch root. Both `fromPath` and `toPath` must resolve inside the
+ * scratch dir, neither may traverse through a symlink, the source
+ * must be a real (non-symlink) entry, and the destination must not
+ * already exist. We reject moving across into another user-private
+ * subtree's symlink ancestry by virtue of the same intermediate-
+ * symlink check.
+ *
+ * The most common UI flow is "rename in place" (only the leaf
+ * changes), but allowing the caller to supply a different parent
+ * path is harmless given the same containment guards.
+ */
+export function renameUserScratchEntry(
+  userId: string,
+  fromPath: string,
+  toPath: string,
+): { fromPath: string; toPath: string; quota: UserQuotaInfo } {
+  if (typeof fromPath !== "string" || fromPath.length === 0) {
+    throw new ScratchPathError("from scratch path is required", "EARG");
+  }
+  if (typeof toPath !== "string" || toPath.length === 0) {
+    throw new ScratchPathError("to scratch path is required", "EARG");
+  }
+  const scratchDir = ensureUserScratchDir(userId);
+  const fromAbs = resolveWithinScratch(scratchDir, fromPath);
+  const toAbs = resolveWithinScratch(scratchDir, toPath);
+  if (!fromAbs || !toAbs) {
+    throw new ScratchPathError(
+      `scratch path escapes user scratch dir`,
+      "ESCAPE",
+    );
+  }
+  if (fromAbs === scratchDir || toAbs === scratchDir) {
+    throw new ScratchPathError(
+      "cannot rename the scratch root itself",
+      "EROOT",
+    );
+  }
+  if (hasIntermediateSymlink(scratchDir, fromAbs) || hasIntermediateSymlink(scratchDir, toAbs)) {
+    throw new ScratchPathError(
+      `scratch path traverses through a symlink`,
+      "ESCAPE",
+    );
+  }
+  let fromStat: fs.Stats;
+  try {
+    fromStat = fs.lstatSync(fromAbs);
+  } catch {
+    throw new ScratchPathError(
+      `scratch entry not found: ${fromPath}`,
+      "ENOENT",
+    );
+  }
+  if (fromStat.isSymbolicLink()) {
+    throw new ScratchPathError(
+      "cannot rename this entry; it is a symlink to the shared workspace",
+      "ESYMLINK",
+    );
+  }
+  let existing: fs.Stats | null = null;
+  try { existing = fs.lstatSync(toAbs); } catch {}
+  if (existing) {
+    throw new ScratchPathError(
+      `entry already exists: ${toPath}`,
+      "EEXIST",
+    );
+  }
+  const toParent = path.dirname(toAbs);
+  let toParentStat: fs.Stats | null = null;
+  try { toParentStat = fs.lstatSync(toParent); } catch {}
+  if (!toParentStat) {
+    throw new ScratchPathError(
+      `parent directory does not exist: ${path.relative(scratchDir, toParent) || "/"}`,
+      "ENOENT",
+    );
+  }
+  if (toParentStat.isSymbolicLink() || !toParentStat.isDirectory()) {
+    throw new ScratchPathError(
+      `parent is not a writeable directory in scratch: ${path.relative(scratchDir, toParent) || "/"}`,
+      "ENOTDIR",
+    );
+  }
+  fs.renameSync(fromAbs, toAbs);
+  try {
+    const now = new Date();
+    fs.utimesSync(scratchDir, now, now);
+    fs.utimesSync(path.dirname(scratchDir), now, now);
+  } catch {}
+  return {
+    fromPath: path.relative(scratchDir, fromAbs),
+    toPath: path.relative(scratchDir, toAbs),
+    quota: getUserQuotaInfo(userId),
+  };
 }
 
 // =============================================================================

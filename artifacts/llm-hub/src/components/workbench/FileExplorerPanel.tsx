@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
-  ChevronRight, Copy, File, FileCode, FilePlus2, Folder, Loader2, RefreshCw,
+  ChevronRight, Copy, File, FileCode, FilePlus, FilePlus2, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Trash2, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePersistedState } from "@/hooks/usePersistedState";
@@ -118,6 +118,17 @@ export function FileExplorerPanel({
   const projectQuery = project ? `&project=${encodeURIComponent(JSON.stringify(project))}` : "";
   const [copyError, setCopyError] = useState<{ path: string; message: string } | null>(null);
   const [pendingCopyPath, setPendingCopyPath] = useState<string | null>(null);
+  // Inline create / rename / delete state. The "create" form lives at
+  // the top of the listing; "rename" replaces the row's name span with
+  // an input; "delete" surfaces a confirm-then-action affordance per
+  // row. All three share a single error slot — only one mutation is
+  // ever in flight at a time so a single banner is enough.
+  const [createMode, setCreateMode] = useState<"file" | "directory" | null>(null);
+  const [createName, setCreateName] = useState("");
+  const [renameTarget, setRenameTarget] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [pendingDeletePath, setPendingDeletePath] = useState<string | null>(null);
+  const [writeError, setWriteError] = useState<string | null>(null);
 
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: [`${storagePrefix}-files`, currentPath, projectKey],
@@ -200,9 +211,167 @@ export function FileExplorerPanel({
     copyToScratchMutation.mutate(filePath);
   };
 
+  // Inline create / rename / delete. All three are scratch-only on the
+  // backend (the route returns INVALID_INPUT when a project descriptor
+  // is set), so we hide the affordances when the user has selected a
+  // project. Errors get parsed off the JSON body — the route returns a
+  // stable `error` + `code` shape.
+  async function readError(res: Response, fallback: string): Promise<string> {
+    try {
+      const body = await res.json();
+      if (typeof body?.error === "string") return body.error;
+    } catch { /* not JSON */ }
+    return `${fallback} (HTTP ${res.status})`;
+  }
+
+  const createMutation = useMutation<
+    { createdPath: string; type: "file" | "directory" },
+    Error,
+    { name: string; type: "file" | "directory" }
+  >({
+    mutationFn: async ({ name, type }) => {
+      const subPath = currentPath === "." || !currentPath ? name : `${currentPath}/${name}`;
+      const res = await fetch(`/api/workbench/files`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ path: subPath, type }),
+      });
+      if (!res.ok) throw new Error(await readError(res, "Create failed"));
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setWriteError(null);
+      setCreateMode(null);
+      setCreateName("");
+      void refetch();
+      // For files, auto-select so the user can confirm the create
+      // landed. For directories, leave selection alone — the user
+      // probably wants to navigate in next.
+      if (data.type === "file") {
+        setSelectedFile(data.createdPath);
+      }
+    },
+    onError: (err) => {
+      setWriteError(err.message || "Create failed");
+    },
+  });
+
+  const renameMutation = useMutation<
+    { fromPath: string; toPath: string },
+    Error,
+    { fromPath: string; toName: string }
+  >({
+    mutationFn: async ({ fromPath, toName }) => {
+      const parent = fromPath.includes("/") ? fromPath.slice(0, fromPath.lastIndexOf("/")) : "";
+      const toPath = parent ? `${parent}/${toName}` : toName;
+      const res = await fetch(`/api/workbench/files`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ path: fromPath, newPath: toPath }),
+      });
+      if (!res.ok) throw new Error(await readError(res, "Rename failed"));
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setWriteError(null);
+      setRenameTarget(null);
+      setRenameValue("");
+      // Keep the viewer in sync if the user just renamed the open file.
+      if (selectedFile === data.fromPath) setSelectedFile(data.toPath);
+      void refetch();
+    },
+    onError: (err) => {
+      setWriteError(err.message || "Rename failed");
+    },
+  });
+
+  const deleteMutation = useMutation<
+    { deletedPath: string },
+    Error,
+    string
+  >({
+    mutationFn: async (filePath) => {
+      const res = await fetch(`/api/workbench/files?path=${encodeURIComponent(filePath)}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(await readError(res, "Delete failed"));
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setWriteError(null);
+      setPendingDeletePath(null);
+      // Clear the viewer if the open file was just deleted.
+      if (selectedFile === data.deletedPath) setSelectedFile(null);
+      void refetch();
+    },
+    onError: (err) => {
+      setPendingDeletePath(null);
+      setWriteError(err.message || "Delete failed");
+    },
+  });
+
   const items: FileItem[] = data?.items || [];
   const fileScope: FileScope = (data?.scope && typeof data.scope === "object") ? data.scope : {};
   const breadcrumbs = currentPath === "." ? ["root"] : ["root", ...currentPath.split("/").filter(Boolean)];
+
+  // The write affordances live inside the per-user scratch view. When
+  // the user has picked a project descriptor we route file ops through
+  // the project's own clone, which doesn't share the scope guards —
+  // hide the buttons entirely so we don't dangle disabled chrome.
+  // Inside scratch, "shared" subdirs are read-only by design (writes
+  // through the host symlinks would escape the scratch dir), so we
+  // only allow creates when the listing is in the user's private tree.
+  const canWrite =
+    !project &&
+    fileScope.mode === "scratch" &&
+    fileScope.dirPrivacy !== "shared";
+
+  function startCreate(type: "file" | "directory") {
+    setRenameTarget(null);
+    setPendingDeletePath(null);
+    setWriteError(null);
+    setCreateMode(type);
+    setCreateName("");
+  }
+
+  function startRename(item: FileItem) {
+    setCreateMode(null);
+    setPendingDeletePath(null);
+    setWriteError(null);
+    setRenameTarget(item.path);
+    setRenameValue(item.name);
+  }
+
+  function submitCreate() {
+    const name = createName.trim();
+    if (!name || !createMode) return;
+    if (name.includes("/") || name === "." || name === "..") {
+      setWriteError("Name can't contain '/', '.', or '..'");
+      return;
+    }
+    createMutation.mutate({ name, type: createMode });
+  }
+
+  function submitRename() {
+    const newName = renameValue.trim();
+    if (!newName || !renameTarget) return;
+    if (newName.includes("/") || newName === "." || newName === "..") {
+      setWriteError("Name can't contain '/', '.', or '..'");
+      return;
+    }
+    const currentName = renameTarget.includes("/")
+      ? renameTarget.slice(renameTarget.lastIndexOf("/") + 1)
+      : renameTarget;
+    if (newName === currentName) {
+      setRenameTarget(null);
+      setRenameValue("");
+      return;
+    }
+    renameMutation.mutate({ fromPath: renameTarget, toName: newName });
+  }
 
   const handleClick = (item: FileItem) => {
     if (item.type === "directory") {
@@ -235,12 +404,47 @@ export function FileExplorerPanel({
             </span>
           ))}
         </div>
-        <button
-          className={cn("p-1 rounded text-[#6c7086] hover:text-[#cdd6f4]", styles.refreshBtnHover)}
-          onClick={() => refetch()}
-        >
-          <RefreshCw className="h-3 w-3" />
-        </button>
+        <div className="flex items-center gap-0.5">
+          {canWrite && (
+            <>
+              <button
+                type="button"
+                title="New file in this folder"
+                aria-label="New file"
+                data-testid="file-explorer-new-file"
+                className={cn(
+                  "p-1 rounded text-[#6c7086] hover:text-[#cdd6f4]",
+                  styles.refreshBtnHover,
+                  createMode === "file" && "text-[#a6e3a1]",
+                )}
+                onClick={() => startCreate("file")}
+              >
+                <FilePlus className="h-3 w-3" />
+              </button>
+              <button
+                type="button"
+                title="New folder in this folder"
+                aria-label="New folder"
+                data-testid="file-explorer-new-folder"
+                className={cn(
+                  "p-1 rounded text-[#6c7086] hover:text-[#cdd6f4]",
+                  styles.refreshBtnHover,
+                  createMode === "directory" && "text-[#a6e3a1]",
+                )}
+                onClick={() => startCreate("directory")}
+              >
+                <FolderPlus className="h-3 w-3" />
+              </button>
+            </>
+          )}
+          <button
+            className={cn("p-1 rounded text-[#6c7086] hover:text-[#cdd6f4]", styles.refreshBtnHover)}
+            onClick={() => refetch()}
+            aria-label="Refresh"
+          >
+            <RefreshCw className="h-3 w-3" />
+          </button>
+        </div>
       </div>
       <div className="flex flex-1 min-h-0">
         <div className="w-1/3 border-r border-[#313244] overflow-y-auto">
@@ -250,6 +454,75 @@ export function FileExplorerPanel({
               <div className="mx-1 mb-1 px-2 py-1 text-[10px] rounded border border-[#f38ba8]/40 bg-[#f38ba8]/10 text-[#f38ba8]">
                 Couldn&apos;t copy <span className="font-mono">{copyError.path}</span>: {copyError.message}
               </div>
+            )}
+            {writeError && (
+              <div
+                role="alert"
+                data-testid="file-explorer-write-error"
+                className="mx-1 mb-1 px-2 py-1 text-[10px] rounded border border-[#f38ba8]/40 bg-[#f38ba8]/10 text-[#f38ba8] flex items-start gap-1.5"
+              >
+                <span className="flex-1">{writeError}</span>
+                <button
+                  type="button"
+                  aria-label="Dismiss error"
+                  className="text-[#f38ba8]/70 hover:text-[#f38ba8]"
+                  onClick={() => setWriteError(null)}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
+            {createMode && canWrite && (
+              <form
+                data-testid="file-explorer-create-form"
+                className="flex items-center gap-1 px-2 py-1 mx-1 mb-1 rounded bg-[#313244]/60"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitCreate();
+                }}
+              >
+                {createMode === "directory"
+                  ? <Folder className={cn("h-3.5 w-3.5 shrink-0", styles.folderIcon)} />
+                  : <File className="h-3.5 w-3.5 text-[#6c7086] shrink-0" />}
+                <input
+                  autoFocus
+                  type="text"
+                  value={createName}
+                  onChange={(e) => setCreateName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setCreateMode(null);
+                      setCreateName("");
+                      setWriteError(null);
+                    }
+                  }}
+                  placeholder={createMode === "directory" ? "folder name" : "file name"}
+                  aria-label={createMode === "directory" ? "New folder name" : "New file name"}
+                  data-testid="file-explorer-create-input"
+                  className="flex-1 min-w-0 bg-[#1e1e2e] border border-[#45475a] rounded px-1.5 py-0.5 text-xs text-[#cdd6f4] focus:outline-none focus:border-[#89b4fa]"
+                  disabled={createMutation.isPending}
+                />
+                <button
+                  type="submit"
+                  data-testid="file-explorer-create-submit"
+                  disabled={createMutation.isPending || !createName.trim()}
+                  className="text-[10px] px-1.5 py-0.5 rounded border border-[#a6e3a1]/40 text-[#a6e3a1] hover:bg-[#a6e3a1]/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {createMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Create"}
+                </button>
+                <button
+                  type="button"
+                  aria-label="Cancel new entry"
+                  className="p-0.5 rounded text-[#6c7086] hover:text-[#cdd6f4]"
+                  onClick={() => {
+                    setCreateMode(null);
+                    setCreateName("");
+                    setWriteError(null);
+                  }}
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </form>
             )}
             {currentPath !== "." && (
               <button
@@ -280,6 +553,18 @@ export function FileExplorerPanel({
                   item.type === "file" &&
                   item.privacy === "shared";
                 const isCopying = pendingCopyPath === item.path && copyToScratchMutation.isPending;
+                // Write affordances apply to private entries only.
+                // Inside a "private" subdir every entry inherits the
+                // private privacy by classification; at the scratch
+                // root the per-entry classifier flags symlinks as
+                // "shared". When `dirPrivacy` isn't supplied (project
+                // mode), `item.privacy` is undefined and `canMutate`
+                // stays false — `canWrite` already gates that case
+                // anyway.
+                const canMutate = canWrite && item.privacy !== "shared";
+                const isRenaming = renameTarget === item.path;
+                const isDeleting = pendingDeletePath === item.path && deleteMutation.isPending;
+                const isAwaitingDeleteConfirm = pendingDeletePath === item.path && !deleteMutation.isPending;
                 return (
                   <div
                     key={item.path}
@@ -288,23 +573,75 @@ export function FileExplorerPanel({
                       selectedFile === item.path && styles.selectedRowBg
                     )}
                   >
-                    <button
-                      className="flex-1 text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5 min-w-0"
-                      onClick={() => handleClick(item)}
-                    >
-                      {item.type === "directory"
-                        ? <Folder className={cn("h-3.5 w-3.5", styles.folderIcon)} />
-                        : getFileIcon(item.name)}
-                      <span className="truncate flex-1 text-[#cdd6f4]">{item.name}</span>
-                      <PrivacyBadge privacy={item.privacy} />
-                      {item.size !== undefined && <span className="text-[10px] text-[#585b70]">{formatBytes(item.size)}</span>}
-                    </button>
-                    {canCopy && (
+                    {isRenaming ? (
+                      <form
+                        data-testid="file-explorer-rename-form"
+                        className="flex-1 flex items-center gap-1 px-2 py-1"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          submitRename();
+                        }}
+                      >
+                        {item.type === "directory"
+                          ? <Folder className={cn("h-3.5 w-3.5 shrink-0", styles.folderIcon)} />
+                          : getFileIcon(item.name)}
+                        <input
+                          autoFocus
+                          type="text"
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              setRenameTarget(null);
+                              setRenameValue("");
+                              setWriteError(null);
+                            }
+                          }}
+                          aria-label={`Rename ${item.name}`}
+                          data-testid="file-explorer-rename-input"
+                          className="flex-1 min-w-0 bg-[#1e1e2e] border border-[#45475a] rounded px-1.5 py-0.5 text-xs text-[#cdd6f4] focus:outline-none focus:border-[#89b4fa]"
+                          disabled={renameMutation.isPending}
+                        />
+                        <button
+                          type="submit"
+                          data-testid="file-explorer-rename-submit"
+                          disabled={renameMutation.isPending || !renameValue.trim()}
+                          className="text-[10px] px-1.5 py-0.5 rounded border border-[#a6e3a1]/40 text-[#a6e3a1] hover:bg-[#a6e3a1]/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {renameMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Rename"}
+                        </button>
+                        <button
+                          type="button"
+                          aria-label="Cancel rename"
+                          className="p-0.5 rounded text-[#6c7086] hover:text-[#cdd6f4]"
+                          onClick={() => {
+                            setRenameTarget(null);
+                            setRenameValue("");
+                            setWriteError(null);
+                          }}
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </form>
+                    ) : (
+                      <button
+                        className="flex-1 text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5 min-w-0"
+                        onClick={() => handleClick(item)}
+                      >
+                        {item.type === "directory"
+                          ? <Folder className={cn("h-3.5 w-3.5", styles.folderIcon)} />
+                          : getFileIcon(item.name)}
+                        <span className="truncate flex-1 text-[#cdd6f4]">{item.name}</span>
+                        <PrivacyBadge privacy={item.privacy} />
+                        {item.size !== undefined && <span className="text-[10px] text-[#585b70]">{formatBytes(item.size)}</span>}
+                      </button>
+                    )}
+                    {!isRenaming && canCopy && (
                       <button
                         type="button"
                         title="Make a private copy in your scratch dir"
                         aria-label={`Make a private copy of ${item.name}`}
-                        className="ml-1 mr-1 p-1 rounded text-[#89b4fa] hover:bg-[#313244] hover:text-[#a6e3a1] disabled:opacity-50 disabled:cursor-not-allowed opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        className="ml-1 p-1 rounded text-[#89b4fa] hover:bg-[#313244] hover:text-[#a6e3a1] disabled:opacity-50 disabled:cursor-not-allowed opacity-0 group-hover:opacity-100 focus:opacity-100"
                         disabled={isCopying}
                         onClick={(e) => {
                           e.stopPropagation();
@@ -315,6 +652,68 @@ export function FileExplorerPanel({
                           ? <Loader2 className="h-3 w-3 animate-spin" />
                           : <FilePlus2 className="h-3 w-3" />}
                       </button>
+                    )}
+                    {!isRenaming && canMutate && (
+                      <>
+                        <button
+                          type="button"
+                          title="Rename"
+                          aria-label={`Rename ${item.name}`}
+                          data-testid={`file-explorer-rename-${item.name}`}
+                          className="ml-1 p-1 rounded text-[#6c7086] hover:bg-[#313244] hover:text-[#89b4fa] opacity-0 group-hover:opacity-100 focus:opacity-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startRename(item);
+                          }}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                        {isAwaitingDeleteConfirm ? (
+                          <span className="ml-1 mr-1 flex items-center gap-1">
+                            <button
+                              type="button"
+                              data-testid={`file-explorer-delete-confirm-${item.name}`}
+                              aria-label={`Confirm delete ${item.name}`}
+                              className="text-[10px] px-1.5 py-0.5 rounded border border-[#f38ba8]/40 text-[#f38ba8] hover:bg-[#f38ba8]/10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteMutation.mutate(item.path);
+                              }}
+                            >
+                              Delete?
+                            </button>
+                            <button
+                              type="button"
+                              aria-label="Cancel delete"
+                              className="p-0.5 rounded text-[#6c7086] hover:text-[#cdd6f4]"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setPendingDeletePath(null);
+                              }}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            title="Delete"
+                            aria-label={`Delete ${item.name}`}
+                            data-testid={`file-explorer-delete-${item.name}`}
+                            disabled={isDeleting}
+                            className="ml-1 mr-1 p-1 rounded text-[#6c7086] hover:bg-[#313244] hover:text-[#f38ba8] opacity-0 group-hover:opacity-100 focus:opacity-100 disabled:opacity-50"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setWriteError(null);
+                              setPendingDeletePath(item.path);
+                            }}
+                          >
+                            {isDeleting
+                              ? <Loader2 className="h-3 w-3 animate-spin" />
+                              : <Trash2 className="h-3 w-3" />}
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 );
