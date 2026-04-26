@@ -140,6 +140,50 @@ export async function uploadFilesViaUI(
   );
 }
 
+export function fileRowContainer(page: Page, name: string): Locator {
+  // Outer row container — carries the drag/drop handlers and a
+  // stable testid keyed off the entry name. We anchor against this
+  // (rather than the inner click-button returned by `fileRow`) when
+  // dispatching HTML5 drag events so the events fire on the element
+  // that actually has the listeners.
+  return page.getByTestId(`file-explorer-row-${name}`);
+}
+
+export function parentRow(page: Page): Locator {
+  return page.getByTestId("file-explorer-parent-row");
+}
+
+/**
+ * Dispatch an HTML5 drag-and-drop sequence (dragstart → dragover →
+ * drop) from `source` onto `target`, sharing a single DataTransfer
+ * across the events so handlers that read `e.dataTransfer` see a
+ * coherent payload. Playwright's built-in `locator.dragTo()`
+ * synthesises mouse moves but does not fire HTML5 dnd events on
+ * every browser, so the explicit dispatch is the reliable path.
+ *
+ * We skip the trailing `dragend` dispatch on purpose: a successful
+ * drop in the FileExplorerPanel triggers a mutation whose
+ * onSuccess refetches the listing and removes the dragged row from
+ * the DOM, racing the dragend dispatch into a 60s wait-for-element
+ * timeout. The component clears its drag state inside the same
+ * mutation onSuccess / onError / rejectDrop paths, so omitting
+ * dragend keeps the panel correct without the flake.
+ *
+ * The small yield between dispatches lets React 18 process the
+ * setDraggedItem state update from `dragstart` before we fire the
+ * follow-on dragover/drop — handlers are bound at render time, and
+ * without the yield the drop handler sometimes still sees the
+ * pre-dragstart `draggedItem === null` closure.
+ */
+export async function dragAndDrop(page: Page, source: Locator, target: Locator): Promise<void> {
+  const dt = await page.evaluateHandle(() => new DataTransfer());
+  await source.dispatchEvent("dragstart", { dataTransfer: dt });
+  await page.waitForTimeout(50);
+  await target.dispatchEvent("dragover", { dataTransfer: dt });
+  await target.dispatchEvent("drop", { dataTransfer: dt });
+  await dt.dispose();
+}
+
 /**
  * Drive the `+File` toolbar: open the inline form, type the name,
  * submit, and wait for the form to close. The successful path also

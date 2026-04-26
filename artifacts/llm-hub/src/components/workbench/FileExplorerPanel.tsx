@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronRight, Copy, File, FileCode, FilePlus, FilePlus2, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Trash2, Upload, X,
 } from "lucide-react";
@@ -111,6 +111,7 @@ export function FileExplorerPanel({
 }: FileExplorerPanelProps) {
   const styles = VARIANT_STYLES[variant];
 
+  const queryClient = useQueryClient();
   const [currentPath, setCurrentPath] = usePersistedState(`${storagePrefix}-file-path`, ".");
   const [selectedFile, setSelectedFile] = usePersistedState<string | null>(`${storagePrefix}-file-selected`, null);
   const { project } = useSelectedProject();
@@ -135,6 +136,14 @@ export function FileExplorerPanel({
   // boolean flickers as the cursor moves between rows.
   const [dragDepth, setDragDepth] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Drag-and-drop move state. `draggedItem` is the file row currently
+  // being dragged (we restrict drag sources to private files inside
+  // scratch); `dragOverPath` is the drop-target path that should
+  // render the highlight ring. The sentinel `__parent__` represents
+  // the `..` row, which moves the dragged file up one directory.
+  const [draggedItem, setDraggedItem] = useState<{ path: string; name: string } | null>(null);
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null);
+  const PARENT_DROP_KEY = "__parent__";
 
   const { data, isLoading, refetch } = useQuery<any>({
     queryKey: [`${storagePrefix}-files`, currentPath, projectKey],
@@ -293,6 +302,50 @@ export function FileExplorerPanel({
     },
   });
 
+  // Drag-and-drop move. Reuses the same PATCH /api/workbench/files
+  // endpoint as inline rename — `renameUserScratchEntry` accepts any
+  // `toPath` inside scratch, so cross-folder moves are a free
+  // generalisation of leaf renames. We split the mutation from
+  // `renameMutation` because the UX is meaningfully different (the
+  // caller passes a fully-qualified destination, error copy talks
+  // about moving rather than renaming, and on success we always
+  // re-target the viewer if the open file moved).
+  const moveMutation = useMutation<
+    { fromPath: string; toPath: string },
+    Error,
+    { fromPath: string; toPath: string }
+  >({
+    mutationFn: async ({ fromPath, toPath }) => {
+      const res = await fetch(`/api/workbench/files`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ path: fromPath, newPath: toPath }),
+      });
+      if (!res.ok) throw new Error(await readError(res, "Move failed"));
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setWriteError(null);
+      setDraggedItem(null);
+      setDragOverPath(null);
+      if (selectedFile === data.fromPath) setSelectedFile(data.toPath);
+      // A move always touches at least two listings (the source's
+      // parent and the destination's parent). `refetch()` only
+      // refreshes the currently mounted listing, which leaves the
+      // OTHER folder showing stale cached entries the next time the
+      // user navigates there. Invalidate the entire `files` cache
+      // for this panel so any folder we step into reflects the move
+      // immediately.
+      void queryClient.invalidateQueries({ queryKey: [`${storagePrefix}-files`] });
+    },
+    onError: (err) => {
+      setDraggedItem(null);
+      setDragOverPath(null);
+      setWriteError(err.message || "Move failed");
+    },
+  });
+
   const deleteMutation = useMutation<
     { deletedPath: string },
     Error,
@@ -438,6 +491,44 @@ export function FileExplorerPanel({
       return;
     }
     renameMutation.mutate({ fromPath: renameTarget, toName: newName });
+  }
+
+  // Compute the destination path for a drag-move and dispatch the
+  // mutation. `targetDir` is either an absolute scratch-relative
+  // directory path (drop onto a folder row) or the `..` sentinel
+  // (drop onto the parent row, which moves the file out of the
+  // current directory). We collapse no-op moves (drop onto own
+  // parent) into a quiet cancel so the user doesn't see a confusing
+  // EEXIST banner for what looks like a self-drop.
+  function performMove(targetDir: string | "..") {
+    if (!draggedItem) return;
+    let toParent: string;
+    if (targetDir === "..") {
+      const parts = currentPath.split("/").filter(Boolean);
+      parts.pop();
+      toParent = parts.join("/");
+    } else {
+      toParent = targetDir;
+    }
+    const toPath = toParent ? `${toParent}/${draggedItem.name}` : draggedItem.name;
+    if (toPath === draggedItem.path) {
+      setDraggedItem(null);
+      setDragOverPath(null);
+      return;
+    }
+    setWriteError(null);
+    moveMutation.mutate({ fromPath: draggedItem.path, toPath });
+  }
+
+  // Reject a drop with a banner instead of round-tripping to the
+  // server. Used for shared rows / symlink mirrors at the scratch
+  // root: the backend would reject these too, but surfacing the
+  // friendly message client-side avoids a wasted PATCH and matches
+  // the create/rename flow's behaviour for shared targets.
+  function rejectDrop(reason: string) {
+    setWriteError(reason);
+    setDraggedItem(null);
+    setDragOverPath(null);
   }
 
   const handleClick = (item: FileItem) => {
@@ -662,12 +753,31 @@ export function FileExplorerPanel({
             )}
             {currentPath !== "." && (
               <button
-                className="w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5"
+                data-testid="file-explorer-parent-row"
+                className={cn(
+                  "w-full text-left px-2 py-1 text-xs hover:bg-[#313244] rounded flex items-center gap-1.5",
+                  draggedItem && "ring-1 ring-transparent",
+                  dragOverPath === PARENT_DROP_KEY && "ring-1 ring-[#a6e3a1] bg-[#a6e3a1]/10",
+                )}
                 onClick={() => {
                   const parts = currentPath.split("/");
                   parts.pop();
                   setCurrentPath(parts.length ? parts.join("/") : ".");
                   setSelectedFile(null);
+                }}
+                onDragOver={(e) => {
+                  if (!draggedItem) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  setDragOverPath(PARENT_DROP_KEY);
+                }}
+                onDragLeave={() => {
+                  setDragOverPath((prev) => (prev === PARENT_DROP_KEY ? null : prev));
+                }}
+                onDrop={(e) => {
+                  if (!draggedItem) return;
+                  e.preventDefault();
+                  performMove("..");
                 }}
               >
                 <Folder className={cn("h-3.5 w-3.5", styles.folderIcon)} />
@@ -701,12 +811,80 @@ export function FileExplorerPanel({
                 const isRenaming = renameTarget === item.path;
                 const isDeleting = pendingDeletePath === item.path && deleteMutation.isPending;
                 const isAwaitingDeleteConfirm = pendingDeletePath === item.path && !deleteMutation.isPending;
+                // Drag source: only private files, never folders or
+                // shared symlink mirrors. We disable while a rename
+                // input is open so the textbox doesn't initiate a
+                // drag instead of a text selection.
+                const isDragSource =
+                  canMutate && item.type === "file" && !isRenaming;
+                // Drop targets:
+                //   - private folders → real cross-folder move
+                //   - any shared row (folder OR top-level symlink to
+                //     a host dir, which the listing classifies as
+                //     `type: "file"` because Dirent.isDirectory()
+                //     returns false on a symlink) → always rejected
+                //     with the inline write-error banner so users
+                //     get a clear "can't write into the project"
+                //     message instead of a silent no-op
+                // Both branches accept dragover; the dragover handler
+                // colours the ring green for accept, red for reject.
+                const isShared = item.privacy === "shared";
+                const isPrivateFolderTarget =
+                  item.type === "directory" && !isShared && !isRenaming;
+                const isDropTarget =
+                  !isRenaming && (isPrivateFolderTarget || isShared);
+                const isDropHover = dragOverPath === item.path;
                 return (
                   <div
                     key={item.path}
+                    data-testid={`file-explorer-row-${item.name}`}
+                    draggable={isDragSource}
+                    onDragStart={isDragSource ? (e) => {
+                      // The dataTransfer payload isn't read back —
+                      // we track the drag source in component state
+                      // — but setting `text/plain` keeps the browser
+                      // happy and lets the user drop the path into
+                      // an external text field as a fallback.
+                      if (e.dataTransfer) {
+                        e.dataTransfer.effectAllowed = "move";
+                        try { e.dataTransfer.setData("text/plain", item.path); } catch {}
+                      }
+                      setWriteError(null);
+                      setDraggedItem({ path: item.path, name: item.name });
+                    } : undefined}
+                    onDragEnd={() => {
+                      setDraggedItem(null);
+                      setDragOverPath(null);
+                    }}
+                    onDragOver={isDropTarget && draggedItem ? (e) => {
+                      // Don't accept a drag onto the file's own
+                      // current folder (no-op move).
+                      if (item.path === draggedItem.path) return;
+                      e.preventDefault();
+                      if (e.dataTransfer) {
+                        e.dataTransfer.dropEffect = isShared ? "none" : "move";
+                      }
+                      setDragOverPath(item.path);
+                    } : undefined}
+                    onDragLeave={isDropTarget ? () => {
+                      setDragOverPath((prev) => (prev === item.path ? null : prev));
+                    } : undefined}
+                    onDrop={isDropTarget && draggedItem ? (e) => {
+                      e.preventDefault();
+                      if (isShared) {
+                        rejectDrop(
+                          `Can't move into ${item.name}: it's shared with the project. Make a private copy or pick a private folder.`,
+                        );
+                        return;
+                      }
+                      performMove(item.path);
+                    } : undefined}
                     className={cn(
                       "group flex items-center w-full",
-                      selectedFile === item.path && styles.selectedRowBg
+                      selectedFile === item.path && styles.selectedRowBg,
+                      isDragSource && "cursor-grab",
+                      isDropHover && !isShared && "ring-1 ring-[#a6e3a1] bg-[#a6e3a1]/10 rounded",
+                      isDropHover && isShared && "ring-1 ring-[#f38ba8] bg-[#f38ba8]/10 rounded",
                     )}
                   >
                     {isRenaming ? (

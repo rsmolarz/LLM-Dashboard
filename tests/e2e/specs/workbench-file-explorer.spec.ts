@@ -4,6 +4,8 @@ import { loginAsFixtureUser } from "./helpers/auth";
 import {
   fileExplorerRoot,
   fileRow,
+  fileRowContainer,
+  parentRow,
   selectedFileHeader,
   fileContentBody,
   refreshFileExplorer,
@@ -11,6 +13,7 @@ import {
   createFolderViaUI,
   renameViaUI,
   deleteViaUI,
+  dragAndDrop,
   newFileButton,
   createInput,
   createSubmit,
@@ -208,6 +211,83 @@ test.describe("Workbench file explorer CRUD", () => {
 
     await refreshFileExplorer(page);
     await deleteViaUI(page, name);
+  });
+
+  test("moves a file into a folder via drag-and-drop and tracks the open viewer", async ({ page }) => {
+    const tag = randomBytes(4).toString("hex");
+    const fileName = `e2e-move-${tag}.txt`;
+    const dirName = `dir-${tag}`;
+
+    await page.goto("/workbench");
+    await expect(fileExplorerRoot(page)).toBeVisible();
+
+    // Set up the source file + destination folder at the scratch
+    // root. The create flow auto-selects the file in the viewer, so
+    // the moved-file header assertion below has a known starting
+    // state.
+    await createFolderViaUI(page, dirName);
+    await createFileViaUI(page, fileName);
+    await expect(fileRow(page, fileName)).toBeVisible();
+    await expect(fileRow(page, dirName)).toBeVisible();
+    await expect(selectedFileHeader(page, fileName)).toBeVisible();
+
+    // Drag the file row onto the folder row. The mutation onSuccess
+    // refetches the listing AND retargets `selectedFile`, so the
+    // file disappears from the root listing and the viewer header
+    // updates to the nested path in a single round-trip.
+    await dragAndDrop(page, fileRowContainer(page, fileName), fileRowContainer(page, dirName));
+    await expect(fileRow(page, fileName)).toHaveCount(0, { timeout: 10_000 });
+    await expect(selectedFileHeader(page, `${dirName}/${fileName}`)).toBeVisible();
+
+    // Walk into the folder and confirm the moved file is present
+    // under its new parent. Navigating into a directory clears the
+    // viewer selection (handleClick → setSelectedFile(null)) so we
+    // re-select the file here; otherwise the move-tracking onSuccess
+    // hook would have nothing to retarget and the header assertion
+    // below would never resolve.
+    await fileRow(page, dirName).click();
+    await expect(fileRow(page, fileName)).toBeVisible();
+    await fileRow(page, fileName).click();
+    await expect(selectedFileHeader(page, `${dirName}/${fileName}`)).toBeVisible();
+
+    // Drop the file onto the `..` row to move it back to the root.
+    // The header tracks the new (root) path the same way. We
+    // intentionally don't navigate back to the root + delete the
+    // file/folder here because that would push us over the global
+    // 10/min `/api` rate limit (each scratch mutation triggers a
+    // refetch). The file/dir use a random tag so leftover scratch
+    // entries don't collide between runs.
+    await dragAndDrop(page, fileRowContainer(page, fileName), parentRow(page));
+    await expect(fileRow(page, fileName)).toHaveCount(0, { timeout: 10_000 });
+    await expect(selectedFileHeader(page, fileName)).toBeVisible();
+  });
+
+  test("rejects a drag-drop onto a shared folder with the inline error banner", async ({ page }) => {
+    const tag = randomBytes(4).toString("hex");
+    const fileName = `e2e-drop-shared-${tag}.txt`;
+
+    await page.goto("/workbench");
+    await expect(fileExplorerRoot(page)).toBeVisible();
+
+    await createFileViaUI(page, fileName);
+    await expect(fileRow(page, fileName)).toBeVisible();
+
+    // The scratch root mirrors the host workspace via top-level
+    // symlinks; `artifacts/` is one of them and is flagged
+    // `privacy: "shared"` by the listing endpoint. A drop onto a
+    // shared folder must surface the same inline write-error banner
+    // the create/rename flow uses, without round-tripping to the
+    // server.
+    const sharedTarget = fileRowContainer(page, "artifacts");
+    await expect(sharedTarget).toBeVisible();
+    await dragAndDrop(page, fileRowContainer(page, fileName), sharedTarget);
+    await expect(writeErrorBanner(page)).toBeVisible({ timeout: 10_000 });
+    await expect(writeErrorBanner(page)).toContainText(/shared/i);
+    // The source file must still be at the root (the move was
+    // refused before any PATCH was issued).
+    await expect(fileRow(page, fileName)).toBeVisible();
+
+    await deleteViaUI(page, fileName);
   });
 
   test("displays a clear error when creating a duplicate file name", async ({ page }) => {
