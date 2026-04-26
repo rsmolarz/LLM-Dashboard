@@ -69,18 +69,18 @@ router.use(healthRouter);
 router.use(authRouter);
 router.use(llmConfigRouter);
 
-router.use(rateLimiter(30, 60000), llmProxyRouter);
+router.use(llmProxyRouter);
 router.use(chatRouter);
 router.use(modelProfilesRouter);
 
-router.use(rateLimiter(60, 60000), trainingDataRouter);
+router.use(trainingDataRouter);
 router.use(ragRouter);
 router.use(openclawRouter);
 router.use(scanRouter);
 router.use(vpsDatabaseRouter);
 router.use(vpsTrainingRouter);
 router.use(autoCollectorRouter);
-router.use(rateLimiter(10, 60000), deepResearchRouter);
+router.use(deepResearchRouter);
 router.use(mediaRouter);
 router.use(backupRouter);
 router.use(entTrainingRouter);

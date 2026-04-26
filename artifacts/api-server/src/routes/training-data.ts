@@ -10,8 +10,11 @@ import {
   CollectFromConversationResponse,
   GetTrainingStatsResponse,
 } from "@workspace/api-zod";
+import { rateLimiter } from "../middlewares/rateLimiter";
 
 const router: IRouter = Router();
+
+router.use("/training", rateLimiter(60, 60000));
 
 router.get("/training/data", async (_req, res): Promise<void> => {
   const data = await db

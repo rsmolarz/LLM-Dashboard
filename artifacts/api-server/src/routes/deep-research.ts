@@ -1,8 +1,11 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { db, llmConfigTable } from "@workspace/db";
+import { rateLimiter } from "../middlewares/rateLimiter";
 
 const router: IRouter = Router();
+
+router.use("/research", rateLimiter(10, 60000));
 
 async function getOllamaUrl(): Promise<string | null> {
   const [config] = await db.select().from(llmConfigTable).limit(1);

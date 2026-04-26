@@ -13,6 +13,7 @@ import {
   SendChatMessageBody,
   SendChatMessageResponse,
 } from "@workspace/api-zod";
+import { rateLimiter } from "../middlewares/rateLimiter";
 
 const ollamaAgent = new Agent({
   headersTimeout: 600000,
@@ -21,6 +22,8 @@ const ollamaAgent = new Agent({
 });
 
 const router: IRouter = Router();
+
+router.use(["/llm", "/ollama", "/vps-status"], rateLimiter(30, 60000));
 
 async function getServerUrl(): Promise<string | null> {
   const [config] = await db.select().from(llmConfigTable).limit(1);
